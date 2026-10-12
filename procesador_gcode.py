@@ -41,10 +41,50 @@ DICCIONARIO_ERRORES_GRBL = {
         "explicacion": "Se envió el comando $H pero la máquina no tiene habilitado el ciclo de referencia por límites.",
         "sugerencia": "Revise el parámetro $22=1 en la configuración de la máquina."
     },
+    6: {
+        "titulo": "Tiempo de pulso de paso insuficiente",
+        "explicacion": "El parámetro de duración de pulso de paso ($0) es menor a 3 microsegundos.",
+        "sugerencia": "Configure $0 con un valor de al menos 10 us (ej. $0=10)."
+    },
+    7: {
+        "titulo": "Fallo de lectura de EEPROM",
+        "explicacion": "No se pudo leer la memoria no volátil del microcontrolador al arrancar.",
+        "sugerencia": "Los parámetros se restablecieron por defecto. Vuelva a calibrar los ajustes con $$."
+    },
+    8: {
+        "titulo": "Comando '$' bloqueado durante ejecución",
+        "explicacion": "Un comando de configuración '$' solo puede ejecutarse cuando la máquina está en reposo (IDLE).",
+        "sugerencia": "Espere a que termine el trabajo o detenga la ejecución antes de cambiar parámetros."
+    },
+    9: {
+        "titulo": "Bloqueo de código G por estado de ALARMA o JOG (G-Code Locked Out)",
+        "explicacion": "El microcontrolador GRBL está bloqueado por seguridad en estado ALARMA (o ejecutando un movimiento manual JOG). En este estado, GRBL rechaza intencionalmente cualquier comando de código G (fijación de ceros G10/G92, movimientos G0/G1 o activación de husillo M3).",
+        "sugerencia": "1. Presione el botón 'DESBLOQUEAR ($X)' en la barra superior o en el menú 'Máquina > Desbloquear ($X)'.\n2. Si el sistema tiene finales de carrera habilitados ($22=1), ejecute el ciclo de referenciado 'Homing ($H)'.\n3. Una vez que el indicador cambie a verde (IDLE), presione 'ZERO ALL' nuevamente."
+    },
+    10: {
+        "titulo": "Límites suaves no admitidos sin Homing",
+        "explicacion": "No es posible habilitar límites suaves ($20=1) si el ciclo de Homing ($22=1) no está activo.",
+        "sugerencia": "Active primero el ciclo de homing ($22=1) antes de habilitar límites suaves."
+    },
+    11: {
+        "titulo": "Longitud de línea excedida",
+        "explicacion": "La instrucción enviada supera el límite máximo de caracteres por línea del búfer serie.",
+        "sugerencia": "Divida la instrucción o reduzca comentarios extensos."
+    },
+    15: {
+        "titulo": "Objetivo de Jog fuera del recorrido",
+        "explicacion": "El comando de desplazamiento manual ($J=) solicitado sobrepasa las dimensiones de la máquina.",
+        "sugerencia": "Reduzca el incremento de paso o verifique los límites de recorrido de la máquina."
+    },
     20: {
         "titulo": "Comando G no soportado",
         "explicacion": "La instrucción especificada no está implementada en el firmware de la máquina CNC.",
         "sugerencia": "Consulte el diccionario de códigos G integrado en el menú de ayuda."
+    },
+    21: {
+        "titulo": "Comandos G del mismo grupo modal repetidos",
+        "explicacion": "Se enviaron dos comandos incompatibles en la misma línea (ej. G0 y G1 simultáneos).",
+        "sugerencia": "Separe las instrucciones en líneas distintas."
     },
     22: {
         "titulo": "Velocidad de avance F no especificada",
@@ -55,6 +95,44 @@ DICCIONARIO_ERRORES_GRBL = {
         "titulo": "Objetivo de arco G2/G3 inválido",
         "explicacion": "El punto final del arco o los vectores de centro I/J no concuerdan matemáticamente.",
         "sugerencia": "Compruebe las coordenadas de inicio, fin y desplazamiento relativo del radio."
+    }
+}
+
+DICCIONARIO_ALARMAS_GRBL = {
+    1: {
+        "titulo": "Alarma 1: Fin de carrera alcanzado (Hard Limit)",
+        "explicacion": "Uno de los interruptores límite mecánicos fue activado por contacto o ruido eléctrico.",
+        "sugerencia": "Verifique los interruptores y libere el carro mecánico. Desbloquee con $X."
+    },
+    2: {
+        "titulo": "Alarma 2: Límite suave de recorrido sobrepasado (Soft Limit)",
+        "explicacion": "El movimiento ordenado supera el volumen de desplazamiento configurado para la máquina.",
+        "sugerencia": "Revise las coordenadas de la pieza de trabajo o el origen WCS. Desbloquee con $X."
+    },
+    3: {
+        "titulo": "Alarma 3: Paro de Emergencia / Reinicio en Movimiento",
+        "explicacion": "Se recibió un reinicio de emergencia (0x18 / E-STOP) mientras la máquina estaba operando.",
+        "sugerencia": "Compruebe la posición física del husillo y presione 'DESBLOQUEAR ($X)' para rearmar."
+    },
+    4: {
+        "titulo": "Alarma 4: Fallo de sonda (Probe Fail)",
+        "explicacion": "La sonda de contacto Z no hizo contacto antes de finalizar el recorrido límite de palpado.",
+        "sugerencia": "Verifique la conexión de la sonda y vuelva a intentar la palpación."
+    },
+    5: {
+        "titulo": "Alarma 5: Sonda en contacto previo",
+        "explicacion": "La sonda Z ya estaba en contacto eléctrico antes de iniciar el ciclo de palpación.",
+        "sugerencia": "Separe la herramienta de la placa de contacto antes de iniciar."
+    },
+    6: {
+        "titulo": "Alarma 6: Fallo en ciclo de Homing",
+        "explicacion": "El sensor límite no se activó dentro del recorrido configurado durante el referenciado.",
+        "sugerencia": "Compruebe el sentido de giro de los motores y el cableado de los sensores."
+    },
+    7: {
+        "titulo": "Alarma 7: Fallo de liberación de interruptor en Homing",
+        "explicacion": "El sensor límite no se liberó tras el retroceso de seguridad (pulloff $27).",
+        "sugerencia": "Aumente la distancia de retroceso de homing ($27) o revise el interruptor mecánico."
     }
 }
 
@@ -242,4 +320,13 @@ class ProcesadorGCode:
             "titulo": f"Error GRBL #{codigo_error}",
             "explicacion": "El microcontrolador reportó una condición de error no habitual durante la ejecución.",
             "sugerencia": "Verifique los límites mecánicos, conexiones del cable USB o reinicie el software (Ctrl+X)."
+        })
+
+    @staticmethod
+    def traducir_alarma_grbl(codigo_alarma: int) -> dict:
+        """Traduce un código de alarma de GRBL (ALARM:X) al formato pedagógico de ESCOM."""
+        return DICCIONARIO_ALARMAS_GRBL.get(codigo_alarma, {
+            "titulo": f"Alarma de Seguridad GRBL #{codigo_alarma}",
+            "explicacion": "El microcontrolador activó una condición de seguridad de parada.",
+            "sugerencia": "Presione 'DESBLOQUEAR ($X)' en la barra superior o ejecute el ciclo de referenciado 'Homing ($H)'."
         })

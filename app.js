@@ -105,6 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
     botonParoEmergencia: document.getElementById('btn-estop'),
     etiquetaEstadoControlador: document.getElementById('lbl-machine-state'),
     puntoIndicadorEstado: document.getElementById('state-status-dot'),
+    botonDesbloqueoRapido: document.getElementById('btn-quick-unlock'),
     indicadorLimites: document.getElementById('pill-limits-state'),
     puntoIndicadorLimites: document.getElementById('limits-status-dot'),
     etiquetaEstadoLimites: document.getElementById('lbl-limits-state'),
@@ -401,19 +402,23 @@ document.addEventListener('DOMContentLoaded', () => {
     elementos.etiquetaEstadoControlador.textContent = nuevoEstado;
 
     elementos.puntoIndicadorEstado.className = 'indicator-dot';
-    if (nuevoEstado === 'IDLE') {
-      elementos.puntoIndicadorEstado.classList.add('dot-idle');
-      elementos.botonParoEmergencia.classList.remove('alarm-active');
-    } else if (nuevoEstado === 'RUN' || nuevoEstado === 'JOG') {
-      elementos.puntoIndicadorEstado.classList.add('dot-run');
-      elementos.botonParoEmergencia.classList.remove('alarm-active');
-    } else if (nuevoEstado === 'HOLD') {
-      elementos.puntoIndicadorEstado.classList.add('dot-connected');
-    } else if (nuevoEstado === 'ALARM') {
+    if (nuevoEstado === 'ALARM') {
       elementos.puntoIndicadorEstado.classList.add('dot-alarm');
       elementos.botonParoEmergencia.classList.add('alarm-active');
+      if (elementos.botonDesbloqueoRapido) elementos.botonDesbloqueoRapido.classList.remove('hidden');
     } else {
-      elementos.puntoIndicadorEstado.classList.add('dot-off');
+      if (elementos.botonDesbloqueoRapido) elementos.botonDesbloqueoRapido.classList.add('hidden');
+      if (nuevoEstado === 'IDLE') {
+        elementos.puntoIndicadorEstado.classList.add('dot-idle');
+        elementos.botonParoEmergencia.classList.remove('alarm-active');
+      } else if (nuevoEstado === 'RUN' || nuevoEstado === 'JOG') {
+        elementos.puntoIndicadorEstado.classList.add('dot-run');
+        elementos.botonParoEmergencia.classList.remove('alarm-active');
+      } else if (nuevoEstado === 'HOLD') {
+        elementos.puntoIndicadorEstado.classList.add('dot-connected');
+      } else {
+        elementos.puntoIndicadorEstado.classList.add('dot-off');
+      }
     }
   }
 
@@ -466,31 +471,64 @@ document.addEventListener('DOMContentLoaded', () => {
     elementos.etiquetaVelocidadJog.textContent = `${estado.porcentajeVelocidadManual}%`;
   });
 
+  // Valida si la máquina está en condiciones de aceptar comandos de puesta a cero
+  function validarMaquinaListaParaCero() {
+    if (estado.estadoOperativo === 'ALARM') {
+      imprimirEnConsola('c-alarm', '[BLOQUEO] No se puede fijar el cero: la máquina está en estado de ALARMA (GRBL Error #9).');
+      imprimirEnConsola('c-info', '[ACCIÓN] Presione el botón naranja "DESBLOQUEAR ($X)" en la barra superior o en el menú "Máquina > Desbloquear ($X)".');
+      if (elementos.botonDesbloqueoRapido) {
+        elementos.botonDesbloqueoRapido.classList.remove('hidden');
+        elementos.botonDesbloqueoRapido.focus();
+      }
+      return false;
+    }
+    return true;
+  }
+
   // Funciones de puesta a cero de coordenadas de trabajo
   elementos.botonCeroX.addEventListener('click', () => {
+    if (!validarMaquinaListaParaCero()) return;
     if (window.puenteCNC) window.puenteCNC.ponerCeroEje('X');
     else { estado.coordenadasTrabajo.x = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 X0'); }
   });
   elementos.botonCeroY.addEventListener('click', () => {
+    if (!validarMaquinaListaParaCero()) return;
     if (window.puenteCNC) window.puenteCNC.ponerCeroEje('Y');
     else { estado.coordenadasTrabajo.y = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 Y0'); }
   });
   elementos.botonCeroZ.addEventListener('click', () => {
+    if (!validarMaquinaListaParaCero()) return;
     if (window.puenteCNC) window.puenteCNC.ponerCeroEje('Z');
     else { estado.coordenadasTrabajo.z = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 Z0'); }
   });
   elementos.botonCeroXY.addEventListener('click', () => {
-    if (window.puenteCNC) { window.puenteCNC.ponerCeroEje('X'); window.puenteCNC.ponerCeroEje('Y'); }
+    if (!validarMaquinaListaParaCero()) return;
+    if (window.puenteCNC) window.puenteCNC.ponerCeroPlanoXY();
     else { estado.coordenadasTrabajo.x = 0; estado.coordenadasTrabajo.y = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 X0 Y0'); }
   });
   elementos.botonCeroSoloZ.addEventListener('click', () => {
+    if (!validarMaquinaListaParaCero()) return;
     if (window.puenteCNC) window.puenteCNC.ponerCeroEje('Z');
     else { estado.coordenadasTrabajo.z = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 Z0'); }
   });
   elementos.botonCeroTodos.addEventListener('click', () => {
+    if (!validarMaquinaListaParaCero()) return;
     if (window.puenteCNC) window.puenteCNC.ponerCeroTodos();
     else { estado.coordenadasTrabajo.x = 0; estado.coordenadasTrabajo.y = 0; estado.coordenadasTrabajo.z = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 X0 Y0 Z0'); }
   });
+
+  // Botón de desbloqueo rápido de alarma ($X)
+  if (elementos.botonDesbloqueoRapido) {
+    elementos.botonDesbloqueoRapido.addEventListener('click', () => {
+      if (window.puenteCNC) {
+        window.puenteCNC.desbloquearAlarma();
+      } else {
+        procesarComandoMdi('$X');
+        establecerEstadoOperativo('IDLE');
+      }
+      imprimirEnConsola('c-info', '[DESBLOQUEO] Comando $X de desbloqueo enviado.');
+    });
+  }
 
   // ==========================================
   // CONTROL DEL HUSILLO DE FRESADO

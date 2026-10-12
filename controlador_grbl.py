@@ -78,6 +78,7 @@ class ControladorGRBL:
         self.cb_linea_consola: Optional[Callable[[str, str], None]] = None
         self.cb_progreso: Optional[Callable[[int, int, float, str], None]] = None
         self.cb_evento_error: Optional[Callable[[int, str], None]] = None
+        self.cb_evento_alarma: Optional[Callable[[int, str], None]] = None
 
         # Expresiones regulares para parseo de reporte de estado GRBL v1.1
         # Ejemplo: <Idle|MPos:0.000,0.000,0.000|Bf:15,128|FS:0,0|WCO:0.000,0.000,0.000|Ov:100,100,100|Pn:XYZ>
@@ -328,6 +329,12 @@ class ControladorGRBL:
         if linea.startswith("ALARM:"):
             self.estado_maquina["estado"] = "ALARM"
             self._notificar_consola("c-alarm", linea)
+            try:
+                cod_alarma = int(linea.split(":")[1])
+            except (ValueError, IndexError):
+                cod_alarma = 1
+            if self.cb_evento_alarma:
+                self.cb_evento_alarma(cod_alarma, linea)
             if self.cb_estado_actualizado:
                 self.cb_estado_actualizado(dict(self.estado_maquina))
             return
@@ -486,11 +493,48 @@ class ControladorGRBL:
     def poner_cero_eje(self, eje: str):
         """Fija el sistema de coordenadas de trabajo (cero pieza) en el eje indicado."""
         eje = eje.upper()
-        if eje in ("X", "Y", "Z"):
-            self.enviar_comando(f"G10 L20 P1 {eje}0")
+        if eje not in ("X", "Y", "Z"):
+            return
+        if self.estado_maquina.get("estado") == "ALARM":
+            self._notificar_consola("c-alarm", f"[BLOQUEO] No se puede fijar cero en {eje}: la máquina está en ALARMA. Desbloquee con $X.")
+            return
+        if self.modo_virtual:
+            idx = 0 if eje == "X" else (1 if eje == "Y" else 2)
+            self.estado_maquina["wpos"][idx] = 0.0
+            self._notificar_consola("c-ok", f"> G10 L20 P1 {eje}0")
+            self._notificar_consola("c-ok", "ok")
+            if self.cb_estado_actualizado:
+                self.cb_estado_actualizado(dict(self.estado_maquina))
+            return
+        self.enviar_comando(f"G10 L20 P1 {eje}0")
+
+    def poner_cero_plano_xy(self):
+        """Fija los ejes cartesianos X e Y a cero en una sola instrucción atómica en G54."""
+        if self.estado_maquina.get("estado") == "ALARM":
+            self._notificar_consola("c-alarm", "[BLOQUEO] No se puede fijar cero XY: la máquina está en ALARMA. Desbloquee con $X.")
+            return
+        if self.modo_virtual:
+            self.estado_maquina["wpos"][0] = 0.0
+            self.estado_maquina["wpos"][1] = 0.0
+            self._notificar_consola("c-ok", "> G10 L20 P1 X0 Y0")
+            self._notificar_consola("c-ok", "ok")
+            if self.cb_estado_actualizado:
+                self.cb_estado_actualizado(dict(self.estado_maquina))
+            return
+        self.enviar_comando("G10 L20 P1 X0 Y0")
 
     def poner_cero_todos(self):
         """Fija X, Y y Z en cero en el sistema de coordenadas de trabajo actual (G54)."""
+        if self.estado_maquina.get("estado") == "ALARM":
+            self._notificar_consola("c-alarm", "[BLOQUEO] No se puede fijar el cero: la máquina está en ALARMA. Desbloquee con $X.")
+            return
+        if self.modo_virtual:
+            self.estado_maquina["wpos"] = [0.0, 0.0, 0.0]
+            self._notificar_consola("c-ok", "> G10 L20 P1 X0 Y0 Z0")
+            self._notificar_consola("c-ok", "ok")
+            if self.cb_estado_actualizado:
+                self.cb_estado_actualizado(dict(self.estado_maquina))
+            return
         self.enviar_comando("G10 L20 P1 X0 Y0 Z0")
 
     def mover_jog(self, eje: str, paso: float, velocidad: float):

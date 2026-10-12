@@ -37,6 +37,7 @@ class PuenteCNC(QObject):
         self.controlador.cb_linea_consola = self._al_recibir_linea_consola
         self.controlador.cb_progreso = self._al_actualizar_progreso
         self.controlador.cb_evento_error = self._al_ocurrir_error
+        self.controlador.cb_evento_alarma = self._al_ocurrir_alarma
 
         # Monitoreo continuo de conexión/desconexión USB (Hot-Plug cada 1000 ms)
         self._nombres_puertos_previos = []
@@ -64,6 +65,13 @@ class PuenteCNC(QObject):
         """Traduce el error con el procesador semántico y lo emite al frontend."""
         info = self.procesador.traducir_error_grbl(codigo)
         info["codigo"] = codigo
+        info["linea_cruda"] = linea_cruda
+        self.senial_error_didactico.emit(json.dumps(info))
+
+    def _al_ocurrir_alarma(self, codigo: int, linea_cruda: str):
+        """Traduce la alarma de seguridad y la emite didácticamente al frontend."""
+        info = self.procesador.traducir_alarma_grbl(codigo)
+        info["codigo"] = f"A{codigo}"
         info["linea_cruda"] = linea_cruda
         self.senial_error_didactico.emit(json.dumps(info))
 
@@ -147,6 +155,11 @@ class PuenteCNC(QObject):
     def ponerCeroEje(self, eje: str):
         """Pone a cero de trabajo (G10) el eje indicado."""
         self.controlador.poner_cero_eje(eje)
+
+    @pyqtSlot()
+    def ponerCeroPlanoXY(self):
+        """Pone a cero los ejes de coordenadas X e Y en G54."""
+        self.controlador.poner_cero_plano_xy()
 
     @pyqtSlot()
     def ponerCeroTodos(self):
