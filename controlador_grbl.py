@@ -17,6 +17,7 @@ Responsabilidad:
 import re
 import sys
 import time
+import math
 import threading
 from collections import deque
 from typing import Callable, Optional, List, Dict, Any
@@ -554,6 +555,15 @@ class ControladorGRBL:
             self._notificar_consola("c-ok", f"> {cmd}")
             if self.cb_estado_actualizado:
                 self.cb_estado_actualizado(dict(self.estado_maquina))
+
+            def fin_jog():
+                time.sleep(0.25)
+                if self.estado_maquina.get("estado") == "JOG":
+                    self.estado_maquina["estado"] = "IDLE"
+                    if self.cb_estado_actualizado:
+                        self.cb_estado_actualizado(dict(self.estado_maquina))
+
+            threading.Thread(target=fin_jog, daemon=True).start()
             return
 
         self.enviar_directo(f"{cmd}\n")
@@ -720,24 +730,89 @@ class ControladorGRBL:
             self._notificar_consola("c-ok", "ok")
 
     def _bucle_ejecucion_virtual(self):
-        """Simula la ejecución paso a paso de un archivo G-code en el emulador virtual."""
+        """
+        Simula la ejecución paso a paso de un archivo G-code en el emulador virtual,
+        con interpolación geométrica continua y actualización de coordenadas en tiempo real
+        para que la punta de la herramienta se desplace visiblemente por el lienzo gráfico.
+        """
         total = self._total_lineas_programa
+        self.estado_maquina["estado"] = "RUN"
+        velocidad_avance_actual = 800.0  # mm/min por defecto
+
         for idx in range(1, total + 1):
             if not self._en_ejecucion_gcode or self._detener_hilos:
                 break
+
             while self._en_pausa_gcode and self._en_ejecucion_gcode:
                 time.sleep(0.1)
 
-            self.estado_maquina["estado"] = "RUN"
             linea = self._cola_lineas[idx - 1]
             self._notificar_consola("c-ok", f"{idx}: {linea}")
 
-            # Extraer posibles coordenadas para mover cabezal en la simulación
-            for eje, e_idx in [("X", 0), ("Y", 1), ("Z", 2)]:
-                m = re.search(rf"{eje}([-+]?\d*\.?\d+)", linea.upper())
-                if m:
-                    self.estado_maquina["wpos"][e_idx] = float(m.group(1))
-                    self.estado_maquina["mpos"][e_idx] = float(m.group(1))
+            # Detectar comando modal F (velocidad de avance)
+            match_f = re.search(r"F(\d+(?:\.\d+)?)", linea.upper())
+            if match_f:
+                velocidad_avance_actual = float(match_f.group(1))
+
+            # Detectar encendido / apagado de husillo
+            if "M3" in linea.upper():
+                self.estado_maquina["spindle_encendido"] = True
+                self.estado_maquina["spindle_real"] = 12000.0
+            elif "M5" in linea.upper():
+                self.estado_maquina["spindle_encendido"] = False
+                self.estado_maquina["spindle_real"] = 0.0
+
+            # Posición actual de inicio del segmento
+            x_ini = float(self.estado_maquina["wpos"][0])
+            y_ini = float(self.estado_maquina["wpos"][1])
+            z_ini = float(self.estado_maquina["wpos"][2])
+
+            # Coordenadas objetivo extraídas de la línea
+            match_x = re.search(r"X([-+]?\d*\.?\d+)", linea.upper())
+            match_y = re.search(r"Y([-+]?\d*\.?\d+)", linea.upper())
+            match_z = re.search(r"Z([-+]?\d*\.?\d+)", linea.upper())
+
+            x_fin = float(match_x.group(1)) if match_x else x_ini
+            y_fin = float(match_y.group(1)) if match_y else y_ini
+            z_fin = float(match_z.group(1)) if match_z else z_ini
+
+            # Distancia euclidiana en mm
+            dx = x_fin - x_ini
+            dy = y_fin - y_ini
+            dz = z_fin - z_ini
+            distancia = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+            es_rapido = "G0" in linea.upper() or ("G" not in linea.upper() and match_z and z_fin > z_ini)
+            vel = 2500.0 if es_rapido else velocidad_avance_actual
+            self.estado_maquina["feed_real"] = vel
+
+            if distancia > 0.01:
+                # Duración adecuada para visualización fluida pedagógica (entre 0.4s y 2.5s)
+                tiempo_segmento = max(0.4, min(2.5, (distancia / (vel / 60.0))))
+                dt = 0.035  # Paso de interpolación (~28 FPS)
+                pasos = max(10, int(tiempo_segmento / dt))
+
+                for paso in range(1, pasos + 1):
+                    if not self._en_ejecucion_gcode or self._detener_hilos:
+                        break
+                    while self._en_pausa_gcode and self._en_ejecucion_gcode:
+                        time.sleep(0.1)
+
+                    fraccion = paso / pasos
+                    self.estado_maquina["wpos"][0] = round(x_ini + dx * fraccion, 3)
+                    self.estado_maquina["wpos"][1] = round(y_ini + dy * fraccion, 3)
+                    self.estado_maquina["wpos"][2] = round(z_ini + dz * fraccion, 3)
+                    self.estado_maquina["mpos"] = list(self.estado_maquina["wpos"])
+
+                    if self.cb_estado_actualizado:
+                        self.cb_estado_actualizado(dict(self.estado_maquina))
+
+                    time.sleep(dt)
+            else:
+                # Comandos sin movimiento físico (M3, M5, G21, G90, etc.)
+                if self.cb_estado_actualizado:
+                    self.cb_estado_actualizado(dict(self.estado_maquina))
+                time.sleep(0.1)
 
             pct = round((idx / total) * 100.0, 1)
             segundos = int(time.time() - self._tiempo_inicio_ejecucion)
@@ -746,10 +821,11 @@ class ControladorGRBL:
             if self.cb_progreso:
                 self.cb_progreso(idx, total, pct, tiempo_str)
 
-            time.sleep(0.15)
-
         self.estado_maquina["estado"] = "IDLE"
+        self.estado_maquina["feed_real"] = 0.0
         self._en_ejecucion_gcode = False
+        if self.cb_estado_actualizado:
+            self.cb_estado_actualizado(dict(self.estado_maquina))
         self._notificar_consola("c-system", "[PROGRAMA] Simulación virtual finalizada exitosamente.")
 
     # =========================================================================

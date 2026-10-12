@@ -19,7 +19,7 @@ class VisualizadorCNC {
     this.arrastreInicioY = 0;
 
     // Posición espacial actual de la herramienta (en milímetros)
-    this.posicionHerramienta = { x: 266.715, y: 224.548, z: 0.000 };
+    this.posicionHerramienta = { x: 0.000, y: 0.000, z: 0.000 };
 
     // Segmentos de trayectoria { tipo: 'G0'|'G1', x1, y1, z1, x2, y2, z2 }
     this.trayectoria = [];

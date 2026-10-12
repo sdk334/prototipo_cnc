@@ -214,15 +214,15 @@ document.addEventListener('DOMContentLoaded', () => {
           elementos.selectorPuertoCom.appendChild(opcion);
         });
 
-        // Si no se conservó el puerto previo, priorizar el dispositivo USB CNC real
+        // Si no se conservó el puerto previo, priorizar el dispositivo USB CNC real o conectar el simulador
         if (!puertoSeleccionado && listaPuertos.length > 0) {
           const dispositivoCnc = listaPuertos.find(p => p.tipo === 'USB_CNC');
           if (dispositivoCnc) {
             elementos.selectorPuertoCom.value = dispositivoCnc.puerto;
-            conectarPuertoSeleccionado();
           } else {
             elementos.selectorPuertoCom.value = listaPuertos[0].puerto;
           }
+          conectarPuertoSeleccionado();
         }
       } catch (e) {
         console.error('Error al parsear lista de puertos:', e);
@@ -656,6 +656,24 @@ document.addEventListener('DOMContentLoaded', () => {
     estado.indiceLineaActiva = indice;
     resaltarLineaGcodeActiva();
     actualizarMetricasTelemetria();
+
+    // Mover herramienta a la posición de la línea seleccionada para previsualización didáctica
+    if (!estado.enEjecucion) {
+      const linea = estado.lineasPrograma[indice];
+      if (linea) {
+        const mX = linea.texto.match(/X([-+]?\d*\.?\d+)/i);
+        const mY = linea.texto.match(/Y([-+]?\d*\.?\d+)/i);
+        const mZ = linea.texto.match(/Z([-+]?\d*\.?\d+)/i);
+        let cambio = false;
+        if (mX) { estado.coordenadasTrabajo.x = parseFloat(mX[1]); cambio = true; }
+        if (mY) { estado.coordenadasTrabajo.y = parseFloat(mY[1]); cambio = true; }
+        if (mZ) { estado.coordenadasTrabajo.z = parseFloat(mZ[1]); cambio = true; }
+        if (cambio) {
+          estado.coordenadasMaquina = { ...estado.coordenadasTrabajo };
+          actualizarLecturasDRO();
+        }
+      }
+    }
   }
 
   function resaltarLineaGcodeActiva() {
