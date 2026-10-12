@@ -1,7 +1,8 @@
 /**
  * CNC Basic v1.0 - Motor Gráfico del Visualizador 2D/3D (visualizer.js)
  * Renderizado en Canvas para trayectorias de herramienta, plano cartesiano,
- * cubo de navegación interactivo (ViewCube 3D) y orientación espacial correcta (+Z hacia arriba).
+ * cubo de navegación interactivo (ViewCube 3D), zoom de precisión hacia el cursor (hasta 25,000%)
+ * y cuadrícula milimétrica/micrométrica adaptativa para inspección de pistas PCB de alta definición.
  */
 
 class VisualizadorCNC {
@@ -41,11 +42,6 @@ class VisualizadorCNC {
     this.limitesZ = { minZ: -1.0, maxZ: 5.0 };
     this.cargarTrayectoriaEjemplo();
 
-    // Configuración de la rejilla milimétrica
-    this.pasoCuadricula = 50; // mm por división principal
-    this.coordenadaMaxX = 350;
-    this.coordenadaMaxY = 280;
-
     this.redibujadoPendiente = false;
     this.iniciarEventos();
     this.iniciarCuboNavegacion();
@@ -80,7 +76,7 @@ class VisualizadorCNC {
     this.solicitarRenderizado();
   }
 
-  // Control de interacción de ratón (órbita 3D en los 3 ejes, paneo y zoom)
+  // Control de interacción de ratón (órbita 3D, paneo y zoom enfocado hacia el cursor)
   iniciarEventos() {
     this.lienzo.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -113,9 +109,7 @@ class VisualizadorCNC {
       this.ultimoRatonY = evento.clientY;
 
       if (this.tipoArrastre === 'orbit' || (this.modoVista === '3D' && evento.buttons === 1 && !evento.shiftKey)) {
-        // Rotación 3D en los ejes con orientación natural:
-        // Arrastrar horizontalmente gira alrededor de Z (azimut)
-        // Arrastrar verticalmente inclina la vista (inclinacion)
+        // Rotación 3D natural en los 3 ejes
         this.rotacionAzimut = (this.rotacionAzimut + deltaX * 0.45) % 360;
         this.rotacionInclinacion = Math.max(5, Math.min(88, this.rotacionInclinacion - deltaY * 0.45));
         this.actualizarCuboOrientacion();
@@ -136,13 +130,37 @@ class VisualizadorCNC {
       }
     });
 
+    // Zoom hacia el cursor del ratón (hasta 25,000% para inspección microscópica de pistas)
     this.lienzo.addEventListener('wheel', (evento) => {
       evento.preventDefault();
-      const factorZoom = evento.deltaY < 0 ? 1.12 : 0.89;
-      this.zoom = Math.max(0.2, Math.min(8.0, this.zoom * factorZoom));
-      this.actualizarSuperposicionZoom();
-      this.solicitarRenderizado();
+      const factorZoom = evento.deltaY < 0 ? 1.20 : 0.83;
+      this.aplicarZoomConPuntoFijo(factorZoom, evento.clientX, evento.clientY);
     }, { passive: false });
+  }
+
+  // Aplica zoom manteniendo inmóvil el punto bajo el cursor del ratón (Zoom to Cursor)
+  aplicarZoomConPuntoFijo(factor, clientX = null, clientY = null) {
+    const zoomAnterior = this.zoom;
+    // Permite zoom desde 5% (piezas masivas) hasta 25,000% (inspección de pistas PCB de 0.1 mm)
+    const nuevoZoom = Math.max(0.05, Math.min(250.0, this.zoom * factor));
+    if (Math.abs(nuevoZoom - zoomAnterior) < 0.00001) return;
+
+    const rect = this.lienzo.getBoundingClientRect();
+    const mouseX = (clientX !== null ? clientX : rect.left + rect.width / 2) - rect.left;
+    const mouseY = (clientY !== null ? clientY : rect.top + rect.height / 2) - rect.top;
+
+    const centroPantallaX = this.anchoPantalla / 2;
+    const centroPantallaY = this.altoPantalla / 2;
+
+    const ratio = nuevoZoom / zoomAnterior;
+
+    // Fórmula geométrica: desplaza el viewport para que la pista bajo el ratón no se mueva
+    this.desplazamientoX = mouseX - centroPantallaX - (mouseX - centroPantallaX - this.desplazamientoX) * ratio;
+    this.desplazamientoY = mouseY - centroPantallaY - (mouseY - centroPantallaY - this.desplazamientoY) * ratio;
+
+    this.zoom = nuevoZoom;
+    this.actualizarSuperposicionZoom();
+    this.solicitarRenderizado();
   }
 
   // Inicializa el Cubo de Navegación 3D (ViewCube) y vincula eventos de arrastre y clics
@@ -309,9 +327,11 @@ class VisualizadorCNC {
   }
 
   establecerZoom(delta) {
-    this.zoom = Math.max(0.2, Math.min(8.0, this.zoom + delta));
-    this.actualizarSuperposicionZoom();
-    this.solicitarRenderizado();
+    this.aplicarZoomConPuntoFijo(delta > 0 ? 1.35 : 0.74);
+  }
+
+  ajustarZoom(factor) {
+    this.aplicarZoomConPuntoFijo(factor > 1 ? 1.35 : 0.74);
   }
 
   reiniciarVista() {
@@ -347,7 +367,7 @@ class VisualizadorCNC {
     const escalaDeseadaY = (this.altoPantalla * 0.65) / altoPieza;
     const escalaOptima = Math.min(escalaDeseadaX, escalaDeseadaY);
 
-    this.zoom = Math.max(0.4, Math.min(5.0, escalaOptima / 1.65));
+    this.zoom = Math.max(0.1, Math.min(250.0, escalaOptima / 1.65));
     this.desplazamientoX = -35;
     this.desplazamientoY = 15;
 
@@ -391,7 +411,10 @@ class VisualizadorCNC {
 
   actualizarSuperposicionZoom() {
     const etiquetaZoom = document.getElementById('lbl-view-zoom');
-    if (etiquetaZoom) etiquetaZoom.textContent = `${Math.round(this.zoom * 100)}%`;
+    if (etiquetaZoom) {
+      const porcentaje = Math.round(this.zoom * 100);
+      etiquetaZoom.textContent = `${porcentaje}%`;
+    }
     const etiquetaZ = document.getElementById('lbl-view-zscale');
     if (etiquetaZ) etiquetaZ.textContent = `${this.escalaZ.toFixed(1)}x`;
   }
@@ -485,6 +508,29 @@ class VisualizadorCNC {
         zProf: zProfundidad
       };
     }
+  }
+
+  // Calcula paso de rejilla inteligente adaptado a la magnificación del zoom (desde 50 mm hasta 0.01 mm)
+  obtenerPasoCuadriculaAdaptativo() {
+    const escala = 1.65 * this.zoom;
+    // Buscamos que las divisiones principales midan entre 45 y 100 píxeles en pantalla
+    const pasoDeseadoMm = 70 / escala;
+
+    const exponente = Math.floor(Math.log10(pasoDeseadoMm));
+    const fraccion = pasoDeseadoMm / Math.pow(10, exponente);
+
+    let factor = 1;
+    if (fraccion >= 5) factor = 5;
+    else if (fraccion >= 2) factor = 2;
+    else factor = 1;
+
+    const pasoPrincipal = factor * Math.pow(10, exponente);
+    const pasoSecundario = pasoPrincipal / 5;
+
+    return {
+      principal: Math.max(0.005, pasoPrincipal),
+      secundario: Math.max(0.001, pasoSecundario)
+    };
   }
 
   // Trayectoria demostrativa inicial
@@ -741,91 +787,137 @@ class VisualizadorCNC {
     this.dibujarRetículaHerramienta(ctx);
   }
 
+  // Cuadrícula milimétrica y micrométrica adaptativa según nivel de magnificación
   dibujarCuadricula(ctx) {
     ctx.save();
-    ctx.lineWidth = 1;
+    const { principal, secundario } = this.obtenerPasoCuadriculaAdaptativo();
+    const escala = 1.65 * this.zoom;
+    const cx = this.centroPieza ? this.centroPieza.x : 150;
+    const cy = this.centroPieza ? this.centroPieza.y : 150;
+    const centroPantallaX = (this.anchoPantalla / 2) + this.desplazamientoX;
+    const centroPantallaY = (this.altoPantalla / 2) + this.desplazamientoY;
 
     if (this.modoVista === 'XY') {
-      for (let x = 0; x <= this.coordenadaMaxX; x += this.pasoCuadricula) {
-        const p1 = this.convertirAPantalla(x, 0);
-        const p2 = this.convertirAPantalla(x, this.coordenadaMaxY);
+      // Límites visibles en coordenadas del mundo milimétrico
+      const xMin = cx + (0 - centroPantallaX) / escala;
+      const xMax = cx + (this.anchoPantalla - centroPantallaX) / escala;
+      const yMin = cy - (this.altoPantalla - centroPantallaY) / escala;
+      const yMax = cy - (0 - centroPantallaY) / escala;
 
-        ctx.strokeStyle = (x % 100 === 0) ? '#1f252d' : '#14181e';
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.stroke();
+      const inicioX = Math.floor(xMin / principal) * principal;
+      const finX = Math.ceil(xMax / principal) * principal;
+      const inicioY = Math.floor(yMin / principal) * principal;
+      const finY = Math.ceil(yMax / principal) * principal;
 
-        if (x > 0) {
-          ctx.fillStyle = '#4c5663';
-          ctx.font = '10px "JetBrains Mono", monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText(x.toString(), p1.x, p1.y + 16);
+      // 1. Líneas secundarias (tenues)
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#10141a';
+      ctx.beginPath();
+      const inicioSecX = Math.floor(xMin / secundario) * secundario;
+      const finSecX = Math.ceil(xMax / secundario) * secundario;
+      for (let x = inicioSecX; x <= finSecX; x += secundario) {
+        const px = centroPantallaX + (x - cx) * escala;
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, this.altoPantalla);
+      }
+      const inicioSecY = Math.floor(yMin / secundario) * secundario;
+      const finSecY = Math.ceil(yMax / secundario) * secundario;
+      for (let y = inicioSecY; y <= finSecY; y += secundario) {
+        const py = centroPantallaY - (y - cy) * escala;
+        ctx.moveTo(0, py);
+        ctx.lineTo(this.anchoPantalla, py);
+      }
+      ctx.stroke();
+
+      // 2. Líneas principales
+      ctx.strokeStyle = '#1b232e';
+      ctx.beginPath();
+      for (let x = inicioX; x <= finX; x += principal) {
+        const px = centroPantallaX + (x - cx) * escala;
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, this.altoPantalla);
+      }
+      for (let y = inicioY; y <= finY; y += principal) {
+        const py = centroPantallaY - (y - cy) * escala;
+        ctx.moveTo(0, py);
+        ctx.lineTo(this.anchoPantalla, py);
+      }
+      ctx.stroke();
+
+      // 3. Etiquetas de medida en pantalla
+      ctx.fillStyle = '#4c5867';
+      ctx.font = '10px "JetBrains Mono", monospace';
+      ctx.textAlign = 'left';
+      const formatoCota = principal < 0.1 ? 3 : (principal < 1 ? 2 : (principal < 10 ? 1 : 0));
+      for (let x = inicioX; x <= finX; x += principal) {
+        const px = centroPantallaX + (x - cx) * escala;
+        if (px >= 20 && px <= this.anchoPantalla - 40) {
+          ctx.fillText(`${x.toFixed(formatoCota)} mm`, px + 4, this.altoPantalla - 50);
         }
       }
-
-      for (let y = 0; y <= this.coordenadaMaxY; y += this.pasoCuadricula) {
-        const p1 = this.convertirAPantalla(0, y);
-        const p2 = this.convertirAPantalla(this.coordenadaMaxX, y);
-
-        ctx.strokeStyle = (y % 100 === 0) ? '#1f252d' : '#14181e';
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.stroke();
-
-        if (y > 0) {
-          ctx.fillStyle = '#4c5663';
-          ctx.font = '10px "JetBrains Mono", monospace';
-          ctx.textAlign = 'right';
-          ctx.fillText(y.toString(), p1.x - 8, p1.y + 3);
+      for (let y = inicioY; y <= finY; y += principal) {
+        const py = centroPantallaY - (y - cy) * escala;
+        if (py >= 20 && py <= this.altoPantalla - 60) {
+          ctx.fillText(`${y.toFixed(formatoCota)} mm`, 14, py - 4);
         }
       }
     } else if (this.modoVista === 'XZ') {
+      const xMin = cx + (0 - centroPantallaX) / escala;
+      const xMax = cx + (this.anchoPantalla - centroPantallaX) / escala;
+      const inicioX = Math.floor(xMin / principal) * principal;
+      const finX = Math.ceil(xMax / principal) * principal;
+
       ctx.strokeStyle = '#181e26';
-      for (let x = 0; x <= this.coordenadaMaxX; x += this.pasoCuadricula) {
-        const p1 = this.convertirAPantalla(x, 0, -20);
-        const p2 = this.convertirAPantalla(x, 0, 50);
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.stroke();
+      ctx.beginPath();
+      for (let x = inicioX; x <= finX; x += principal) {
+        const px = centroPantallaX + (x - cx) * escala;
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, this.altoPantalla);
       }
+      ctx.stroke();
+
       // Línea de referencia Z = 0
-      const z0p1 = this.convertirAPantalla(0, 0, 0);
-      const z0p2 = this.convertirAPantalla(this.coordenadaMaxX, 0, 0);
+      const z0py = centroPantallaY - ((0 - (this.centroPieza ? this.centroPieza.z : 0)) * this.escalaZ * 2.2) * escala;
       ctx.strokeStyle = 'rgba(0, 229, 255, 0.4)';
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
-      ctx.moveTo(z0p1.x, z0p1.y);
-      ctx.lineTo(z0p2.x, z0p2.y);
+      ctx.moveTo(0, z0py);
+      ctx.lineTo(this.anchoPantalla, z0py);
       ctx.stroke();
       ctx.setLineDash([]);
     } else {
-      // Rejilla 3D sobre el plano Z = 0 (Superficie del material)
+      // Rejilla 3D adaptativa sobre el plano Z = 0
+      const limites = this.limitesMaterial || { minX: 0, maxX: 300, minY: 0, maxY: 250 };
+      const margen = Math.max(15, 35 / escala);
+      const minX = Math.floor((limites.minX - margen) / principal) * principal;
+      const maxX = Math.ceil((limites.maxX + margen) / principal) * principal;
+      const minY = Math.floor((limites.minY - margen) / principal) * principal;
+      const maxY = Math.ceil((limites.maxY + margen) / principal) * principal;
+
       ctx.strokeStyle = '#141a22';
-      for (let x = 0; x <= 350; x += 50) {
-        const p1 = this.convertirAPantalla(x, 0, 0);
-        const p2 = this.convertirAPantalla(x, 280, 0);
-        ctx.beginPath();
+      ctx.beginPath();
+      const lineasMaximas = 60;
+      const pasoReal = (maxX - minX) / principal > lineasMaximas ? principal * 2 : principal;
+      for (let x = minX; x <= maxX; x += pasoReal) {
+        const p1 = this.convertirAPantalla(x, minY, 0);
+        const p2 = this.convertirAPantalla(x, maxY, 0);
         ctx.moveTo(p1.x, p1.y);
         ctx.lineTo(p2.x, p2.y);
-        ctx.stroke();
       }
-      for (let y = 0; y <= 280; y += 50) {
-        const p1 = this.convertirAPantalla(0, y, 0);
-        const p2 = this.convertirAPantalla(350, y, 0);
-        ctx.beginPath();
+      for (let y = minY; y <= maxY; y += pasoReal) {
+        const p1 = this.convertirAPantalla(minX, y, 0);
+        const p2 = this.convertirAPantalla(maxX, y, 0);
         ctx.moveTo(p1.x, p1.y);
         ctx.lineTo(p2.x, p2.y);
-        ctx.stroke();
       }
+      ctx.stroke();
 
       // Tríada tridimensional de ejes en el origen WCS (0,0,0)
       const origen = this.convertirAPantalla(0, 0, 0);
-      const pX = this.convertirAPantalla(40, 0, 0);
-      const pY = this.convertirAPantalla(0, 40, 0);
-      const pZ = this.convertirAPantalla(0, 0, 30);
+      const longitudEje = Math.max(18, Math.min(50, 32 * Math.pow(this.zoom, 0.25)));
+      const pX = this.convertirAPantalla(longitudEje / escala * 1.65, 0, 0);
+      const pY = this.convertirAPantalla(0, longitudEje / escala * 1.65, 0);
+      const pZ = this.convertirAPantalla(0, 0, (longitudEje * 0.8) / (escala * this.escalaZ));
 
       // Eje X (Rojo hacia la derecha)
       ctx.strokeStyle = '#ff3b30';
@@ -927,14 +1019,14 @@ class VisualizadorCNC {
     }
   }
 
-  // Trazado de trayectorias en alta velocidad a 60 FPS
+  // Trazado de trayectorias en alta velocidad a 60 FPS con detalle adaptativo a máximo zoom
   dibujarTrayectorias(ctx) {
     if (!this.trayectoria || this.trayectoria.length === 0) return;
     ctx.save();
 
     // 1. Trazado rápido G0 (líneas discontinuas grises elevadas) en un único batch
     ctx.strokeStyle = '#738090';
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = Math.min(2.5, Math.max(1.0, 1.2 * Math.pow(this.zoom, 0.1)));
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
     let hayG0 = false;
@@ -968,11 +1060,11 @@ class VisualizadorCNC {
       ctx.stroke();
     }
 
-    // 3. Trayectorias de corte G1/G2/G3 (líneas continuas cian en profundidad)
+    // 3. Trayectorias de corte G1/G2/G3 (líneas continuas cian con grosor nítido escalado)
     ctx.strokeStyle = '#00e5ff';
-    ctx.lineWidth = 1.8;
+    ctx.lineWidth = Math.min(3.2, Math.max(1.4, 1.8 * Math.pow(this.zoom, 0.12)));
     ctx.setLineDash([]);
-    if (this.trayectoria.length < 1200) {
+    if (this.trayectoria.length < 1200 && this.zoom < 10) {
       ctx.shadowColor = 'rgba(0, 229, 255, 0.45)';
       ctx.shadowBlur = 4;
     } else {
@@ -992,6 +1084,24 @@ class VisualizadorCNC {
       }
     }
     if (hayG1) ctx.stroke();
+
+    // 4. Si el usuario hace zoom a fondo (> 1200%), dibujar nodos/vértices G-code con culling ultra-rápido
+    if (this.zoom > 12.0 && this.trayectoria.length < 25000) {
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      const radioNodo = Math.min(3.0, Math.max(1.2, Math.sqrt(this.zoom / 14)));
+      for (let i = 0; i < this.trayectoria.length; i++) {
+        const seg = this.trayectoria[i];
+        if (seg.tipo !== 'G0') {
+          const p = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
+          if (p.x >= -10 && p.x <= this.anchoPantalla + 10 && p.y >= -10 && p.y <= this.altoPantalla + 10) {
+            ctx.moveTo(p.x + radioNodo, p.y);
+            ctx.arc(p.x, p.y, radioNodo, 0, Math.PI * 2);
+          }
+        }
+      }
+      ctx.fill();
+    }
 
     ctx.restore();
   }
@@ -1015,7 +1125,7 @@ class VisualizadorCNC {
     ctx.restore();
   }
 
-  // Retícula indicadora y silueta cilíndrica de fresa en 3D hacia ARRIBA
+  // Retícula indicadora y silueta cilíndrica de fresa en 3D proporcionada en zoom profundo
   dibujarRetículaHerramienta(ctx) {
     const pos = this.convertirAPantalla(this.posicionHerramienta.x, this.posicionHerramienta.y, this.posicionHerramienta.z);
     ctx.save();
@@ -1039,7 +1149,14 @@ class VisualizadorCNC {
 
     // Silueta 3D de la fresa cilíndrica extendiéndose hacia ARRIBA (+Z)
     if (this.modoVista === '3D') {
-      const posArriba = this.convertirAPantalla(this.posicionHerramienta.x, this.posicionHerramienta.y, this.posicionHerramienta.z + 20);
+      const posArribaReal = this.convertirAPantalla(this.posicionHerramienta.x, this.posicionHerramienta.y, this.posicionHerramienta.z + 20);
+      const distPx = Math.abs(pos.y - posArribaReal.y);
+      const distPxLimitada = Math.min(80, Math.max(25, distPx));
+      const posArriba = {
+        x: posArribaReal.x,
+        y: pos.y - distPxLimitada
+      };
+
       ctx.strokeStyle = '#ffb703';
       ctx.fillStyle = 'rgba(255, 183, 3, 0.35)';
       ctx.lineWidth = 2;
@@ -1069,10 +1186,6 @@ class VisualizadorCNC {
   setViewMode(modo) { this.establecerModoVista(modo); }
   cambiarModoVista(modo) { this.establecerModoVista(modo); }
   setZoom(delta) { this.establecerZoom(delta); }
-  ajustarZoom(factor) {
-    const delta = factor > 1 ? 0.2 : -0.2;
-    this.establecerZoom(delta);
-  }
   resetView() { this.reiniciarVista(); }
   render() { this.solicitarRenderizado(); }
   loadGCode(gcode) { this.cargarTrayectoriaDesdeGCode(gcode); }
