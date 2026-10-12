@@ -117,6 +117,7 @@ document.addEventListener('DOMContentLoaded', () => {
     botonZoomMenos: document.getElementById('btn-zoom-out'),
     botonReiniciarZoom: document.getElementById('btn-zoom-reset'),
     // Visor de instrucciones y consola
+    visorGcodeViewport: document.getElementById('gcode-list-viewport'),
     contenedorLineasGcode: document.getElementById('gcode-lines-container'),
     pestañaBotonGcode: document.getElementById('tab-btn-gcode'),
     pestañaBotonConsola: document.getElementById('tab-btn-console'),
@@ -605,20 +606,50 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ==========================================
-  // VISOR DE LÍNEAS DE CÓDIGO G
+  // VISOR DE LÍNEAS DE CÓDIGO G (VIRTUALIZADO DE ALTO RENDIMIENTO)
   // ==========================================
+  const ALTURA_LINEA_GCODE = 22;
+
   function renderizarListaCodigoG() {
-    elementos.contenedorLineasGcode.innerHTML = '';
-    estado.lineasPrograma.forEach((elemento, indice) => {
+    const total = estado.lineasPrograma.length;
+    elementos.contenedorLineasGcode.style.height = (total * ALTURA_LINEA_GCODE) + 'px';
+    elementos.contenedorLineasGcode.style.position = 'relative';
+
+    renderizarVentanaVisibleGcode();
+  }
+
+  function renderizarVentanaVisibleGcode() {
+    const total = estado.lineasPrograma.length;
+    if (total === 0) {
+      elementos.contenedorLineasGcode.innerHTML = '';
+      return;
+    }
+
+    const viewport = elementos.visorGcodeViewport || document.getElementById('gcode-list-viewport');
+    const scrollTop = viewport ? viewport.scrollTop : 0;
+    const altoVisible = viewport ? viewport.clientHeight : 250;
+
+    const buffer = 15;
+    const lineasVisibles = Math.ceil(altoVisible / ALTURA_LINEA_GCODE) || 12;
+    const inicio = Math.max(0, Math.floor(scrollTop / ALTURA_LINEA_GCODE) - buffer);
+    const fin = Math.min(total, inicio + lineasVisibles + (buffer * 2));
+
+    const fragmento = document.createDocumentFragment();
+
+    for (let i = inicio; i < fin; i++) {
+      const elemento = estado.lineasPrograma[i];
       const elementoLista = document.createElement('li');
-      elementoLista.className = 'gcode-line';
-      if (indice === estado.indiceLineaActiva) {
-        elementoLista.classList.add('active');
-      }
+      elementoLista.className = 'gcode-line' + (i === estado.indiceLineaActiva ? ' active' : '');
+      elementoLista.dataset.index = i;
+      elementoLista.style.position = 'absolute';
+      elementoLista.style.top = (i * ALTURA_LINEA_GCODE) + 'px';
+      elementoLista.style.left = '0';
+      elementoLista.style.right = '0';
+      elementoLista.style.height = ALTURA_LINEA_GCODE + 'px';
 
       const columnaNumero = document.createElement('span');
       columnaNumero.className = 'line-num';
-      columnaNumero.textContent = (indice + 1).toString();
+      columnaNumero.textContent = (i + 1).toString();
 
       const columnaTexto = document.createElement('span');
       columnaTexto.className = 'line-text';
@@ -626,16 +657,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
       elementoLista.appendChild(columnaNumero);
       elementoLista.appendChild(columnaTexto);
+      fragmento.appendChild(elementoLista);
+    }
 
-      elementoLista.addEventListener('click', () => {
-        seleccionarLineaGcode(indice);
-      });
-
-      elementos.contenedorLineasGcode.appendChild(elementoLista);
-    });
-
-    resaltarLineaGcodeActiva();
+    elementos.contenedorLineasGcode.innerHTML = '';
+    elementos.contenedorLineasGcode.appendChild(fragmento);
   }
+
+  // Delegación de eventos para selección interactiva de líneas sin duplicar listeners
+  elementos.contenedorLineasGcode.addEventListener('click', (evento) => {
+    const lineaEl = evento.target.closest('.gcode-line');
+    if (lineaEl && lineaEl.dataset.index !== undefined) {
+      seleccionarLineaGcode(parseInt(lineaEl.dataset.index, 10));
+    }
+  });
+
+  if (elementos.visorGcodeViewport) {
+    elementos.visorGcodeViewport.addEventListener('scroll', () => {
+      renderizarVentanaVisibleGcode();
+    }, { passive: true });
+  }
+
+  window.addEventListener('resize', () => {
+    renderizarVentanaVisibleGcode();
+  });
 
   function formatearSintaxisCodigoG(textoOriginal) {
     let salida = textoOriginal;
@@ -680,15 +725,30 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function resaltarLineaGcodeActiva() {
-    const todasLasLineas = elementos.contenedorLineasGcode.querySelectorAll('.gcode-line');
-    todasLasLineas.forEach((elem, i) => {
-      if (i === estado.indiceLineaActiva) {
-        elem.classList.add('active');
-        elem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      } else {
-        elem.classList.remove('active');
+    const idx = estado.indiceLineaActiva;
+    const viewport = elementos.visorGcodeViewport || document.getElementById('gcode-list-viewport');
+    if (viewport) {
+      const posTop = idx * ALTURA_LINEA_GCODE;
+      const viewTop = viewport.scrollTop;
+      const viewBottom = viewTop + viewport.clientHeight;
+
+      if (posTop < viewTop + 20 || posTop > viewBottom - 40) {
+        viewport.scrollTop = Math.max(0, posTop - (viewport.clientHeight / 2));
       }
-    });
+    }
+
+    const elementoPrevio = elementos.contenedorLineasGcode.querySelector('.gcode-line.active');
+    if (elementoPrevio) {
+      if (parseInt(elementoPrevio.dataset.index, 10) === idx) return;
+      elementoPrevio.classList.remove('active');
+    }
+
+    const elementoNuevo = elementos.contenedorLineasGcode.querySelector(`.gcode-line[data-index="${idx}"]`);
+    if (elementoNuevo) {
+      elementoNuevo.classList.add('active');
+    } else {
+      renderizarVentanaVisibleGcode();
+    }
   }
 
   // ==========================================
@@ -699,6 +759,9 @@ document.addEventListener('DOMContentLoaded', () => {
     renglon.className = `console-line ${claseCss}`;
     renglon.textContent = mensaje;
     elementos.salidaConsola.appendChild(renglon);
+    while (elementos.salidaConsola.children.length > 200) {
+      elementos.salidaConsola.removeChild(elementos.salidaConsola.firstChild);
+    }
     elementos.salidaConsola.scrollTop = elementos.salidaConsola.scrollHeight;
   }
 
@@ -958,6 +1021,7 @@ document.addEventListener('DOMContentLoaded', () => {
         actualizarMetricasTelemetria();
         if (window.visualizadorCNC) {
           window.visualizadorCNC.cargarTrayectoriaDesdeGCode(contenidoTexto);
+          window.visualizadorCNC.ajustarVistaAPieza();
         }
         const textoCompleto = lineas.map(l => l.texto).join('\n');
         if (window.puenteCNC) window.puenteCNC.analizarGcode(textoCompleto);

@@ -102,9 +102,35 @@ class VisualizadorCNC {
   }
 
   reiniciarVista() {
-    this.zoom = 1.0;
-    this.desplazamientoX = 70;
-    this.desplazamientoY = -30;
+    if (this.limitesMaterial && this.limitesMaterial.maxX > this.limitesMaterial.minX) {
+      this.ajustarVistaAPieza();
+    } else {
+      this.zoom = 1.0;
+      this.desplazamientoX = 70;
+      this.desplazamientoY = -30;
+      this.actualizarSuperposicionZoom();
+      this.solicitarRenderizado();
+    }
+  }
+
+  // Encuadra y hace zoom automáticamente para centrar la pieza cargada en pantalla
+  ajustarVistaAPieza() {
+    if (!this.limitesMaterial || !this.anchoPantalla) return;
+    const anchoPieza = Math.max(10, this.limitesMaterial.maxX - this.limitesMaterial.minX);
+    const altoPieza = Math.max(10, this.limitesMaterial.maxY - this.limitesMaterial.minY);
+    const centroX = (this.limitesMaterial.minX + this.limitesMaterial.maxX) / 2;
+    const centroY = (this.limitesMaterial.minY + this.limitesMaterial.maxY) / 2;
+
+    const escalaDeseadaX = (this.anchoPantalla * 0.72) / anchoPieza;
+    const escalaDeseadaY = (this.altoPantalla * 0.72) / altoPieza;
+    const escalaOptima = Math.min(escalaDeseadaX, escalaDeseadaY);
+
+    this.zoom = Math.max(0.4, Math.min(5.0, escalaOptima / 1.65));
+    const escala = 1.65 * this.zoom;
+
+    this.desplazamientoX = Math.round((this.anchoPantalla / 2) - 60 - (centroX * escala));
+    this.desplazamientoY = Math.round((centroY * escala) - (this.altoPantalla / 2) + 50);
+
     this.actualizarSuperposicionZoom();
     this.solicitarRenderizado();
   }
@@ -503,33 +529,55 @@ class VisualizadorCNC {
     ctx.restore();
   }
 
-  // Líneas continuas para corte y discontinuas para movimiento en vacío
+  // Líneas continuas para corte y discontinuas para movimiento en vacío (Batching de alto rendimiento a 60 FPS)
   dibujarTrayectorias(ctx) {
+    if (!this.trayectoria || this.trayectoria.length === 0) return;
     ctx.save();
-    for (const segmento of this.trayectoria) {
-      const inicio = this.convertirAPantalla(segmento.x1, segmento.y1, segmento.z1);
-      const fin = this.convertirAPantalla(segmento.x2, segmento.y2, segmento.z2);
 
-      ctx.beginPath();
-      ctx.moveTo(inicio.x, inicio.y);
-      ctx.lineTo(fin.x, fin.y);
-
-      if (segmento.tipo === 'G0') {
-        // Desplazamiento rápido sin corte
-        ctx.strokeStyle = '#6e7a88';
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([4, 4]);
-        ctx.stroke();
-      } else {
-        // Avance de corte
-        ctx.strokeStyle = '#00e5ff';
-        ctx.lineWidth = 1.8;
-        ctx.setLineDash([]);
-        ctx.shadowColor = 'rgba(0, 229, 255, 0.4)';
-        ctx.shadowBlur = 4;
-        ctx.stroke();
+    // 1. Trazado rápido G0 (líneas discontinuas grises) en un único batch
+    ctx.strokeStyle = '#6e7a88';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([4, 4]);
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    let hayG0 = false;
+    for (let i = 0; i < this.trayectoria.length; i++) {
+      const seg = this.trayectoria[i];
+      if (seg.tipo === 'G0') {
+        const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+        const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        hayG0 = true;
       }
     }
+    if (hayG0) ctx.stroke();
+
+    // 2. Trayectorias de corte G1/G2/G3 (líneas continuas cian) en un único batch
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([]);
+    if (this.trayectoria.length < 1200) {
+      ctx.shadowColor = 'rgba(0, 229, 255, 0.4)';
+      ctx.shadowBlur = 4;
+    } else {
+      ctx.shadowBlur = 0;
+    }
+
+    ctx.beginPath();
+    let hayG1 = false;
+    for (let i = 0; i < this.trayectoria.length; i++) {
+      const seg = this.trayectoria[i];
+      if (seg.tipo !== 'G0') {
+        const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+        const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        hayG1 = true;
+      }
+    }
+    if (hayG1) ctx.stroke();
+
     ctx.restore();
   }
 

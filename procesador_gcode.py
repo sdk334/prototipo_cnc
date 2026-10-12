@@ -315,7 +315,7 @@ class ProcesadorGCode:
             "distancia_corte_mm": round(distancia_total_corte, 2),
             "distancia_rapido_mm": round(distancia_total_rapido, 2),
             "distancia_total_mm": round(distancia_total_corte + distancia_total_rapido, 2),
-            "segmentos": segmentos,
+            "segmentos": segmentos if len(segmentos) <= 500 else [],
             "envolvente": {
                 "min": min_coords,
                 "max": max_coords,

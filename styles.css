@@ -633,18 +633,28 @@ body {
   overflow-y: auto;
   font-family: var(--font-mono);
   font-size: 12px;
-  padding: 4px 0;
+  padding: 0;
+  position: relative;
 }
 
 .gcode-lines-list {
   list-style: none;
+  position: relative;
+  width: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 .gcode-line {
   display: flex;
-  padding: 2px 10px;
+  padding: 0 10px;
   gap: 12px;
   cursor: pointer;
+  height: 22px;
+  line-height: 22px;
+  box-sizing: border-box;
+  align-items: center;
+  white-space: nowrap;
 }
 
 .gcode-line:hover {
@@ -658,7 +668,7 @@ body {
 }
 
 .gcode-line .line-num {
-  width: 28px;
+  min-width: 42px;
   text-align: right;
   color: var(--text-subtle);
   user-select: none;
@@ -667,6 +677,8 @@ body {
 .gcode-line .line-text {
   flex: 1;
   color: #d1d5db;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .gcode-line .line-text .cmd-g { color: var(--cyan-primary); font-weight: 600; }
