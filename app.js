@@ -989,6 +989,13 @@ document.addEventListener('DOMContentLoaded', () => {
     window.visualizadorCNC.cambiarModoVista('3D');
   });
 
+  const botonVistaOrbita = document.getElementById('btn-view-orbit');
+  if (botonVistaOrbita) {
+    botonVistaOrbita.addEventListener('click', () => {
+      window.visualizadorCNC.cambiarModoVista('3D');
+    });
+  }
+
   elementos.botonZoomMas.addEventListener('click', () => window.visualizadorCNC.ajustarZoom(1.2));
   elementos.botonZoomMenos.addEventListener('click', () => window.visualizadorCNC.ajustarZoom(0.8));
   elementos.botonReiniciarZoom.addEventListener('click', () => window.visualizadorCNC.reiniciarVista());

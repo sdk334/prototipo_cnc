@@ -141,10 +141,45 @@
         <!-- Floating Tool Position Badge (Top-Left) -->
         <div class="overlay-floating-badge badge-pos" id="badge-tool-pos">
           <span class="badge-title">POSICIÓN HERRAMIENTA</span>
-          <span class="badge-coords">X:<b id="v-tool-x">0.0</b> Y:<b id="v-tool-y">0.0</b></span>
+          <span class="badge-coords">X:<b id="v-tool-x">0.0</b> Y:<b id="v-tool-y">0.0</b> Z:<b id="v-tool-z">0.0</b></span>
         </div>
 
-        <!-- Floating Legend Badge (Top-Right) -->
+        <!-- Cubo de Navegación 3D (ViewCube) para orientarse y moverse en los 3 ejes -->
+        <div class="viewcube-container" id="viewcube-container" title="Cubo de Navegación 3D - Clic en caras o arrastre para orbitar en los 3 ejes (X, Y, Z)">
+          <div class="viewcube-stage" id="viewcube-stage">
+            <div class="viewcube-cube" id="viewcube-cube">
+              <div class="viewcube-face face-top" data-face="top" title="Vista Superior (Plano XY)">
+                <span>SUP</span>
+                <span class="sub-label">XY</span>
+              </div>
+              <div class="viewcube-face face-front" data-face="front" title="Vista Frontal (Eje Z / XZ)">
+                <span>FRO</span>
+                <span class="sub-label">XZ</span>
+              </div>
+              <div class="viewcube-face face-right" data-face="right" title="Vista Lateral Derecha (YZ)">
+                <span>DER</span>
+                <span class="sub-label">YZ</span>
+              </div>
+              <div class="viewcube-face face-back" data-face="back" title="Vista Trasera">
+                <span>TRA</span>
+              </div>
+              <div class="viewcube-face face-left" data-face="left" title="Vista Lateral Izquierda">
+                <span>IZQ</span>
+              </div>
+              <div class="viewcube-face face-bottom" data-face="bottom" title="Vista Inferior">
+                <span>INF</span>
+              </div>
+            </div>
+          </div>
+          <div class="viewcube-toolbar">
+            <button class="vc-action-btn" id="vc-btn-iso" title="Vista Isométrica 3D"><i class="fa-solid fa-cube"></i> 3D</button>
+            <button class="vc-action-btn" id="vc-btn-xy" title="Plano Superior XY">XY</button>
+            <button class="vc-action-btn" id="vc-btn-xz" title="Plano Frontal XZ (Eje Z)">XZ</button>
+            <button class="vc-action-btn" id="vc-btn-zscale" title="Realzar Profundidad del Eje Z">Z: <b id="vc-lbl-zscale">1.5x</b></button>
+          </div>
+        </div>
+
+        <!-- Floating Legend Badge (Top-Right, debajo del ViewCube) -->
         <div class="overlay-floating-badge badge-legend" id="badge-legend">
           <div class="legend-row">
             <span class="legend-line line-cut"></span>
@@ -174,6 +209,8 @@
           <span>Vista: <b id="lbl-view-mode">XY</b></span>
           <span class="divider">·</span>
           <span>Zoom: <b id="lbl-view-zoom">100%</b></span>
+          <span class="divider">·</span>
+          <span>Eje Z: <b id="lbl-view-zscale">1.5x</b></span>
         </div>
 
         <!-- Canvas Bottom-Right Telemetry Overlay -->
@@ -193,6 +230,7 @@
             <button class="viz-btn active" id="btn-view-xy">XY</button>
             <button class="viz-btn" id="btn-view-xz">XZ</button>
             <button class="viz-btn" id="btn-view-3d">3D</button>
+            <button class="viz-btn" id="btn-view-orbit" title="Modo Órbita 3D"><i class="fa-solid fa-arrows-spin"></i> Órbita 3D</button>
           </div>
 
           <div class="viz-btn-group zoom-controls">
