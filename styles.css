@@ -193,12 +193,19 @@ body {
 }
 
 .btn-estop.alarm-active {
-  animation: pulse-red 0.8s infinite alternate;
+  animation: pulse-red 1s infinite alternate ease-in-out;
+  will-change: opacity, box-shadow;
 }
 
 @keyframes pulse-red {
-  from { box-shadow: 0 0 8px rgba(255, 51, 75, 0.4); }
-  to { box-shadow: 0 0 24px rgba(255, 51, 75, 0.9); }
+  from {
+    opacity: 0.85;
+    box-shadow: 0 0 6px rgba(255, 51, 75, 0.4);
+  }
+  to {
+    opacity: 1;
+    box-shadow: 0 0 16px rgba(255, 51, 75, 0.8);
+  }
 }
 
 /* Status Pills */

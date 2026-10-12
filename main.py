@@ -10,7 +10,7 @@ Tecnología: Python 3.14 + PyQt6 + PyQt6-WebEngine + PySerial
 import os
 import sys
 from PyQt6.QtCore import QUrl, Qt
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QColor
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
@@ -29,14 +29,16 @@ class VentanaPrincipalCNC(QMainWindow):
         self.setWindowTitle("CNC Basic v1.0 - Interfaz de Control CNC Educativa (ESCOM - IPN)")
         self.resize(1480, 880)
         self.setMinimumSize(1024, 680)
+        self.setStyleSheet("QMainWindow { background-color: #0a0c0e; }")
 
         # 1. Instanciar módulos del núcleo de control en Python
         self.controlador = ControladorGRBL()
         self.procesador = ProcesadorGCode()
         self.puente = PuenteCNC(self.controlador, self.procesador)
 
-        # 2. Configurar vista web integrada Chromium
+        # 2. Configurar vista web integrada Chromium con fondo oscuro nativo
         self.vista_web = QWebEngineView(self)
+        self.vista_web.page().setBackgroundColor(QColor("#0a0c0e"))
         self.configurar_motor_web()
 
         # 3. Configurar el canal IPC QWebChannel
@@ -46,6 +48,7 @@ class VentanaPrincipalCNC(QMainWindow):
 
         # 4. Diseñar contenedor central
         contenedor = QWidget()
+        contenedor.setStyleSheet("background-color: #0a0c0e;")
         layout = QVBoxLayout(contenedor)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.vista_web)
@@ -57,7 +60,7 @@ class VentanaPrincipalCNC(QMainWindow):
         self.vista_web.load(QUrl.fromLocalFile(ruta_html))
 
     def configurar_motor_web(self):
-        """Habilita permisos para cargar hojas de estilo locales y fuentes de Font Awesome / Google Fonts."""
+        """Habilita permisos y aceleración para renderizado fluido sin parpadeos."""
         ajustes = self.vista_web.settings()
         ajustes.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         ajustes.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)

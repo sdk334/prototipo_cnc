@@ -30,9 +30,20 @@ class VisualizadorCNC {
     this.coordenadaMaxX = 350;
     this.coordenadaMaxY = 280;
 
+    this.redibujadoPendiente = false;
     this.iniciarEventos();
     this.redimensionarLienzo();
     window.addEventListener('resize', () => this.redimensionarLienzo());
+  }
+
+  // Solicita redibujado sincronizado con la tasa de refresco del monitor (60 FPS / vsync)
+  solicitarRenderizado() {
+    if (this.redibujadoPendiente) return;
+    this.redibujadoPendiente = true;
+    requestAnimationFrame(() => {
+      this.redibujadoPendiente = false;
+      this.renderizar();
+    });
   }
 
   // Ajusta el lienzo a la resolución del dispositivo para máxima nitidez
@@ -42,11 +53,11 @@ class VisualizadorCNC {
 
     this.lienzo.width = rectangulo.width * proporcionPixeles;
     this.lienzo.height = rectangulo.height * proporcionPixeles;
-    this.contexto.scale(proporcionPixeles, proporcionPixeles);
+    this.contexto.setTransform(proporcionPixeles, 0, 0, proporcionPixeles, 0, 0);
 
     this.anchoPantalla = rectangulo.width;
     this.altoPantalla = rectangulo.height;
-    this.renderizar();
+    this.solicitarRenderizado();
   }
 
   // Control de interacción de ratón (paneo y zoom)
@@ -62,7 +73,7 @@ class VisualizadorCNC {
       if (!this.estaArrastrando) return;
       this.desplazamientoX = evento.clientX - this.arrastreInicioX;
       this.desplazamientoY = evento.clientY - this.arrastreInicioY;
-      this.renderizar();
+      this.solicitarRenderizado();
     });
 
     window.addEventListener('mouseup', () => {
@@ -75,14 +86,14 @@ class VisualizadorCNC {
       const factorZoom = evento.deltaY < 0 ? 1.12 : 0.89;
       this.zoom = Math.max(0.3, Math.min(6.0, this.zoom * factorZoom));
       this.actualizarSuperposicionZoom();
-      this.renderizar();
+      this.solicitarRenderizado();
     }, { passive: false });
   }
 
   establecerZoom(delta) {
     this.zoom = Math.max(0.3, Math.min(6.0, this.zoom + delta));
     this.actualizarSuperposicionZoom();
-    this.renderizar();
+    this.solicitarRenderizado();
   }
 
   reiniciarVista() {
@@ -90,14 +101,14 @@ class VisualizadorCNC {
     this.desplazamientoX = 70;
     this.desplazamientoY = -30;
     this.actualizarSuperposicionZoom();
-    this.renderizar();
+    this.solicitarRenderizado();
   }
 
   establecerModoVista(modo) {
     this.modoVista = modo;
     const etiquetaModo = document.getElementById('lbl-view-mode');
     if (etiquetaModo) etiquetaModo.textContent = modo;
-    this.renderizar();
+    this.solicitarRenderizado();
   }
 
   actualizarSuperposicionZoom() {
@@ -107,6 +118,15 @@ class VisualizadorCNC {
 
   // Actualiza la posición de la herramienta y sus indicadores en pantalla
   establecerPosicionHerramienta(x, y, z) {
+    const dx = Math.abs(this.posicionHerramienta.x - x);
+    const dy = Math.abs(this.posicionHerramienta.y - y);
+    const dz = Math.abs(this.posicionHerramienta.z - z);
+
+    // Evita redibujados innecesarios si la herramienta no se ha desplazado
+    if (dx < 0.001 && dy < 0.001 && dz < 0.001) {
+      return;
+    }
+
     this.posicionHerramienta.x = x;
     this.posicionHerramienta.y = y;
     this.posicionHerramienta.z = z;
@@ -116,7 +136,7 @@ class VisualizadorCNC {
     if (indicadorX) indicadorX.textContent = x.toFixed(1);
     if (indicadorY) indicadorY.textContent = y.toFixed(1);
 
-    this.renderizar();
+    this.solicitarRenderizado();
   }
 
   // Conversión de coordenadas de la máquina (mm) a coordenadas de pantalla (píxeles)
@@ -363,7 +383,7 @@ class VisualizadorCNC {
   setViewMode(modo) { this.establecerModoVista(modo); }
   setZoom(delta) { this.establecerZoom(delta); }
   resetView() { this.reiniciarVista(); }
-  render() { this.renderizar(); }
+  render() { this.solicitarRenderizado(); }
 }
 
 // Compatibilidad de alias global

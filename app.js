@@ -183,13 +183,21 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function configurarSuscripcionesPuente(puente) {
-    // 1. Recepción de puertos seriales disponibles
+    // 1. Recepción de puertos seriales disponibles (solo actualiza DOM si hubo cambios reales)
     puente.senial_puertos.connect((jsonPuertos) => {
       try {
         const listaPuertos = JSON.parse(jsonPuertos);
         const valorPrevio = elementos.selectorPuertoCom.value;
-        elementos.selectorPuertoCom.innerHTML = '';
 
+        // Comprobar si la lista es idéntica a la que ya tiene el selector para no parpadear
+        const puertosActualesStr = Array.from(elementos.selectorPuertoCom.options).map(o => o.value).join(',');
+        const nuevosPuertosStr = listaPuertos.map(p => p.puerto).join(',');
+
+        if (puertosActualesStr === nuevosPuertosStr && elementos.selectorPuertoCom.options.length > 0) {
+          return; // No mutar el DOM si la lista no cambió
+        }
+
+        elementos.selectorPuertoCom.innerHTML = '';
         let puertoSeleccionado = null;
 
         listaPuertos.forEach((p) => {
@@ -220,7 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    // 2. Recepción de telemetría en tiempo real desde el ciclo de 200 ms de Python
+    // 2. Recepción de telemetría en tiempo real desde el ciclo de 200 ms de Python (con diffing DOM)
     puente.senial_estado.connect((jsonEstado) => {
       try {
         const d = JSON.parse(jsonEstado);
@@ -237,34 +245,43 @@ document.addEventListener('DOMContentLoaded', () => {
         actualizarLecturasDRO();
         establecerEstadoOperativo(d.estado);
 
-        // Telemetría de avance y husillo
-        elementos.metricaVelocidadAvance.textContent = `${Math.round(d.feed_real)} mm/min`;
-        elementos.etiquetaRpmEnVivo.textContent = `${Math.round(d.spindle_real)} RPM`;
-
-        if (d.spindle_encendido) {
-          estado.husilloActivo = true;
-          elementos.botonAlternarHusillo.classList.add('active');
-          elementos.textoBotonHusillo.textContent = 'Spindle ON';
-          elementos.metricaEstadoHusillo.textContent = 'ON';
-          elementos.metricaEstadoHusillo.classList.add('highlight-cyan');
-        } else {
-          estado.husilloActivo = false;
-          elementos.botonAlternarHusillo.classList.remove('active');
-          elementos.textoBotonHusillo.textContent = 'Spindle OFF';
-          elementos.metricaEstadoHusillo.textContent = 'OFF';
-          elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
+        // Telemetría de avance y husillo (solo actualizar texto si cambió)
+        const txtFeed = `${Math.round(d.feed_real)} mm/min`;
+        if (elementos.metricaVelocidadAvance.textContent !== txtFeed) {
+          elementos.metricaVelocidadAvance.textContent = txtFeed;
         }
 
-        // Búfer del planificador y recepción de hardware
-        elementos.telemetriaBuffer.textContent = `${d.buffer_planificador} / ${d.buffer_rx_libre}`;
+        const txtRpm = `${Math.round(d.spindle_real)} RPM`;
+        if (elementos.etiquetaRpmEnVivo.textContent !== txtRpm) {
+          elementos.etiquetaRpmEnVivo.textContent = txtRpm;
+        }
+
+        if (estado.husilloActivo !== d.spindle_encendido) {
+          estado.husilloActivo = d.spindle_encendido;
+          if (estado.husilloActivo) {
+            elementos.botonAlternarHusillo.classList.add('active');
+            elementos.textoBotonHusillo.textContent = 'Spindle ON';
+            elementos.metricaEstadoHusillo.textContent = 'ON';
+            elementos.metricaEstadoHusillo.classList.add('highlight-cyan');
+          } else {
+            elementos.botonAlternarHusillo.classList.remove('active');
+            elementos.textoBotonHusillo.textContent = 'Spindle OFF';
+            elementos.metricaEstadoHusillo.textContent = 'OFF';
+            elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
+          }
+        }
+
+        // Búfer del planificador
+        const txtBuffer = `${d.buffer_planificador} / ${d.buffer_rx_libre}`;
+        if (elementos.telemetriaBuffer.textContent !== txtBuffer) {
+          elementos.telemetriaBuffer.textContent = txtBuffer;
+        }
 
         // Pines de fin de carrera y sondas activas
-        if (d.pines_limite) {
-          elementos.puntoIndicadorLimites.className = 'indicator-dot dot-connected';
-          elementos.etiquetaEstadoLimites.textContent = `Límites: [${d.pines_limite}]`;
-        } else {
-          elementos.puntoIndicadorLimites.className = 'indicator-dot dot-off';
-          elementos.etiquetaEstadoLimites.textContent = 'Límites: OFF';
+        const txtLimites = d.pines_limite ? `Límites: [${d.pines_limite}]` : 'Límites: OFF';
+        if (elementos.etiquetaEstadoLimites.textContent !== txtLimites) {
+          elementos.etiquetaEstadoLimites.textContent = txtLimites;
+          elementos.puntoIndicadorLimites.className = d.pines_limite ? 'indicator-dot dot-connected' : 'indicator-dot dot-off';
         }
       } catch (e) {
         console.error('Error al procesar estado de telemetría:', e);
@@ -348,24 +365,25 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Refrescar automáticamente al hacer clic en el menú desplegable para abrirlo
-  elementos.selectorPuertoCom.addEventListener('mousedown', () => {
-    if (window.puenteCNC) {
-      window.puenteCNC.escanearPuertos();
-    }
-  });
-
   // ==========================================
-  // SINCRONIZACIÓN DE COORDENADAS Y PANTALLA DRO
+  // SINCRONIZACIÓN DE COORDENADAS Y PANTALLA DRO (Diffing sin repintados)
   // ==========================================
   function actualizarLecturasDRO() {
-    elementos.droValorX.textContent = estado.coordenadasTrabajo.x.toFixed(3);
-    elementos.droValorY.textContent = estado.coordenadasTrabajo.y.toFixed(3);
-    elementos.droValorZ.textContent = estado.coordenadasTrabajo.z.toFixed(3);
+    const xStr = estado.coordenadasTrabajo.x.toFixed(3);
+    const yStr = estado.coordenadasTrabajo.y.toFixed(3);
+    const zStr = estado.coordenadasTrabajo.z.toFixed(3);
 
-    elementos.droMaquinaX.textContent = estado.coordenadasMaquina.x.toFixed(3);
-    elementos.droMaquinaY.textContent = estado.coordenadasMaquina.y.toFixed(3);
-    elementos.droMaquinaZ.textContent = estado.coordenadasMaquina.z.toFixed(3);
+    if (elementos.droValorX.textContent !== xStr) elementos.droValorX.textContent = xStr;
+    if (elementos.droValorY.textContent !== yStr) elementos.droValorY.textContent = yStr;
+    if (elementos.droValorZ.textContent !== zStr) elementos.droValorZ.textContent = zStr;
+
+    const mxStr = estado.coordenadasMaquina.x.toFixed(3);
+    const myStr = estado.coordenadasMaquina.y.toFixed(3);
+    const mzStr = estado.coordenadasMaquina.z.toFixed(3);
+
+    if (elementos.droMaquinaX.textContent !== mxStr) elementos.droMaquinaX.textContent = mxStr;
+    if (elementos.droMaquinaY.textContent !== myStr) elementos.droMaquinaY.textContent = myStr;
+    if (elementos.droMaquinaZ.textContent !== mzStr) elementos.droMaquinaZ.textContent = mzStr;
 
     if (window.visualizadorCNC) {
       window.visualizadorCNC.establecerPosicionHerramienta(
@@ -376,12 +394,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Actualiza visualmente el estado del controlador (IDLE, RUN, ALARM, HOLD)
+  // Actualiza visualmente el estado del controlador (IDLE, RUN, ALARM, HOLD) solo si cambia
   function establecerEstadoOperativo(nuevoEstado) {
+    if (estado.estadoOperativo === nuevoEstado) return;
     estado.estadoOperativo = nuevoEstado;
     elementos.etiquetaEstadoControlador.textContent = nuevoEstado;
-    elementos.puntoIndicadorEstado.className = 'indicator-dot';
 
+    elementos.puntoIndicadorEstado.className = 'indicator-dot';
     if (nuevoEstado === 'IDLE') {
       elementos.puntoIndicadorEstado.classList.add('dot-idle');
       elementos.botonParoEmergencia.classList.remove('alarm-active');
