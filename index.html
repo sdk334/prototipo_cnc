@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CNC Basic v1.0 - Interfaz de Control CNC Educativa</title>
+  <meta name="description" content="Interfaz didáctica de control numérico computarizado (CNC) basada en firmware GRBL v1.1 para Trabajo Terminal (ESCOM - IPN).">
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="theme-dark">
+
+  <!-- ================= TOP MENUBAR ================= -->
+  <header class="app-menubar" id="main-menubar">
+    <nav class="menu-nav">
+      <div class="menu-item" id="menu-archivo">
+        <button class="menu-btn" type="button">Archivo</button>
+        <div class="dropdown-menu">
+          <button class="dropdown-item" id="btn-menu-open-file">📂 Abrir Archivo G-Code... <span class="shortcut">Ctrl+O</span></button>
+          <button class="dropdown-item" id="btn-menu-load-sample">📄 Cargar pieza_01.nc (Demo)</button>
+          <div class="dropdown-divider"></div>
+          <button class="dropdown-item" id="btn-menu-save-gcode">💾 Guardar G-Code <span class="shortcut">Ctrl+S</span></button>
+          <div class="dropdown-divider"></div>
+          <button class="dropdown-item" id="btn-menu-export-log">📤 Exportar Bitácora de Sesión</button>
+        </div>
+      </div>
+
+      <div class="menu-item" id="menu-editar">
+        <button class="menu-btn" type="button">Editar</button>
+        <div class="dropdown-menu">
+          <button class="dropdown-item" id="btn-menu-clear-gcode">Limpiar Programa</button>
+          <button class="dropdown-item" id="btn-menu-clear-console">Limpiar Consola Serial</button>
+        </div>
+      </div>
+
+      <div class="menu-item" id="menu-maquina">
+        <button class="menu-btn" type="button">Máquina</button>
+        <div class="dropdown-menu">
+          <button class="dropdown-item" id="btn-menu-homing">🏠 Ciclo de Homing ($H)</button>
+          <button class="dropdown-item" id="btn-menu-unlock">🔓 Desbloquear Alarma ($X)</button>
+          <button class="dropdown-item" id="btn-menu-reset-grbl">🔄 Reset Software (Ctrl+X)</button>
+          <div class="dropdown-divider"></div>
+          <button class="dropdown-item" id="btn-menu-goto-origin">📍 Ir a Cero Pieza (G0 X0 Y0 Z0)</button>
+        </div>
+      </div>
+
+      <div class="menu-item" id="menu-herramientas">
+        <button class="menu-btn" type="button">Herramientas</button>
+        <div class="dropdown-menu">
+          <button class="dropdown-item" id="btn-menu-heightmap">🗺️ Mapa de Alturas (Auto-Level)</button>
+          <button class="dropdown-item" id="btn-menu-calibration">📐 Asistente de Calibración Pasos/mm</button>
+          <button class="dropdown-item" id="btn-menu-macros">⚡ Comandos Rápidos de Usuario</button>
+        </div>
+      </div>
+
+      <div class="menu-item" id="menu-vista">
+        <button class="menu-btn" type="button">Vista</button>
+        <div class="dropdown-menu">
+          <button class="dropdown-item" id="btn-menu-view-xy">Vista XY (Planta)</button>
+          <button class="dropdown-item" id="btn-menu-view-xz">Vista XZ (Frontal)</button>
+          <button class="dropdown-item" id="btn-menu-view-3d">Vista 3D Isométrica</button>
+          <div class="dropdown-divider"></div>
+          <button class="dropdown-item" id="btn-menu-toggle-grid">Alternar Cuadrícula</button>
+          <button class="dropdown-item" id="btn-menu-fullscreen">Pantalla Completa <span class="shortcut">F11</span></button>
+        </div>
+      </div>
+
+      <div class="menu-item" id="menu-ayuda">
+        <button class="menu-btn" type="button">Ayuda</button>
+        <div class="dropdown-menu">
+          <button class="dropdown-item" id="btn-menu-gcode-dict">📖 Diccionario G-Code Interactivo</button>
+          <button class="dropdown-item" id="btn-menu-manual">📚 Guía Rápida de Operación CNC</button>
+          <div class="dropdown-divider"></div>
+          <button class="dropdown-item" id="btn-menu-about">ℹ️ Acerca de CNC Basic v1.0 (TT ESCOM)</button>
+        </div>
+      </div>
+    </nav>
+  </header>
+
+  <!-- ================= TOP HEADER STATUS BAR ================= -->
+  <section class="app-statusbar" id="main-statusbar">
+    <div class="statusbar-left">
+      <!-- Big E-STOP Button -->
+      <button class="btn-estop" id="btn-estop" title="Parada de Emergencia Inmediata">
+        <span class="estop-icon">🛑</span> E-STOP
+      </button>
+
+      <!-- Serial Port Dropdown Pill -->
+      <div class="status-pill pill-port" id="pill-serial-port">
+        <span class="indicator-dot dot-connected" id="port-status-dot"></span>
+        <select class="port-select" id="select-com-port" title="Puerto y velocidad serial">
+          <option value="COM3:115200" selected>COM3 / 115200</option>
+          <option value="COM1:115200">COM1 / 115200</option>
+          <option value="COM4:115200">COM4 / 115200</option>
+          <option value="SIM:115200">GRBL Simulator (Virtual)</option>
+        </select>
+        <span class="pill-arrow">⌄</span>
+      </div>
+
+      <!-- Machine State Pill -->
+      <div class="status-pill pill-state" id="pill-machine-state">
+        <span class="indicator-dot dot-idle" id="state-status-dot"></span>
+        <span class="state-label" id="lbl-machine-state">IDLE</span>
+      </div>
+
+      <!-- Limits Pill -->
+      <div class="status-pill pill-limits" id="pill-limits-state" title="Estado de sensores de límite fin de carrera">
+        <span class="indicator-dot dot-off" id="limits-status-dot"></span>
+        <span class="limits-label" id="lbl-limits-state">Límites: OFF</span>
+      </div>
+    </div>
+
+    <div class="statusbar-right">
+      <div class="app-branding">
+        <span class="brand-title">CNC Basic</span>
+        <span class="brand-version">v1.0</span>
+      </div>
+      <button class="btn-config" id="btn-open-config" title="Configuración del Sistema">
+        <svg class="gear-icon" viewBox="0 0 24 24" width="16" height="16">
+          <path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.45.17-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+        </svg>
+        Config
+      </button>
+    </div>
+  </section>
+
+  <!-- ================= MAIN WORKSPACE GRID ================= -->
+  <main class="app-workspace">
+
+    <!-- LEFT COLUMN: VISUALIZER + BOTTOM PANELS -->
+    <div class="workspace-center">
+
+      <!-- 2D / 3D CANVAS VISUALIZER CONTAINER -->
+      <section class="visualizer-container" id="visualizer-container">
+        <!-- Floating Tool Position Badge (Top-Left) -->
+        <div class="overlay-floating-badge badge-pos" id="badge-tool-pos">
+          <span class="badge-title">POSICIÓN HERRAMIENTA</span>
+          <span class="badge-coords">X:<b id="v-tool-x">266.7</b> Y:<b id="v-tool-y">224.5</b></span>
+        </div>
+
+        <!-- Floating Legend Badge (Top-Right) -->
+        <div class="overlay-floating-badge badge-legend" id="badge-legend">
+          <div class="legend-row">
+            <span class="legend-line line-cut"></span>
+            <span class="legend-text">Corte (G1/G2)</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-line line-rapid"></span>
+            <span class="legend-text">Rápido (G0)</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-symbol icon-tool">⊕</span>
+            <span class="legend-text">Herramienta</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-symbol icon-origin">●</span>
+            <span class="legend-text">Origen WCS</span>
+          </div>
+        </div>
+
+        <!-- HTML5 Interactive Canvas -->
+        <div class="canvas-wrapper">
+          <canvas id="cnc-canvas"></canvas>
+        </div>
+
+        <!-- Canvas Bottom-Left Overlay -->
+        <div class="overlay-bottom-left" id="overlay-view-info">
+          <span>Vista: <b id="lbl-view-mode">XY</b></span>
+          <span class="divider">·</span>
+          <span>Zoom: <b id="lbl-view-zoom">100%</b></span>
+        </div>
+
+        <!-- Canvas Bottom-Right Telemetry Overlay -->
+        <div class="overlay-bottom-right" id="overlay-telemetry">
+          <span>Buffer: <b id="tele-buffer">13 / 13</b></span>
+          <span class="divider">|</span>
+          <span>FPS: <b id="tele-fps">60</b></span>
+          <span class="divider">|</span>
+          <span>Vértices: <b id="tele-vertices">4820</b></span>
+          <span class="divider">|</span>
+          <span id="tele-time-info"><b id="tele-elapsed">00:00:13</b> / <b id="tele-total">00:08:45</b></span>
+        </div>
+
+        <!-- Visualizer Bottom Control Bar -->
+        <div class="visualizer-controls-bar">
+          <div class="viz-btn-group view-modes">
+            <button class="viz-btn active" id="btn-view-xy">XY</button>
+            <button class="viz-btn" id="btn-view-xz">XZ</button>
+            <button class="viz-btn" id="btn-view-3d">3D</button>
+          </div>
+
+          <div class="viz-btn-group zoom-controls">
+            <button class="viz-btn" id="btn-zoom-in">🔍 Zoom +</button>
+            <button class="viz-btn" id="btn-zoom-out">🔍 Zoom -</button>
+            <button class="viz-btn" id="btn-zoom-reset">⟲ Reset</button>
+          </div>
+
+          <div class="viz-tabs">
+            <button class="viz-tab active" id="tab-trayectoria">Trayectoria</button>
+            <button class="viz-tab" id="tab-herramienta">Herramienta</button>
+          </div>
+
+          <div class="loaded-file-indicator">
+            <span class="file-label">ARCHIVO:</span>
+            <span class="file-name" id="lbl-loaded-filename">pieza_01.nc</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- BOTTOM SPLIT: G-CODE/CONSOLE (LEFT) & EXECUTION CONTROL (RIGHT) -->
+      <section class="bottom-split-panel">
+
+        <!-- G-Code & Serial Console Section -->
+        <div class="panel-box panel-code-console">
+          <div class="panel-header-tabs">
+            <button class="panel-tab active" id="tab-btn-gcode">G-CODE</button>
+            <button class="panel-tab" id="tab-btn-console">CONSOLA SERIAL</button>
+          </div>
+
+          <!-- G-Code Viewer Tab Content -->
+          <div class="tab-pane active" id="pane-gcode">
+            <div class="gcode-editor-viewport" id="gcode-list-viewport">
+              <ul class="gcode-lines-list" id="gcode-lines-container">
+                <!-- Dynamically generated or seeded G-code lines -->
+              </ul>
+            </div>
+            <!-- MDI Input Command Bar -->
+            <div class="mdi-bar">
+              <span class="mdi-prefix">MDI&gt;</span>
+              <input type="text" class="mdi-input" id="mdi-input-cmd" value="G0 X0 Y0" placeholder="Escriba comando G-code o GRBL ($$, $H, G0...)">
+              <button class="btn-mdi-send" id="btn-mdi-send">ENVIAR</button>
+            </div>
+          </div>
+
+          <!-- Serial Console Tab Content -->
+          <div class="tab-pane" id="pane-console">
+            <div class="console-viewport" id="console-output">
+              <div class="console-line c-system">[CONEXIÓN] Puerto COM3 abierto a 115200 baudios.</div>
+              <div class="console-line c-grbl">Grbl 1.1h ['$' for help]</div>
+              <div class="console-line c-info">[MSG:'$H'|'$X' to unlock]</div>
+              <div class="console-line c-ok">&gt; $G</div>
+              <div class="console-line c-grbl">[GC:G0 G54 G17 G21 G90 G94 M5 M9 T0 F0 S0]</div>
+              <div class="console-line c-ok">ok</div>
+            </div>
+            <div class="console-input-bar">
+              <span class="mdi-prefix">&gt;</span>
+              <input type="text" class="mdi-input" id="console-cmd-input" placeholder="Comando GRBL directo (ej. ? , $$ , $I , G91)">
+              <button class="btn-mdi-send" id="btn-console-send">ENVIAR</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Execution Control Panel -->
+        <div class="panel-box panel-execution-control">
+          <div class="panel-title-bar">
+            <span>CONTROL DE EJECUCIÓN</span>
+          </div>
+
+          <div class="telemetry-grid">
+            <div class="tele-item">
+              <span class="tele-label">LÍNEA</span>
+              <span class="tele-val highlight-cyan" id="metric-line">13 / 13</span>
+            </div>
+            <div class="tele-item">
+              <span class="tele-label">AVANCE</span>
+              <span class="tele-val" id="metric-feed">800 mm/min</span>
+            </div>
+            <div class="tele-item">
+              <span class="tele-label">TIEMPO</span>
+              <span class="tele-val" id="metric-time">00:00:13</span>
+            </div>
+            <div class="tele-item">
+              <span class="tele-label">FEED REAL</span>
+              <span class="tele-val highlight-green" id="metric-feed-pct">100%</span>
+            </div>
+            <div class="tele-item">
+              <span class="tele-label">SPINDLE</span>
+              <span class="tele-val" id="metric-spindle-state">OFF</span>
+            </div>
+            <div class="tele-item">
+              <span class="tele-label">OVERRIDE</span>
+              <span class="tele-val" id="metric-override">100%</span>
+            </div>
+          </div>
+
+          <!-- Progress Bar -->
+          <div class="progress-section">
+            <div class="progress-labels">
+              <span class="prog-label">Progreso</span>
+              <span class="prog-pct highlight-cyan" id="lbl-progress-percent">100%</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-bar-fill" id="progress-bar-fill" style="width: 100%;"></div>
+            </div>
+          </div>
+
+          <!-- Main Start/Execution Action Button -->
+          <div class="execution-actions">
+            <button class="btn-start-execution" id="btn-execution-action">
+              <span class="play-icon">▶</span> START
+            </button>
+            <button class="btn-pause-execution hidden" id="btn-execution-pause">
+              <span>⏸</span> PAUSA
+            </button>
+            <button class="btn-stop-execution hidden" id="btn-execution-stop">
+              <span>⏹</span> DETENER
+            </button>
+          </div>
+        </div>
+
+      </section>
+    </div>
+
+    <!-- RIGHT COLUMN: DRO & MANUAL MACHINE CONTROLS -->
+    <aside class="workspace-sidebar" id="main-sidebar">
+
+      <!-- DRO: POSICIÓN ACTUAL -->
+      <section class="sidebar-block dro-block">
+        <div class="sidebar-header">
+          <span class="title-cyan">DRO</span>
+          <span class="header-divider">—</span>
+          <span class="title-sub">POSICIÓN ACTUAL</span>
+        </div>
+
+        <div class="dro-axes-container">
+          <!-- EJE X -->
+          <div class="dro-axis-row" id="dro-row-x">
+            <div class="axis-badge">X</div>
+            <div class="axis-readout">
+              <div class="coord-value-big" id="dro-val-x">266.715</div>
+              <div class="coord-subtext">M: <span id="dro-mach-x">266.715</span></div>
+            </div>
+            <button class="btn-zero-axis" id="btn-zero-x" title="Poner eje X en cero">0</button>
+          </div>
+
+          <!-- EJE Y -->
+          <div class="dro-axis-row" id="dro-row-y">
+            <div class="axis-badge">Y</div>
+            <div class="axis-readout">
+              <div class="coord-value-big" id="dro-val-y">224.548</div>
+              <div class="coord-subtext">M: <span id="dro-mach-y">224.548</span></div>
+            </div>
+            <button class="btn-zero-axis" id="btn-zero-y" title="Poner eje Y en cero">0</button>
+          </div>
+
+          <!-- EJE Z -->
+          <div class="dro-axis-row" id="dro-row-z">
+            <div class="axis-badge">Z</div>
+            <div class="axis-readout">
+              <div class="coord-value-big" id="dro-val-z">0.000</div>
+              <div class="coord-subtext">M: <span id="dro-mach-z">0.000</span></div>
+            </div>
+            <button class="btn-zero-axis" id="btn-zero-z" title="Poner eje Z en cero">0</button>
+          </div>
+        </div>
+
+        <!-- Zero Buttons Group -->
+        <div class="dro-actions-row">
+          <button class="btn-secondary-action" id="btn-zero-xy">ZERO XY</button>
+          <button class="btn-secondary-action" id="btn-zero-z-action">ZERO Z</button>
+          <button class="btn-secondary-action" id="btn-zero-all">ZERO ALL</button>
+        </div>
+      </section>
+
+      <!-- JOG MANUAL -->
+      <section class="sidebar-block jog-block">
+        <div class="sidebar-header collapsible">
+          <span class="collapse-icon">⌄</span>
+          <span class="title-sub">JOG MANUAL</span>
+        </div>
+
+        <div class="jog-content">
+          <!-- Directional Jog Pads -->
+          <div class="jog-pads-container">
+            <!-- XY D-Pad -->
+            <div class="dpad-xy">
+              <div class="dpad-cell"></div>
+              <button class="jog-btn jog-up" id="btn-jog-y-plus" title="Y+ Adelante">↑</button>
+              <div class="dpad-cell"></div>
+
+              <button class="jog-btn jog-left" id="btn-jog-x-minus" title="X- Izquierda">←</button>
+              <div class="dpad-center-label">XY</div>
+              <button class="jog-btn jog-right" id="btn-jog-x-plus" title="X+ Derecha">→</button>
+
+              <div class="dpad-cell"></div>
+              <button class="jog-btn jog-down" id="btn-jog-y-minus" title="Y- Atrás">↓</button>
+              <div class="dpad-cell"></div>
+            </div>
+
+            <!-- Z Column Pad -->
+            <div class="dpad-z">
+              <button class="jog-btn jog-z-up" id="btn-jog-z-plus" title="Z+ Subir Herramienta">Z+</button>
+              <div class="dpad-z-label">Z</div>
+              <button class="jog-btn jog-z-down" id="btn-jog-z-minus" title="Z- Bajar Herramienta">Z-</button>
+            </div>
+          </div>
+
+          <!-- Step Increments -->
+          <div class="jog-increments-row">
+            <button class="step-btn" data-step="0.01">0.01</button>
+            <button class="step-btn active" data-step="0.1">0.1</button>
+            <button class="step-btn" data-step="1">1</button>
+            <button class="step-btn" data-step="10">10</button>
+          </div>
+
+          <!-- Jog Feedrate / Speed -->
+          <div class="jog-speed-control">
+            <div class="speed-label-row">
+              <span class="speed-txt">Vel.</span>
+              <span class="speed-val highlight-cyan" id="lbl-jog-vel">50%</span>
+            </div>
+            <input type="range" class="speed-slider" id="slider-jog-speed" min="10" max="100" value="50" step="5">
+          </div>
+        </div>
+      </section>
+
+      <!-- SPINDLE (HUSILLO) -->
+      <section class="sidebar-block spindle-block">
+        <div class="sidebar-header collapsible">
+          <span class="collapse-icon">⌄</span>
+          <span class="title-sub">SPINDLE</span>
+        </div>
+
+        <div class="spindle-content">
+          <div class="spindle-actions-row">
+            <button class="btn-spindle-toggle" id="btn-spindle-toggle">
+              <span class="spindle-indicator" id="spindle-indicator-dot"></span>
+              <span id="lbl-spindle-btn-text">Spindle OFF</span>
+            </button>
+            <div class="spindle-rpm-badge">
+              <span class="rpm-label">RPM</span>
+              <input type="number" class="rpm-input" id="input-spindle-rpm" value="12000" min="0" max="24000" step="500">
+            </div>
+          </div>
+
+          <div class="spindle-speed-info">
+            <span class="speed-legend">Velocidad</span>
+            <span class="speed-live-val highlight-cyan" id="lbl-spindle-speed-live">12000 RPM</span>
+          </div>
+
+          <input type="range" class="spindle-slider" id="slider-spindle-override" min="0" max="150" value="100" title="Override Spindle (0% a 150%)">
+        </div>
+      </section>
+
+    </aside>
+
+  </main>
+
+  <!-- ================= MODAL DE CONFIGURACIÓN (FIGURAS 6-13 DEL TT) ================= -->
+  <div class="modal-backdrop hidden" id="modal-config-backdrop">
+    <div class="modal-dialog modal-large">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="modal-icon">⚙</span>
+          <h2 class="modal-title">Configuración del Sistema CNC</h2>
+          <span class="modal-subtitle">Parámetros GRBL v1.1 &amp; Preferencias de Usuario</span>
+        </div>
+        <button class="btn-modal-close" id="btn-close-config-modal">✕</button>
+      </div>
+
+      <div class="modal-body modal-split">
+        <!-- Sidebar Navigation of Config Sections -->
+        <nav class="config-nav-tabs">
+          <button class="cfg-tab-btn active" data-target="cfg-tab-conexion">
+            <span class="tab-icon">🔌</span> Ajustes de Conexión
+          </button>
+          <button class="cfg-tab-btn" data-target="cfg-tab-maquina">
+            <span class="tab-icon">⚙️</span> Info de la Máquina
+          </button>
+          <button class="cfg-tab-btn" data-target="cfg-tab-emisor">
+            <span class="tab-icon">📡</span> Ajustes Emisor
+          </button>
+          <button class="cfg-tab-btn" data-target="cfg-tab-ui">
+            <span class="tab-icon">🎨</span> Interfaz de Usuario
+          </button>
+          <button class="cfg-tab-btn" data-target="cfg-tab-atajos">
+            <span class="tab-icon">⌨️</span> Ajustes y Atajos
+          </button>
+          <button class="cfg-tab-btn" data-target="cfg-tab-visualizador">
+            <span class="tab-icon">👁️</span> Ajustes Visualizador
+          </button>
+          <button class="cfg-tab-btn" data-target="cfg-tab-consola">
+            <span class="tab-icon">💻</span> Ajustes Consola
+          </button>
+          <button class="cfg-tab-btn" data-target="cfg-tab-macros">
+            <span class="tab-icon">⚡</span> Comandos de Usuario
+          </button>
+          <button class="cfg-tab-btn" data-target="cfg-tab-heightmap">
+            <span class="tab-icon">🗺️</span> Mapa de Alturas
+          </button>
+        </nav>
+
+        <!-- Dynamic Content Panels for Config -->
+        <div class="config-content-panels">
+
+          <!-- 1. Ajustes de Conexión (Fig. 6) -->
+          <div class="cfg-panel active" id="cfg-tab-conexion">
+            <h3 class="panel-section-title">Ajustes de Conexión Serial (UART)</h3>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Puerto Serial COM:</label>
+                <select class="form-control" id="cfg-port">
+                  <option value="COM3" selected>COM3 (Arduino Nano / Uno CH340)</option>
+                  <option value="COM1">COM1 (Puerto de comunicaciones)</option>
+                  <option value="COM4">COM4 (USB Serial Device)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Velocidad de Baudios:</label>
+                <select class="form-control" id="cfg-baud">
+                  <option value="115200" selected>115200 baudios (Recomendado GRBL v1.1)</option>
+                  <option value="9600">9600 baudios</option>
+                  <option value="57600">57600 baudios</option>
+                  <option value="250000">250000 baudios</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Tamaño de Buffer de Comandos:</label>
+                <input type="number" class="form-control" value="128" min="64" max="256">
+                <small class="form-help">Planificación de movimiento GRBL (RX buffer por defecto: 128 bytes).</small>
+              </div>
+              <div class="form-group checkbox-group">
+                <label><input type="checkbox" checked> Habilitar DTR Reset al conectar</label>
+                <label><input type="checkbox" checked> Comprobación de Eco (OK check)</label>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. Información de la Máquina (Fig. 7) -->
+          <div class="cfg-panel" id="cfg-tab-maquina">
+            <h3 class="panel-section-title">Parámetros del Controlador CNC (GRBL)</h3>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Firmware Detectado:</label>
+                <input type="text" class="form-control" value="GRBL v1.1h [ESCOM Didáctico]" readonly>
+              </div>
+              <div class="form-group">
+                <label>$100 - Pasos/mm Eje X:</label>
+                <input type="number" class="form-control" id="cfg-step-x" value="250.000" step="0.001">
+              </div>
+              <div class="form-group">
+                <label>$101 - Pasos/mm Eje Y:</label>
+                <input type="number" class="form-control" id="cfg-step-y" value="250.000" step="0.001">
+              </div>
+              <div class="form-group">
+                <label>$102 - Pasos/mm Eje Z:</label>
+                <input type="number" class="form-control" id="cfg-step-z" value="400.000" step="0.001">
+              </div>
+              <div class="form-group">
+                <label>$130 - Recorrido Máx X (mm):</label>
+                <input type="number" class="form-control" value="300.000">
+              </div>
+              <div class="form-group">
+                <label>$131 - Recorrido Máx Y (mm):</label>
+                <input type="number" class="form-control" value="200.000">
+              </div>
+              <div class="form-group">
+                <label>$132 - Recorrido Máx Z (mm):</label>
+                <input type="number" class="form-control" value="60.000">
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. Ajustes Emisor (Fig. 8) -->
+          <div class="cfg-panel" id="cfg-tab-emisor">
+            <h3 class="panel-section-title">Ajustes del Emisor de Código G (Streamer)</h3>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Modo de Envío de Líneas:</label>
+                <select class="form-control">
+                  <option selected>Conteo de Caracteres en Búfer (Character-Counting)</option>
+                  <option>Respuesta Simple Enviar/Esperar (Send-Response)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Frecuencia de Polling de Estado (?):</label>
+                <input type="number" class="form-control" value="100" min="50" max="1000">
+                <small class="form-help">Intervalo en milisegundos para telemetría DRO.</small>
+              </div>
+              <div class="form-group checkbox-group">
+                <label><input type="checkbox" checked> Omitir líneas vacías y comentarios</label>
+                <label><input type="checkbox" checked> Pausa segura ante comando M6 (Cambio de herramienta)</label>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. Ajustes Interfaz de Usuario (Fig. 9) -->
+          <div class="cfg-panel" id="cfg-tab-ui">
+            <h3 class="panel-section-title">Personalización de la Interfaz</h3>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Tema Visual:</label>
+                <select class="form-control" id="cfg-theme-select">
+                  <option value="dark" selected>Modo Oscuro Industrial (Aerospace Dark)</option>
+                  <option value="cyber">Cyberpunk High Contrast</option>
+                  <option value="classic">Gris Técnico Clásico</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Sistema de Unidades:</label>
+                <select class="form-control">
+                  <option selected>Milímetros (Métrico - G21)</option>
+                  <option>Pulgadas (Imperial - G20)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Número de Decimales en DRO:</label>
+                <select class="form-control">
+                  <option selected>3 decimales (0.001 mm)</option>
+                  <option>2 decimales (0.01 mm)</option>
+                  <option>4 decimales (0.0001 mm)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. Ajustes y Atajos (Fig. 10) -->
+          <div class="cfg-panel" id="cfg-tab-atajos">
+            <h3 class="panel-section-title">Atajos de Teclado del Sistema</h3>
+            <div class="shortcuts-table">
+              <div class="shortcut-row"><span>Flechas Arriba / Abajo</span> <b>Mover Eje Y (Adelante / Atrás)</b></div>
+              <div class="shortcut-row"><span>Flechas Izq / Der</span> <b>Mover Eje X (Izquierda / Derecha)</b></div>
+              <div class="shortcut-row"><span>Re Pág / Av Pág</span> <b>Mover Eje Z (Subir / Bajar)</b></div>
+              <div class="shortcut-row"><span>Barra Espaciadora</span> <b>Pausar / Reanudar Ejecución</b></div>
+              <div class="shortcut-row"><span>Escape (ESC)</span> <b>Parada de Emergencia (E-STOP)</b></div>
+              <div class="shortcut-row"><span>Ctrl + H</span> <b>Ciclo de Homing ($H)</b></div>
+              <div class="shortcut-row"><span>Ctrl + X</span> <b>Resetear Firmware GRBL</b></div>
+            </div>
+          </div>
+
+          <!-- 6. Ajustes Visualizador (Fig. 11) -->
+          <div class="cfg-panel" id="cfg-tab-visualizador">
+            <h3 class="panel-section-title">Ajustes del Renderizador de Trayectoria</h3>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Color de Trayectoria de Corte (G1/G2):</label>
+                <input type="color" class="form-control color-input" value="#00e5ff">
+              </div>
+              <div class="form-group">
+                <label>Color de Movimiento Rápido (G0):</label>
+                <input type="color" class="form-control color-input" value="#708090">
+              </div>
+              <div class="form-group checkbox-group">
+                <label><input type="checkbox" checked> Mostrar retícula de herramienta en tiempo real</label>
+                <label><input type="checkbox" checked> Mostrar límites de la cama de trabajo</label>
+                <label><input type="checkbox" checked> Dibujar cono de fresa en modo 3D</label>
+              </div>
+            </div>
+          </div>
+
+          <!-- 7. Ajustes Consola (Fig. 12) -->
+          <div class="cfg-panel" id="cfg-tab-consola">
+            <h3 class="panel-section-title">Ajustes de la Consola Serial de Diagnóstico</h3>
+            <div class="form-grid checkbox-group">
+              <label><input type="checkbox" checked> Auto-desplazamiento automático al recibir mensajes</label>
+              <label><input type="checkbox" checked> Incluir marcas de tiempo (Timestamps [HH:MM:SS])</label>
+              <label><input type="checkbox"> Filtrar consultas periódicas de estado (&lt;Idle...&gt;)</label>
+              <label><input type="checkbox" checked> Resaltar errores y alarmas en color rojo</label>
+            </div>
+          </div>
+
+          <!-- 8. Comandos de Usuario / Macros (Fig. 2 y 13) -->
+          <div class="cfg-panel" id="cfg-tab-macros">
+            <h3 class="panel-section-title">Comandos Rápidos y Macros Educativas</h3>
+            <div class="macros-list">
+              <div class="macro-card">
+                <div class="macro-head">
+                  <span class="macro-name">⚡ Sonda Cero Z (Touch Plate)</span>
+                  <button class="btn-run-macro" data-macro="G38.2 Z-20 F100; G92 Z5; G0 Z15">Ejecutar</button>
+                </div>
+                <code>G38.2 Z-20 F100 ; Sonda táctil<br>G92 Z5.0 ; Fijar espesor placa<br>G0 Z15.0 ; Retraer</code>
+              </div>
+              <div class="macro-card">
+                <div class="macro-head">
+                  <span class="macro-name">📍 Aparcamiento de Seguridad (Safe Park)</span>
+                  <button class="btn-run-macro" data-macro="G0 Z25; G0 X0 Y200">Ejecutar</button>
+                </div>
+                <code>G90 ; Modo absoluto<br>G0 Z25.0 ; Elevar herramienta<br>G0 X0 Y200 ; Enviar mesa al frente</code>
+              </div>
+              <div class="macro-card">
+                <div class="macro-head">
+                  <span class="macro-name">🔄 Calentamiento de Husillo (Spindle Warmup)</span>
+                  <button class="btn-run-macro" data-macro="M3 S5000; G4 P5; M3 S12000">Ejecutar</button>
+                </div>
+                <code>M3 S5000 ; Encender a baja RPM<br>G4 P5 ; Esperar 5 seg<br>M3 S12000 ; Velocidad de corte</code>
+              </div>
+            </div>
+          </div>
+
+          <!-- 9. Mapa de Alturas / Auto-Leveling (Fig. 3) -->
+          <div class="cfg-panel" id="cfg-tab-heightmap">
+            <h3 class="panel-section-title">Módulo de Mapa de Alturas (Compensación de Cama)</h3>
+            <p class="panel-desc">Realiza un sondeo matricial en el eje Z para compensar irregularidades de la superficie en placas PCB o grabados finos.</p>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Matriz de Sondeo (Puntos X × Y):</label>
+                <select class="form-control">
+                  <option selected>5 × 5 (25 puntos de muestreo)</option>
+                  <option>3 × 3 (9 puntos de muestreo)</option>
+                  <option>10 × 10 (100 puntos de muestreo)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Área de Exploración (X × Y mm):</label>
+                <input type="text" class="form-control" value="100 mm × 80 mm">
+              </div>
+            </div>
+            <div class="heightmap-actions">
+              <button class="btn-primary-action" id="btn-start-probing">▶ Iniciar Muestreo Automático</button>
+              <button class="btn-secondary-action" id="btn-clear-heightmap">Limpiar Compensación</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-secondary-action" id="btn-cancel-config">Cancelar</button>
+        <button class="btn-primary-action" id="btn-save-config">Guardar Configuración</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL DICCIONARIO G-CODE ================= -->
+  <div class="modal-backdrop hidden" id="modal-dict-backdrop">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="modal-icon">📖</span>
+          <h2 class="modal-title">Diccionario G-Code Didáctico (ESCOM)</h2>
+        </div>
+        <button class="btn-modal-close" id="btn-close-dict-modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="text" class="dict-search-input" id="dict-search" placeholder="Buscar comando (ej. G0, G1, M3, G90...)">
+        <div class="dict-table-container">
+          <table class="dict-table">
+            <thead>
+              <tr><th>Comando</th><th>Función</th><th>Ejemplo Didáctico</th></tr>
+            </thead>
+            <tbody id="dict-table-body">
+              <tr><td><code>G0</code></td><td>Movimiento rápido sin corte (avance máximo)</td><td><code>G0 X10.0 Y20.0</code></td></tr>
+              <tr><td><code>G1</code></td><td>Interpolación lineal con avance de corte (F)</td><td><code>G1 X50.0 Y30.0 F800</code></td></tr>
+              <tr><td><code>G2 / G3</code></td><td>Interpolación circular horario (G2) y antihorario (G3)</td><td><code>G2 X20 Y20 I5 J0 F400</code></td></tr>
+              <tr><td><code>G90 / G91</code></td><td>Coordenadas absolutas (G90) / relativas (G91)</td><td><code>G90 ; Referencia al origen WCS</code></td></tr>
+              <tr><td><code>G92</code></td><td>Fijar desplazamiento temporal de coordenadas</td><td><code>G92 X0 Y0 Z0 ; Nuevo cero</code></td></tr>
+              <tr><td><code>M3 / M5</code></td><td>Encendido de husillo horario (M3) / Apagado (M5)</td><td><code>M3 S12000 ; 12,000 RPM</code></td></tr>
+              <tr><td><code>$H</code></td><td>Ciclo de Homing (búsqueda de interruptores fin de carrera)</td><td><code>$H ; Referencia mecánica</code></td></tr>
+              <tr><td><code>$X</code></td><td>Desbloquear alarma de seguridad GRBL</td><td><code>$X ; Quitar bloqueo de arranque</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden File Input for loading G-Code files -->
+  <input type="file" id="file-input-gcode" accept=".nc,.gcode,.tap,.ngc" class="hidden">
+
+  <!-- Core JavaScript modules -->
+  <script src="visualizer.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
