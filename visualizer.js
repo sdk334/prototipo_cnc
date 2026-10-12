@@ -23,6 +23,7 @@ class VisualizadorCNC {
 
     // Segmentos de trayectoria { tipo: 'G0'|'G1', x1, y1, z1, x2, y2, z2 }
     this.trayectoria = [];
+    this.limitesMaterial = null;
     this.cargarTrayectoriaEjemplo();
 
     // Configuración de la rejilla milimétrica
@@ -170,23 +171,225 @@ class VisualizadorCNC {
     }
   }
 
-  // Trayectoria demostrativa correspondiente a la pieza de prueba
+  // Trayectoria demostrativa inicial correspondiente al programa G-Code por defecto
   cargarTrayectoriaEjemplo() {
-    this.trayectoria = [
-      { tipo: 'G0', x1: 0, y1: 0, z1: 5, x2: 40, y2: 30, z2: 5 },
-      { tipo: 'G1', x1: 40, y1: 30, z1: -1, x2: 240, y2: 30, z2: -1 },
-      { tipo: 'G1', x1: 240, y1: 30, z1: -1, x2: 240, y2: 180, z2: -1 },
-      { tipo: 'G1', x1: 240, y1: 180, z1: -1, x2: 190, y2: 180, z2: -1 },
-      { tipo: 'G1', x1: 190, y1: 180, z1: -1, x2: 190, y2: 130, z2: -1 },
-      { tipo: 'G1', x1: 190, y1: 130, z1: -1, x2: 40, y2: 130, z2: -1 },
-      { tipo: 'G1', x1: 40, y1: 130, z1: -1, x2: 40, y2: 30, z2: -1 },
-      { tipo: 'G0', x1: 40, y1: 30, z1: 5, x2: 110, y2: 70, z2: 5 },
-      { tipo: 'G1', x1: 110, y1: 70, z1: -1, x2: 170, y2: 70, z2: -1 },
-      { tipo: 'G1', x1: 170, y1: 70, z1: -1, x2: 170, y2: 140, z2: -1 },
-      { tipo: 'G1', x1: 170, y1: 140, z1: -1, x2: 110, y2: 140, z2: -1 },
-      { tipo: 'G1', x1: 110, y1: 140, z1: -1, x2: 110, y2: 70, z2: -1 },
-      { tipo: 'G0', x1: 110, y1: 70, z1: 5, x2: 266.7, y2: 224.5, z2: 5 }
+    const gcodeInicial = [
+      "G21 ; Unidades metricas en milimetros",
+      "G90 ; Posicionamiento absoluto",
+      "G94 ; Avance en mm/min",
+      "G0 Z5.0",
+      "M3 S12000 ; Spindle ON",
+      "G0 X110.0 Y140.0",
+      "G1 Z-1.0 F300",
+      "G1 X210.0 F800",
+      "G1 Y220.0",
+      "G1 X110.0",
+      "G1 Y140.0",
+      "G0 Z5.0",
+      "M5 ; Spindle OFF",
+      "G0 X0 Y0",
+      "M30"
     ];
+    this.cargarTrayectoriaDesdeGCode(gcodeInicial);
+  }
+
+  // Analiza y genera la geometría 2D/3D directamente desde texto o arreglo de instrucciones G-Code
+  cargarTrayectoriaDesdeGCode(contenidoGcode) {
+    let lineas = [];
+    if (Array.isArray(contenidoGcode)) {
+      lineas = contenidoGcode.map(l => typeof l === 'string' ? l : (l.texto || ''));
+    } else if (typeof contenidoGcode === 'string') {
+      lineas = contenidoGcode.split(/\r?\n/);
+    }
+
+    let posX = 0.0, posY = 0.0, posZ = 0.0;
+    let modoAbsoluto = true;
+    let modoMovimiento = 'G0';
+    const nuevaTrayectoria = [];
+
+    let minCorteX = Infinity, maxCorteX = -Infinity;
+    let minCorteY = Infinity, maxCorteY = -Infinity;
+
+    for (let rawLinea of lineas) {
+      // Quitar comentarios tras ';' o entre '(...)'
+      const linea = rawLinea.replace(/\(.*?\)/g, '').split(';')[0].trim().toUpperCase();
+      if (!linea) continue;
+
+      // Detectar modos modales de distancia
+      if (/\bG90\b/.test(linea)) modoAbsoluto = true;
+      if (/\bG91\b/.test(linea)) modoAbsoluto = false;
+
+      // Detectar modo modal de movimiento
+      if (/\bG00?\b/.test(linea)) modoMovimiento = 'G0';
+      else if (/\bG0?1\b/.test(linea)) modoMovimiento = 'G1';
+      else if (/\bG0?2\b/.test(linea)) modoMovimiento = 'G2';
+      else if (/\bG0?3\b/.test(linea)) modoMovimiento = 'G3';
+
+      // Extraer coordenadas
+      const matchX = linea.match(/X([-+]?\d*\.?\d+)/);
+      const matchY = linea.match(/Y([-+]?\d*\.?\d+)/);
+      const matchZ = linea.match(/Z([-+]?\d*\.?\d+)/);
+
+      let objetivoX = posX;
+      let objetivoY = posY;
+      let objetivoZ = posZ;
+      let huboCoordenada = false;
+
+      if (matchX) {
+        const val = parseFloat(matchX[1]);
+        objetivoX = modoAbsoluto ? val : posX + val;
+        huboCoordenada = true;
+      }
+      if (matchY) {
+        const val = parseFloat(matchY[1]);
+        objetivoY = modoAbsoluto ? val : posY + val;
+        huboCoordenada = true;
+      }
+      if (matchZ) {
+        const val = parseFloat(matchZ[1]);
+        objetivoZ = modoAbsoluto ? val : posZ + val;
+        huboCoordenada = true;
+      }
+
+      if (!huboCoordenada) continue;
+
+      const dx = objetivoX - posX;
+      const dy = objetivoY - posY;
+      const dz = objetivoZ - posZ;
+      if (Math.abs(dx) < 0.0001 && Math.abs(dy) < 0.0001 && Math.abs(dz) < 0.0001) {
+        continue;
+      }
+
+      if (modoMovimiento === 'G2' || modoMovimiento === 'G3') {
+        // Interpolación de arcos circulares
+        const matchI = linea.match(/I([-+]?\d*\.?\d+)/);
+        const matchJ = linea.match(/J([-+]?\d*\.?\d+)/);
+        const matchR = linea.match(/R([-+]?\d*\.?\d+)/);
+
+        let cx = posX, cy = posY, radio = 0;
+        let arcoValido = false;
+
+        if (matchI || matchJ) {
+          const i = matchI ? parseFloat(matchI[1]) : 0;
+          const j = matchJ ? parseFloat(matchJ[1]) : 0;
+          cx = posX + i;
+          cy = posY + j;
+          radio = Math.hypot(i, j);
+          arcoValido = radio > 0.001;
+        } else if (matchR) {
+          radio = parseFloat(matchR[1]);
+          const dXm = (objetivoX - posX) / 2;
+          const dYm = (objetivoY - posY) / 2;
+          const distMitad = Math.hypot(dXm, dYm);
+          if (Math.abs(radio) >= distMitad && distMitad > 0.0001) {
+            const h = Math.sqrt(Math.max(0, radio * radio - distMitad * distMitad));
+            const signo = (modoMovimiento === 'G2' ? 1 : -1) * (radio < 0 ? -1 : 1);
+            cx = posX + dXm - signo * (dYm / distMitad) * h;
+            cy = posY + dYm + signo * (dXm / distMitad) * h;
+            radio = Math.abs(radio);
+            arcoValido = true;
+          }
+        }
+
+        if (arcoValido) {
+          let anguloInicio = Math.atan2(posY - cy, posX - cx);
+          let anguloFin = Math.atan2(objetivoY - cy, objetivoX - cx);
+
+          if (modoMovimiento === 'G2') {
+            if (anguloFin >= anguloInicio) anguloFin -= 2 * Math.PI;
+          } else {
+            if (anguloFin <= anguloInicio) anguloFin += 2 * Math.PI;
+          }
+
+          const deltaAngulo = anguloFin - anguloInicio;
+          const pasos = Math.max(8, Math.min(64, Math.ceil(Math.abs(deltaAngulo) / (Math.PI / 16))));
+          let pPrevX = posX, pPrevY = posY, pPrevZ = posZ;
+
+          for (let p = 1; p <= pasos; p++) {
+            const t = p / pasos;
+            const ang = anguloInicio + deltaAngulo * t;
+            const arcX = cx + radio * Math.cos(ang);
+            const arcY = cy + radio * Math.sin(ang);
+            const arcZ = posZ + dz * t;
+
+            nuevaTrayectoria.push({
+              tipo: 'G1',
+              x1: pPrevX, y1: pPrevY, z1: pPrevZ,
+              x2: arcX, y2: arcY, z2: arcZ
+            });
+
+            minCorteX = Math.min(minCorteX, arcX);
+            maxCorteX = Math.max(maxCorteX, arcX);
+            minCorteY = Math.min(minCorteY, arcY);
+            maxCorteY = Math.max(maxCorteY, arcY);
+
+            pPrevX = arcX;
+            pPrevY = arcY;
+            pPrevZ = arcZ;
+          }
+        } else {
+          nuevaTrayectoria.push({
+            tipo: 'G1',
+            x1: posX, y1: posY, z1: posZ,
+            x2: objetivoX, y2: objetivoY, z2: objetivoZ
+          });
+          minCorteX = Math.min(minCorteX, posX, objetivoX);
+          maxCorteX = Math.max(maxCorteX, posX, objetivoX);
+          minCorteY = Math.min(minCorteY, posY, objetivoY);
+          maxCorteY = Math.max(maxCorteY, posY, objetivoY);
+        }
+      } else {
+        const tipo = modoMovimiento === 'G0' ? 'G0' : 'G1';
+        nuevaTrayectoria.push({
+          tipo,
+          x1: posX, y1: posY, z1: posZ,
+          x2: objetivoX, y2: objetivoY, z2: objetivoZ
+        });
+
+        if (tipo === 'G1') {
+          minCorteX = Math.min(minCorteX, posX, objetivoX);
+          maxCorteX = Math.max(maxCorteX, posX, objetivoX);
+          minCorteY = Math.min(minCorteY, posY, objetivoY);
+          maxCorteY = Math.max(maxCorteY, posY, objetivoY);
+        }
+      }
+
+      posX = objetivoX;
+      posY = objetivoY;
+      posZ = objetivoZ;
+    }
+
+    this.trayectoria = nuevaTrayectoria;
+
+    // Calcular bloque de material envolvente con margen de 15 mm
+    if (minCorteX !== Infinity && maxCorteX !== -Infinity) {
+      this.limitesMaterial = {
+        minX: Math.max(0, minCorteX - 15),
+        maxX: maxCorteX + 15,
+        minY: Math.max(0, minCorteY - 15),
+        maxY: maxCorteY + 15
+      };
+    } else {
+      this.limitesMaterial = { minX: 95, maxX: 225, minY: 125, maxY: 235 };
+    }
+
+    this.solicitarRenderizado();
+  }
+
+  // Establece directamente los segmentos vectoriales (por ejemplo desde el analizador de Python)
+  establecerSegmentosTrayectoria(segmentos, envolvente = null) {
+    if (Array.isArray(segmentos) && segmentos.length > 0) {
+      this.trayectoria = segmentos;
+      if (envolvente && envolvente.min && envolvente.max) {
+        this.limitesMaterial = {
+          minX: Math.max(0, envolvente.min.X - 15),
+          maxX: envolvente.max.X + 15,
+          minY: Math.max(0, envolvente.min.Y - 15),
+          maxY: envolvente.max.Y + 15
+        };
+      }
+      this.solicitarRenderizado();
+    }
   }
 
   // Dibujado del conjunto gráfico completo
@@ -282,10 +485,13 @@ class VisualizadorCNC {
   // Representa el bloque de material a mecanizar (área verde tenue)
   dibujarMaterial(ctx) {
     if (this.modoVista !== 'XY') return;
-    const p1 = this.convertirAPantalla(35, 25);
-    const p2 = this.convertirAPantalla(255, 195);
+    const limites = this.limitesMaterial || { minX: 95, maxX: 225, minY: 125, maxY: 235 };
+    const p1 = this.convertirAPantalla(limites.minX, limites.minY);
+    const p2 = this.convertirAPantalla(limites.maxX, limites.maxY);
     const ancho = p2.x - p1.x;
     const alto = p1.y - p2.y;
+
+    if (ancho <= 0 || alto <= 0) return;
 
     ctx.save();
     ctx.fillStyle = 'rgba(16, 42, 28, 0.22)';
@@ -385,9 +591,16 @@ class VisualizadorCNC {
   // Métodos puente para compatibilidad
   setToolPosition(x, y, z) { this.establecerPosicionHerramienta(x, y, z); }
   setViewMode(modo) { this.establecerModoVista(modo); }
+  cambiarModoVista(modo) { this.establecerModoVista(modo); }
   setZoom(delta) { this.establecerZoom(delta); }
+  ajustarZoom(factor) {
+    const delta = factor > 1 ? 0.2 : -0.2;
+    this.establecerZoom(delta);
+  }
   resetView() { this.reiniciarVista(); }
   render() { this.solicitarRenderizado(); }
+  loadGCode(gcode) { this.cargarTrayectoriaDesdeGCode(gcode); }
+  cargarGCode(gcode) { this.cargarTrayectoriaDesdeGCode(gcode); }
 }
 
 // Compatibilidad de alias global

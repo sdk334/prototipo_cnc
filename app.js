@@ -320,6 +320,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const r = JSON.parse(jsonAnalisis);
         document.getElementById('tele-total').textContent = r.tiempo_estimado_formato;
         document.getElementById('tele-vertices').textContent = r.total_lineas;
+        if (r.segmentos && r.segmentos.length > 0 && window.visualizadorCNC) {
+          window.visualizadorCNC.establecerSegmentosTrayectoria(r.segmentos, r.envolvente);
+        }
         imprimirEnConsola('c-info', `[ANÁLISIS] Tiempo estimado: ${r.tiempo_estimado_formato} | Distancia corte: ${r.distancia_corte_mm} mm`);
       } catch (e) {
         console.error('Error al procesar análisis de G-code:', e);
@@ -929,6 +932,9 @@ document.addEventListener('DOMContentLoaded', () => {
     renderizarListaCodigoG();
     actualizarMetricasTelemetria();
     const texto = estado.lineasPrograma.map(l => l.texto).join('\n');
+    if (window.visualizadorCNC) {
+      window.visualizadorCNC.cargarTrayectoriaDesdeGCode(texto);
+    }
     if (window.puenteCNC) window.puenteCNC.analizarGcode(texto);
     imprimirEnConsola('c-info', '[ARCHIVO] Archivo de demostración pieza_01.nc cargado.');
   });
@@ -939,7 +945,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!archivo) return;
     const lector = new FileReader();
     lector.onload = (ev) => {
-      const lineas = ev.target.result.split('\n')
+      const contenidoTexto = ev.target.result;
+      const lineas = contenidoTexto.split('\n')
         .map(l => l.trim())
         .filter(l => l.length > 0)
         .map(texto => ({ texto }));
@@ -949,6 +956,9 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('lbl-loaded-filename').textContent = archivo.name;
         renderizarListaCodigoG();
         actualizarMetricasTelemetria();
+        if (window.visualizadorCNC) {
+          window.visualizadorCNC.cargarTrayectoriaDesdeGCode(contenidoTexto);
+        }
         const textoCompleto = lineas.map(l => l.texto).join('\n');
         if (window.puenteCNC) window.puenteCNC.analizarGcode(textoCompleto);
         imprimirEnConsola('c-info', `[ARCHIVO] Archivo ${archivo.name} cargado con ${lineas.length} líneas.`);
@@ -989,10 +999,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Render inicial de la aplicación
+  // Render inicial de la aplicación y sincronización de trayectoria
   renderizarListaCodigoG();
   actualizarLecturasDRO();
   actualizarMetricasTelemetria();
+  if (window.visualizadorCNC) {
+    window.visualizadorCNC.cargarTrayectoriaDesdeGCode(estado.lineasPrograma.map(l => l.texto).join('\n'));
+  }
 
   // Inicializar puente PyQt6
   inicializarPuentePyQt();

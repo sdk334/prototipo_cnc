@@ -208,6 +208,7 @@ class ProcesadorGCode:
         lineas = contenido_gcode.splitlines()
         bloques = []
         errores = []
+        segmentos = []
 
         # Estado modal de simulación analítica
         pos_actual = {"X": 0.0, "Y": 0.0, "Z": 0.0}
@@ -282,6 +283,16 @@ class ProcesadorGCode:
                 if vel > 0:
                     tiempo_total_segundos += (distancia / vel) * 60.0
 
+                segmentos.append({
+                    "tipo": "G0" if es_rapido else "G1",
+                    "x1": round(pos_actual["X"], 3),
+                    "y1": round(pos_actual["Y"], 3),
+                    "z1": round(pos_actual["Z"], 3),
+                    "x2": round(pos_nueva["X"], 3),
+                    "y2": round(pos_nueva["Y"], 3),
+                    "z2": round(pos_nueva["Z"], 3)
+                })
+
                 pos_actual = pos_nueva
 
         # Normalizar límites si no hubo movimiento
@@ -304,6 +315,7 @@ class ProcesadorGCode:
             "distancia_corte_mm": round(distancia_total_corte, 2),
             "distancia_rapido_mm": round(distancia_total_rapido, 2),
             "distancia_total_mm": round(distancia_total_corte + distancia_total_rapido, 2),
+            "segmentos": segmentos,
             "envolvente": {
                 "min": min_coords,
                 "max": max_coords,
