@@ -1,6 +1,14 @@
 /**
  * CNC Basic v1.0 - Controlador de Lógica y Telemetría (app.js)
- * Gestión del estado del sistema, DRO, jogging manual, simulación de código G y comunicación serial.
+ * Proyecto: Trabajo Terminal 2026-B072 (ESCOM - IPN)
+ * 
+ * Responsabilidad:
+ * - Integración con el Puente Nativo PyQt6 (QWebChannel) para hardware real con GRBL v1.1.
+ * - Sincronización en tiempo real de coordenadas de trabajo y máquina (DRO).
+ * - Control de Jog manual mediante directiva $J= de GRBL v1.1.
+ * - Streaming de programas G-Code con control de flujo por conteo de caracteres.
+ * - Despacho de comandos en tiempo real (E-STOP, Feed Hold, Cycle Start).
+ * - Modo fallback didáctico automático si se ejecuta en navegador web estándar.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -8,16 +16,19 @@ document.addEventListener('DOMContentLoaded', () => {
   window.visualizadorCNC = new VisualizadorCNC('cnc-canvas');
   window.cncVisualizer = window.visualizadorCNC;
 
+  // Referencia global al puente Python IPC
+  window.puenteCNC = null;
+
   // ==========================================
   // ESTADO GLOBAL DE LA MÁQUINA CNC
   // ==========================================
   const estado = {
     // Coordenadas relativas de trabajo (WCS - G54)
-    coordenadasTrabajo: { x: 266.715, y: 224.548, z: 0.000 },
+    coordenadasTrabajo: { x: 0.000, y: 0.000, z: 0.000 },
     // Coordenadas absolutas de la máquina (MCS)
-    coordenadasMaquina: { x: 266.715, y: 224.548, z: 0.000 },
-    // Estado operativo de GRBL ('IDLE', 'RUN', 'HOLD', 'ALARM')
-    estadoOperativo: 'IDLE',
+    coordenadasMaquina: { x: 0.000, y: 0.000, z: 0.000 },
+    // Estado operativo de GRBL ('IDLE', 'RUN', 'HOLD', 'ALARM', 'JOG', 'DESCONECTADO')
+    estadoOperativo: 'DESCONECTADO',
     limitesHabilitados: false,
     incrementoPaso: 0.1, // Distancia por pulsación (mm)
     porcentajeVelocidadManual: 50,
@@ -26,18 +37,18 @@ document.addEventListener('DOMContentLoaded', () => {
     revolucionesPorMinuto: 12000,
     modificadorHusillo: 100, // Override en porcentaje
     // Programa cargado y flujo de ejecución
-    indiceLineaActiva: 12, // Resalta línea 13 (base 0)
+    indiceLineaActiva: 0,
     enEjecucion: false,
     enPausa: false,
-    segundosTranscurridos: 13,
-    segundosTotalesEstimados: 525, // 08:45 minutos
+    segundosTranscurridos: 0,
+    segundosTotalesEstimados: 525,
     velocidadAvanceNominal: 800, // mm/min
     lineasPrograma: [
       { texto: "G21 ; Unidades metricas en milimetros" },
       { texto: "G90 ; Posicionamiento absoluto" },
       { texto: "G94 ; Avance en mm/min" },
       { texto: "G0 Z5.0" },
-      { texto: "M3 S12000 ; spindle ON" },
+      { texto: "M3 S12000 ; Spindle ON" },
       { texto: "G0 X110.0 Y140.0" },
       { texto: "G1 Z-1.0 F300" },
       { texto: "G1 X210.0 F800" },
@@ -45,7 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
       { texto: "G1 X110.0" },
       { texto: "G1 Y140.0" },
       { texto: "G0 Z5.0" },
-      { texto: "M5 ; spindle OFF" }
+      { texto: "M5 ; Spindle OFF" }
     ],
     temporizadorEjecucion: null
   };
@@ -54,6 +65,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // REFERENCIAS DE ELEMENTOS DE LA INTERFAZ
   // ==========================================
   const elementos = {
+    // Selector y estado de puertos seriales
+    selectorPuertoCom: document.getElementById('select-com-port'),
+    puntoIndicadorPuerto: document.getElementById('port-status-dot'),
     // Pantalla DRO (Lectura Digital de Coordenadas)
     droValorX: document.getElementById('dro-val-x'),
     droValorY: document.getElementById('dro-val-y'),
@@ -147,6 +161,163 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   // ==========================================
+  // INICIALIZACIÓN DEL PUENTE PYQT6 (QWebChannel)
+  // ==========================================
+  function inicializarPuentePyQt() {
+    if (typeof QWebChannel !== 'undefined' && window.qt && window.qt.webChannelTransport) {
+      new QWebChannel(window.qt.webChannelTransport, (canal) => {
+        window.puenteCNC = canal.objects.puenteCNC;
+        imprimirEnConsola('c-system', '[IPC] Puente nativo Python PyQt6 vinculado exitosamente.');
+
+        // Suscribirse a señales de telemetría y eventos de Python
+        configurarSuscripcionesPuente(window.puenteCNC);
+
+        // Solicitar escaneo inmediato de puertos serie reales
+        window.puenteCNC.escanearPuertos();
+      });
+    } else {
+      imprimirEnConsola('c-info', '[MODO NAVEGADOR] Ejecutando en modo didáctico offline.');
+      establecerEstadoOperativo('IDLE');
+    }
+  }
+
+  function configurarSuscripcionesPuente(puente) {
+    // 1. Recepción de puertos seriales disponibles
+    puente.senial_puertos.connect((jsonPuertos) => {
+      try {
+        const listaPuertos = JSON.parse(jsonPuertos);
+        elementos.selectorPuertoCom.innerHTML = '';
+
+        listaPuertos.forEach((p, idx) => {
+          const opcion = document.createElement('option');
+          opcion.value = p.puerto;
+          opcion.textContent = `${p.puerto} - ${p.descripcion}`;
+          if (idx === 0) opcion.selected = true;
+          elementos.selectorPuertoCom.appendChild(opcion);
+        });
+
+        // Conectar al primer puerto o al simulador virtual disponible
+        if (listaPuertos.length > 0) {
+          conectarPuertoSeleccionado();
+        }
+      } catch (e) {
+        console.error('Error al parsear lista de puertos:', e);
+      }
+    });
+
+    // 2. Recepción de telemetría en tiempo real desde el ciclo de 200 ms de Python
+    puente.senial_estado.connect((jsonEstado) => {
+      try {
+        const d = JSON.parse(jsonEstado);
+
+        // Actualizar coordenadas de trabajo (WPos) y de máquina (MPos)
+        estado.coordenadasTrabajo.x = d.wpos[0];
+        estado.coordenadasTrabajo.y = d.wpos[1];
+        estado.coordenadasTrabajo.z = d.wpos[2];
+
+        estado.coordenadasMaquina.x = d.mpos[0];
+        estado.coordenadasMaquina.y = d.mpos[1];
+        estado.coordenadasMaquina.z = d.mpos[2];
+
+        actualizarLecturasDRO();
+        establecerEstadoOperativo(d.estado);
+
+        // Telemetría de avance y husillo
+        elementos.metricaVelocidadAvance.textContent = `${Math.round(d.feed_real)} mm/min`;
+        elementos.etiquetaRpmEnVivo.textContent = `${Math.round(d.spindle_real)} RPM`;
+
+        if (d.spindle_encendido) {
+          estado.husilloActivo = true;
+          elementos.botonAlternarHusillo.classList.add('active');
+          elementos.textoBotonHusillo.textContent = 'Spindle ON';
+          elementos.metricaEstadoHusillo.textContent = 'ON';
+          elementos.metricaEstadoHusillo.classList.add('highlight-cyan');
+        } else {
+          estado.husilloActivo = false;
+          elementos.botonAlternarHusillo.classList.remove('active');
+          elementos.textoBotonHusillo.textContent = 'Spindle OFF';
+          elementos.metricaEstadoHusillo.textContent = 'OFF';
+          elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
+        }
+
+        // Búfer del planificador y recepción de hardware
+        elementos.telemetriaBuffer.textContent = `${d.buffer_planificador} / ${d.buffer_rx_libre}`;
+
+        // Pines de fin de carrera y sondas activas
+        if (d.pines_limite) {
+          elementos.puntoIndicadorLimites.className = 'indicator-dot dot-connected';
+          elementos.etiquetaEstadoLimites.textContent = `Límites: [${d.pines_limite}]`;
+        } else {
+          elementos.puntoIndicadorLimites.className = 'indicator-dot dot-off';
+          elementos.etiquetaEstadoLimites.textContent = 'Límites: OFF';
+        }
+      } catch (e) {
+        console.error('Error al procesar estado de telemetría:', e);
+      }
+    });
+
+    // 3. Salida de consola serial desde Python
+    puente.senial_consola.connect((tipo, mensaje) => {
+      imprimirEnConsola(tipo, mensaje);
+    });
+
+    // 4. Progreso de transmisión de G-Code en hardware real
+    puente.senial_progreso.connect((lineaActual, totalLineas, porcentaje, tiempo) => {
+      estado.indiceLineaActiva = Math.max(0, lineaActual - 1);
+      elementos.metricaNumeroLinea.textContent = `${lineaActual} / ${totalLineas}`;
+      elementos.barraProgresoRelleno.style.width = `${porcentaje}%`;
+      elementos.etiquetaPorcentajeProgreso.textContent = `${porcentaje}%`;
+      elementos.metricaTiempoTranscurrido.textContent = tiempo;
+      elementos.telemetriaTiempoTranscurrido.textContent = tiempo;
+
+      resaltarLineaGcodeActiva();
+
+      if (lineaActual >= totalLineas) {
+        estado.enEjecucion = false;
+        estado.enPausa = false;
+        elementos.botonIniciarMecanizado.classList.remove('hidden');
+        elementos.botonPausarMecanizado.classList.add('hidden');
+        elementos.botonDetenerMecanizado.classList.add('hidden');
+      }
+    });
+
+    // 5. Análisis geométrico y estimación analítica de tiempo
+    puente.senial_analisis_gcode.connect((jsonAnalisis) => {
+      try {
+        const r = JSON.parse(jsonAnalisis);
+        document.getElementById('tele-total').textContent = r.tiempo_estimado_formato;
+        document.getElementById('tele-vertices').textContent = r.total_lineas;
+        imprimirEnConsola('c-info', `[ANÁLISIS] Tiempo estimado: ${r.tiempo_estimado_formato} | Distancia corte: ${r.distancia_corte_mm} mm`);
+      } catch (e) {
+        console.error('Error al procesar análisis de G-code:', e);
+      }
+    });
+
+    // 6. Traductor didáctico de errores semánticos de ESCOM
+    puente.senial_error_didactico.connect((jsonError) => {
+      try {
+        const err = JSON.parse(jsonError);
+        imprimirEnConsola('c-alarm', `[ERROR #${err.codigo}] ${err.titulo}: ${err.explicacion}`);
+        imprimirEnConsola('c-info', `[SUGERENCIA] ${err.sugerencia}`);
+      } catch (e) {
+        console.error('Error al procesar error didáctico:', e);
+      }
+    });
+  }
+
+  function conectarPuertoSeleccionado() {
+    const puerto = elementos.selectorPuertoCom.value;
+    if (!puerto) return;
+
+    if (window.puenteCNC) {
+      window.puenteCNC.conectar(puerto, 115200);
+      elementos.puntoIndicadorPuerto.className = 'indicator-dot dot-connected';
+    }
+  }
+
+  elementos.selectorPuertoCom.addEventListener('change', conectarPuertoSeleccionado);
+
+  // ==========================================
   // SINCRONIZACIÓN DE COORDENADAS Y PANTALLA DRO
   // ==========================================
   function actualizarLecturasDRO() {
@@ -167,7 +338,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Actualiza visualmente el estado del controlador (IDLE, RUN, ALARM)
+  // Actualiza visualmente el estado del controlador (IDLE, RUN, ALARM, HOLD)
   function establecerEstadoOperativo(nuevoEstado) {
     estado.estadoOperativo = nuevoEstado;
     elementos.etiquetaEstadoControlador.textContent = nuevoEstado;
@@ -176,12 +347,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (nuevoEstado === 'IDLE') {
       elementos.puntoIndicadorEstado.classList.add('dot-idle');
       elementos.botonParoEmergencia.classList.remove('alarm-active');
-    } else if (nuevoEstado === 'RUN') {
+    } else if (nuevoEstado === 'RUN' || nuevoEstado === 'JOG') {
       elementos.puntoIndicadorEstado.classList.add('dot-run');
       elementos.botonParoEmergencia.classList.remove('alarm-active');
+    } else if (nuevoEstado === 'HOLD') {
+      elementos.puntoIndicadorEstado.classList.add('dot-connected');
     } else if (nuevoEstado === 'ALARM') {
       elementos.puntoIndicadorEstado.classList.add('dot-alarm');
       elementos.botonParoEmergencia.classList.add('alarm-active');
+    } else {
+      elementos.puntoIndicadorEstado.classList.add('dot-off');
     }
   }
 
@@ -195,22 +370,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const desplazamiento = estado.incrementoPaso * sentido;
-    if (eje === 'X') {
-      estado.coordenadasTrabajo.x = Math.max(0, Math.min(320, estado.coordenadasTrabajo.x + desplazamiento));
-      estado.coordenadasMaquina.x = estado.coordenadasTrabajo.x;
-    } else if (eje === 'Y') {
-      estado.coordenadasTrabajo.y = Math.max(0, Math.min(220, estado.coordenadasTrabajo.y + desplazamiento));
-      estado.coordenadasMaquina.y = estado.coordenadasTrabajo.y;
-    } else if (eje === 'Z') {
-      estado.coordenadasTrabajo.z = Math.max(-50, Math.min(60, estado.coordenadasTrabajo.z + desplazamiento));
-      estado.coordenadasMaquina.z = estado.coordenadasTrabajo.z;
-    }
-
-    actualizarLecturasDRO();
     const avanceCalculado = Math.round(estado.velocidadAvanceNominal * (estado.porcentajeVelocidadManual / 100));
-    const signo = desplazamiento > 0 ? '+' : '';
-    imprimirEnConsola('c-ok', `> $J=G91 G21 ${eje}${signo}${desplazamiento.toFixed(3)} F${avanceCalculado}`);
-    imprimirEnConsola('c-ok', 'ok');
+
+    if (window.puenteCNC) {
+      // Inyección real del comando $J= al microcontrolador
+      window.puenteCNC.moverJog(eje, desplazamiento, avanceCalculado);
+    } else {
+      // Modo offline didáctico
+      if (eje === 'X') estado.coordenadasTrabajo.x += desplazamiento;
+      else if (eje === 'Y') estado.coordenadasTrabajo.y += desplazamiento;
+      else if (eje === 'Z') estado.coordenadasTrabajo.z += desplazamiento;
+      estado.coordenadasMaquina = { ...estado.coordenadasTrabajo };
+      actualizarLecturasDRO();
+      const signo = desplazamiento > 0 ? '+' : '';
+      imprimirEnConsola('c-ok', `> $J=G91 G21 ${eje}${signo}${desplazamiento.toFixed(3)} F${avanceCalculado}`);
+    }
   }
 
   // Eventos de botones del D-Pad
@@ -236,32 +410,53 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Funciones de puesta a cero de coordenadas de trabajo
-  elementos.botonCeroX.addEventListener('click', () => { estado.coordenadasTrabajo.x = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 X0\nok'); });
-  elementos.botonCeroY.addEventListener('click', () => { estado.coordenadasTrabajo.y = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 Y0\nok'); });
-  elementos.botonCeroZ.addEventListener('click', () => { estado.coordenadasTrabajo.z = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 Z0\nok'); });
-  elementos.botonCeroXY.addEventListener('click', () => { estado.coordenadasTrabajo.x = 0; estado.coordenadasTrabajo.y = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 X0 Y0\nok'); });
-  elementos.botonCeroSoloZ.addEventListener('click', () => { estado.coordenadasTrabajo.z = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 Z0\nok'); });
-  elementos.botonCeroTodos.addEventListener('click', () => { estado.coordenadasTrabajo.x = 0; estado.coordenadasTrabajo.y = 0; estado.coordenadasTrabajo.z = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 X0 Y0 Z0\nok'); });
+  elementos.botonCeroX.addEventListener('click', () => {
+    if (window.puenteCNC) window.puenteCNC.ponerCeroEje('X');
+    else { estado.coordenadasTrabajo.x = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 X0'); }
+  });
+  elementos.botonCeroY.addEventListener('click', () => {
+    if (window.puenteCNC) window.puenteCNC.ponerCeroEje('Y');
+    else { estado.coordenadasTrabajo.y = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 Y0'); }
+  });
+  elementos.botonCeroZ.addEventListener('click', () => {
+    if (window.puenteCNC) window.puenteCNC.ponerCeroEje('Z');
+    else { estado.coordenadasTrabajo.z = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 Z0'); }
+  });
+  elementos.botonCeroXY.addEventListener('click', () => {
+    if (window.puenteCNC) { window.puenteCNC.ponerCeroEje('X'); window.puenteCNC.ponerCeroEje('Y'); }
+    else { estado.coordenadasTrabajo.x = 0; estado.coordenadasTrabajo.y = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 X0 Y0'); }
+  });
+  elementos.botonCeroSoloZ.addEventListener('click', () => {
+    if (window.puenteCNC) window.puenteCNC.ponerCeroEje('Z');
+    else { estado.coordenadasTrabajo.z = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 Z0'); }
+  });
+  elementos.botonCeroTodos.addEventListener('click', () => {
+    if (window.puenteCNC) window.puenteCNC.ponerCeroTodos();
+    else { estado.coordenadasTrabajo.x = 0; estado.coordenadasTrabajo.y = 0; estado.coordenadasTrabajo.z = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 X0 Y0 Z0'); }
+  });
 
   // ==========================================
   // CONTROL DEL HUSILLO DE FRESADO
   // ==========================================
   function alternarHusillo() {
-    estado.husilloActivo = !estado.husilloActivo;
-    if (estado.husilloActivo) {
-      elementos.botonAlternarHusillo.classList.add('active');
-      elementos.textoBotonHusillo.textContent = 'Spindle ON';
-      elementos.metricaEstadoHusillo.textContent = 'ON';
-      elementos.metricaEstadoHusillo.classList.add('highlight-cyan');
-      imprimirEnConsola('c-grbl', `> M3 S${estado.revolucionesPorMinuto}`);
-      imprimirEnConsola('c-ok', 'ok');
+    const nuevoEstado = !estado.husilloActivo;
+    if (window.puenteCNC) {
+      window.puenteCNC.controlarSpindle(nuevoEstado, estado.revolucionesPorMinuto);
     } else {
-      elementos.botonAlternarHusillo.classList.remove('active');
-      elementos.textoBotonHusillo.textContent = 'Spindle OFF';
-      elementos.metricaEstadoHusillo.textContent = 'OFF';
-      elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
-      imprimirEnConsola('c-grbl', '> M5');
-      imprimirEnConsola('c-ok', 'ok');
+      estado.husilloActivo = nuevoEstado;
+      if (estado.husilloActivo) {
+        elementos.botonAlternarHusillo.classList.add('active');
+        elementos.textoBotonHusillo.textContent = 'Spindle ON';
+        elementos.metricaEstadoHusillo.textContent = 'ON';
+        elementos.metricaEstadoHusillo.classList.add('highlight-cyan');
+        imprimirEnConsola('c-grbl', `> M3 S${estado.revolucionesPorMinuto}`);
+      } else {
+        elementos.botonAlternarHusillo.classList.remove('active');
+        elementos.textoBotonHusillo.textContent = 'Spindle OFF';
+        elementos.metricaEstadoHusillo.textContent = 'OFF';
+        elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
+        imprimirEnConsola('c-grbl', '> M5');
+      }
     }
   }
 
@@ -270,8 +465,8 @@ document.addEventListener('DOMContentLoaded', () => {
   elementos.entradaRpmHusillo.addEventListener('change', (evento) => {
     estado.revolucionesPorMinuto = parseInt(evento.target.value, 10) || 0;
     elementos.etiquetaRpmEnVivo.textContent = `${estado.revolucionesPorMinuto} RPM`;
-    if (estado.husilloActivo) {
-      imprimirEnConsola('c-grbl', `> S${estado.revolucionesPorMinuto}`);
+    if (estado.husilloActivo && window.puenteCNC) {
+      window.puenteCNC.controlarSpindle(true, estado.revolucionesPorMinuto);
     }
   });
 
@@ -285,31 +480,20 @@ document.addEventListener('DOMContentLoaded', () => {
   // PARADA DE EMERGENCIA Y SENSORES DE LÍMITE
   // ==========================================
   elementos.botonParoEmergencia.addEventListener('click', () => {
-    if (estado.estadoOperativo !== 'ALARM') {
+    if (window.puenteCNC) {
+      window.puenteCNC.paradaEmergencia();
+    } else {
       establecerEstadoOperativo('ALARM');
       detenerMecanizado();
-      imprimirEnConsola('c-error', '[EMERGENCIA] ¡PARADA E-STOP ACTIVADA! Transmisión y ejes interrumpidos de inmediato.');
-    } else {
-      if (confirm('¿Desea desbloquear la alarma de seguridad ($X) y rearmar la máquina?')) {
-        establecerEstadoOperativo('IDLE');
-        imprimirEnConsola('c-info', '> $X');
-        imprimirEnConsola('c-ok', '[MSG:Caution: Unlocked]');
-        imprimirEnConsola('c-ok', 'ok');
-      }
+      imprimirEnConsola('c-error', '[EMERGENCIA] ¡PARADA E-STOP ACTIVADA!');
     }
   });
 
   elementos.indicadorLimites.addEventListener('click', () => {
     estado.limitesHabilitados = !estado.limitesHabilitados;
-    if (estado.limitesHabilitados) {
-      elementos.puntoIndicadorLimites.className = 'indicator-dot dot-connected';
-      elementos.etiquetaEstadoLimites.textContent = 'Límites: ON';
-      imprimirEnConsola('c-info', '[CONFIG] Sensores de límite fin de carrera HABILITADOS ($21=1).');
-    } else {
-      elementos.puntoIndicadorLimites.className = 'indicator-dot dot-off';
-      elementos.etiquetaEstadoLimites.textContent = 'Límites: OFF';
-      imprimirEnConsola('c-info', '[CONFIG] Sensores de límite fin de carrera DESHABILITADOS ($21=0).');
-    }
+    const cmd = estado.limitesHabilitados ? '$21=1' : '$21=0';
+    if (window.puenteCNC) window.puenteCNC.enviarMDI(cmd);
+    else imprimirEnConsola('c-info', `[CONFIG] Sensores de límite fin de carrera (${cmd}).`);
   });
 
   // ==========================================
@@ -342,17 +526,14 @@ document.addEventListener('DOMContentLoaded', () => {
       elementos.contenedorLineasGcode.appendChild(elementoLista);
     });
 
-    desplazarALineaActiva();
+    resaltarLineaGcodeActiva();
   }
 
-  // Resaltado léxico de instrucciones G, M y comentarios
   function formatearSintaxisCodigoG(textoOriginal) {
     let salida = textoOriginal;
     if (salida.includes(';')) {
       const partes = salida.split(';');
-      const codigo = partes[0];
-      const comentario = partes.slice(1).join(';');
-      salida = colorearComandos(codigo) + `<span class="cmd-comment">;${comentario}</span>`;
+      salida = colorearComandos(partes[0]) + `<span class="cmd-comment">;${partes.slice(1).join(';')}</span>`;
     } else {
       salida = colorearComandos(salida);
     }
@@ -368,19 +549,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function seleccionarLineaGcode(indice) {
     estado.indiceLineaActiva = indice;
-    const todasLasLineas = elementos.contenedorLineasGcode.querySelectorAll('.gcode-line');
-    todasLasLineas.forEach((elem, i) => {
-      if (i === indice) elem.classList.add('active');
-      else elem.classList.remove('active');
-    });
+    resaltarLineaGcodeActiva();
     actualizarMetricasTelemetria();
   }
 
-  function desplazarALineaActiva() {
-    const lineaSeleccionada = elementos.contenedorLineasGcode.querySelector('.gcode-line.active');
-    if (lineaSeleccionada) {
-      lineaSeleccionada.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }
+  function resaltarLineaGcodeActiva() {
+    const todasLasLineas = elementos.contenedorLineasGcode.querySelectorAll('.gcode-line');
+    todasLasLineas.forEach((elem, i) => {
+      if (i === estado.indiceLineaActiva) {
+        elem.classList.add('active');
+        elem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      } else {
+        elem.classList.remove('active');
+      }
+    });
   }
 
   // ==========================================
@@ -398,35 +580,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const comando = comandoSinFormato.trim();
     if (!comando) return;
 
-    imprimirEnConsola('c-ok', `> ${comando}`);
-    const comandoMayusculas = comando.toUpperCase();
-
-    if (comandoMayusculas === '$$') {
-      imprimirEnConsola('c-grbl', '$100=250.000 (x:step/mm)\n$101=250.000 (y:step/mm)\n$102=400.000 (z:step/mm)\n$110=1000.000 (x:max feed)\n$120=50.000 (x:accel)\n$130=300.000 (x:max travel)');
-      imprimirEnConsola('c-ok', 'ok');
-    } else if (comandoMayusculas === '$H') {
-      imprimirEnConsola('c-info', '[HOMING] Ejecutando búsqueda de límites de referencia física...');
-      estado.coordenadasTrabajo.x = 0; estado.coordenadasTrabajo.y = 0; estado.coordenadasTrabajo.z = 0;
-      actualizarLecturasDRO();
-      imprimirEnConsola('c-ok', 'ok');
-    } else if (comandoMayusculas === '$X') {
-      establecerEstadoOperativo('IDLE');
-      imprimirEnConsola('c-info', '[MSG:Caution: Unlocked]');
-      imprimirEnConsola('c-ok', 'ok');
-    } else if (comandoMayusculas.startsWith('G0') || comandoMayusculas.startsWith('G1')) {
-      const coincidenciaX = comandoMayusculas.match(/X([0-9.-]+)/);
-      const coincidenciaY = comandoMayusculas.match(/Y([0-9.-]+)/);
-      const coincidenciaZ = comandoMayusculas.match(/Z([0-9.-]+)/);
-      if (coincidenciaX) estado.coordenadasTrabajo.x = parseFloat(coincidenciaX[1]);
-      if (coincidenciaY) estado.coordenadasTrabajo.y = parseFloat(coincidenciaY[1]);
-      if (coincidenciaZ) estado.coordenadasTrabajo.z = parseFloat(coincidenciaZ[1]);
-      actualizarLecturasDRO();
-      imprimirEnConsola('c-ok', 'ok');
-    } else if (comandoMayusculas === 'M3' || comandoMayusculas.startsWith('M3 ')) {
-      alternarHusillo();
-    } else if (comandoMayusculas === 'M5') {
-      if (estado.husilloActivo) alternarHusillo();
+    if (window.puenteCNC) {
+      window.puenteCNC.enviarMDI(comando);
     } else {
+      imprimirEnConsola('c-ok', `> ${comando}`);
+      if (comando.toUpperCase() === '$$') {
+        imprimirEnConsola('c-grbl', '$100=250.000 (x:step/mm)\n$101=250.000 (y:step/mm)\n$102=400.000 (z:step/mm)');
+      } else if (comando.toUpperCase() === '$X') {
+        establecerEstadoOperativo('IDLE');
+        imprimirEnConsola('c-ok', '[MSG:Caution: Unlocked]');
+      }
       imprimirEnConsola('c-ok', 'ok');
     }
   }
@@ -436,9 +599,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   elementos.entradaMdi.addEventListener('keydown', (evento) => {
-    if (evento.key === 'Enter') {
-      procesarComandoMdi(elementos.entradaMdi.value);
-    }
+    if (evento.key === 'Enter') procesarComandoMdi(elementos.entradaMdi.value);
   });
 
   elementos.botonEnviarConsola.addEventListener('click', () => {
@@ -468,7 +629,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ==========================================
-  // SIMULACIÓN Y TELEMETRÍA DE MECANIZADO
+  // EJECUCIÓN Y STREAMING DE MECANIZADO
   // ==========================================
   function actualizarMetricasTelemetria() {
     const totalLineas = estado.lineasPrograma.length;
@@ -479,16 +640,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const porcentajeAvance = Math.round((lineaActual / totalLineas) * 100);
     elementos.barraProgresoRelleno.style.width = `${porcentajeAvance}%`;
     elementos.etiquetaPorcentajeProgreso.textContent = `${porcentajeAvance}%`;
-
-    elementos.metricaTiempoTranscurrido.textContent = formatearTiempo(estado.segundosTranscurridos);
-    elementos.telemetriaTiempoTranscurrido.textContent = formatearTiempo(estado.segundosTranscurridos);
-  }
-
-  function formatearTiempo(segundos) {
-    const horas = String(Math.floor(segundos / 3600)).padStart(2, '0');
-    const minutos = String(Math.floor((segundos % 3600) / 60)).padStart(2, '0');
-    const segs = String(segundos % 60).padStart(2, '0');
-    return `${horas}:${minutos}:${segs}`;
   }
 
   function iniciarMecanizado() {
@@ -505,67 +656,48 @@ document.addEventListener('DOMContentLoaded', () => {
     elementos.botonPausarMecanizado.classList.remove('hidden');
     elementos.botonDetenerMecanizado.classList.remove('hidden');
 
-    imprimirEnConsola('c-info', '[EJECUCIÓN] Transmitiendo programa al controlador GRBL...');
+    const textoCompleto = estado.lineasPrograma.map(l => l.texto).join('\n');
 
-    if (estado.indiceLineaActiva >= estado.lineasPrograma.length - 1) {
-      estado.indiceLineaActiva = 0;
-      estado.segundosTranscurridos = 0;
-    }
-
-    estado.temporizadorEjecucion = setInterval(avanzarPasoMecanizado, 900);
-  }
-
-  function avanzarPasoMecanizado() {
-    if (estado.indiceLineaActiva < estado.lineasPrograma.length - 1) {
-      seleccionarLineaGcode(estado.indiceLineaActiva + 1);
-      estado.segundosTranscurridos += 2;
-      actualizarMetricasTelemetria();
-
-      const textoLinea = estado.lineasPrograma[estado.indiceLineaActiva].texto;
-      extraerCoordenadasDeTexto(textoLinea);
-      imprimirEnConsola('c-grbl', `> ${textoLinea}`);
+    if (window.puenteCNC) {
+      window.puenteCNC.iniciarPrograma(textoCompleto);
     } else {
-      detenerMecanizado();
-      imprimirEnConsola('c-info', '[FIN] Mecanizado concluido satisfactoriamente (M30/M5).');
+      // Bucle de simulación offline
+      imprimirEnConsola('c-info', '[EJECUCIÓN] Iniciando simulación local...');
+      estado.temporizadorEjecucion = setInterval(() => {
+        if (estado.indiceLineaActiva < estado.lineasPrograma.length - 1) {
+          seleccionarLineaGcode(estado.indiceLineaActiva + 1);
+        } else {
+          detenerMecanizado();
+        }
+      }, 800);
     }
-  }
-
-  function extraerCoordenadasDeTexto(texto) {
-    const mayusculas = texto.toUpperCase();
-    const mx = mayusculas.match(/X([0-9.-]+)/);
-    const my = mayusculas.match(/Y([0-9.-]+)/);
-    const mz = mayusculas.match(/Z([0-9.-]+)/);
-    if (mx) estado.coordenadasTrabajo.x = parseFloat(mx[1]);
-    if (my) estado.coordenadasTrabajo.y = parseFloat(my[1]);
-    if (mz) estado.coordenadasTrabajo.z = parseFloat(mz[1]);
-    actualizarLecturasDRO();
   }
 
   function pausarMecanizado() {
     estado.enPausa = !estado.enPausa;
     if (estado.enPausa) {
-      clearInterval(estado.temporizadorEjecucion);
+      if (window.puenteCNC) window.puenteCNC.pausar();
       elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-play"></i> CONTINUAR';
       establecerEstadoOperativo('HOLD');
-      imprimirEnConsola('c-info', '[PAUSA] Transmisión pausada (! Feed Hold activado).');
     } else {
+      if (window.puenteCNC) window.puenteCNC.reanudar();
       elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-pause"></i> PAUSA';
       establecerEstadoOperativo('RUN');
-      estado.temporizadorEjecucion = setInterval(avanzarPasoMecanizado, 900);
-      imprimirEnConsola('c-info', '[REANUDAR] Continuando ejecución (~ Cycle Start activado).');
     }
   }
 
   function detenerMecanizado() {
     estado.enEjecucion = false;
     estado.enPausa = false;
-    clearInterval(estado.temporizadorEjecucion);
-    establecerEstadoOperativo('IDLE');
+    if (estado.temporizadorEjecucion) clearInterval(estado.temporizadorEjecucion);
+
+    if (window.puenteCNC) window.puenteCNC.detener();
 
     elementos.botonIniciarMecanizado.classList.remove('hidden');
     elementos.botonPausarMecanizado.classList.add('hidden');
     elementos.botonDetenerMecanizado.classList.add('hidden');
     elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-pause"></i> PAUSA';
+    establecerEstadoOperativo('IDLE');
   }
 
   elementos.botonIniciarMecanizado.addEventListener('click', iniciarMecanizado);
@@ -573,39 +705,38 @@ document.addEventListener('DOMContentLoaded', () => {
   elementos.botonDetenerMecanizado.addEventListener('click', detenerMecanizado);
 
   // ==========================================
-  // CONTROLES DE PERSPECTIVA DEL VISUALIZADOR
+  // CONTROLES DE CÁMARA DEL VISOR 2D / 3D
   // ==========================================
   elementos.botonVistaXY.addEventListener('click', () => {
-    activarBotonVista(elementos.botonVistaXY);
-    window.visualizadorCNC.establecerModoVista('XY');
+    elementos.botonVistaXY.classList.add('active');
+    elementos.botonVistaXZ.classList.remove('active');
+    elementos.botonVista3D.classList.remove('active');
+    window.visualizadorCNC.cambiarModoVista('XY');
   });
 
   elementos.botonVistaXZ.addEventListener('click', () => {
-    activarBotonVista(elementos.botonVistaXZ);
-    window.visualizadorCNC.establecerModoVista('XZ');
+    elementos.botonVistaXZ.classList.add('active');
+    elementos.botonVistaXY.classList.remove('active');
+    elementos.botonVista3D.classList.remove('active');
+    window.visualizadorCNC.cambiarModoVista('XZ');
   });
 
   elementos.botonVista3D.addEventListener('click', () => {
-    activarBotonVista(elementos.botonVista3D);
-    window.visualizadorCNC.establecerModoVista('3D');
+    elementos.botonVista3D.classList.add('active');
+    elementos.botonVistaXY.classList.remove('active');
+    elementos.botonVistaXZ.classList.remove('active');
+    window.visualizadorCNC.cambiarModoVista('3D');
   });
 
-  function activarBotonVista(botonActivo) {
-    [elementos.botonVistaXY, elementos.botonVistaXZ, elementos.botonVista3D].forEach(b => b.classList.remove('active'));
-    botonActivo.classList.add('active');
-  }
-
-  elementos.botonZoomMas.addEventListener('click', () => window.visualizadorCNC.establecerZoom(0.25));
-  elementos.botonZoomMenos.addEventListener('click', () => window.visualizadorCNC.establecerZoom(-0.25));
+  elementos.botonZoomMas.addEventListener('click', () => window.visualizadorCNC.ajustarZoom(1.2));
+  elementos.botonZoomMenos.addEventListener('click', () => window.visualizadorCNC.ajustarZoom(0.8));
   elementos.botonReiniciarZoom.addEventListener('click', () => window.visualizadorCNC.reiniciarVista());
 
   // ==========================================
   // ATAJOS RÁPIDOS DE TECLADO
   // ==========================================
   window.addEventListener('keydown', (evento) => {
-    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
-      return;
-    }
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
 
     if (evento.key === 'ArrowUp') { evento.preventDefault(); moverEjeManual('Y', 1); }
     else if (evento.key === 'ArrowDown') { evento.preventDefault(); moverEjeManual('Y', -1); }
@@ -623,19 +754,17 @@ document.addEventListener('DOMContentLoaded', () => {
   elementos.botonAbrirConfiguracion.addEventListener('click', () => {
     elementos.modalConfiguracion.classList.remove('hidden');
   });
-
   elementos.botonCerrarConfiguracion.addEventListener('click', () => elementos.modalConfiguracion.classList.add('hidden'));
   elementos.botonCancelarConfiguracion.addEventListener('click', () => elementos.modalConfiguracion.classList.add('hidden'));
   elementos.botonGuardarConfiguracion.addEventListener('click', () => {
     elementos.modalConfiguracion.classList.add('hidden');
-    imprimirEnConsola('c-info', '[CONFIG] Parámetros guardados y sincronizados correctamente en la memoria EEPROM.');
+    imprimirEnConsola('c-info', '[CONFIG] Parámetros guardados correctamente.');
   });
 
   elementos.botonesPestañasConfiguracion.forEach(botonPestaña => {
     botonPestaña.addEventListener('click', () => {
       elementos.botonesPestañasConfiguracion.forEach(b => b.classList.remove('active'));
       elementos.panelesConfiguracion.forEach(p => p.classList.remove('active'));
-
       botonPestaña.classList.add('active');
       const panelDestino = document.getElementById(botonPestaña.dataset.target);
       if (panelDestino) panelDestino.classList.add('active');
@@ -657,8 +786,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const consulta = evento.target.value.toLowerCase();
     const filas = elementos.cuerpoTablaDiccionario.querySelectorAll('tr');
     filas.forEach(fila => {
-      const textoFila = fila.textContent.toLowerCase();
-      fila.style.display = textoFila.includes(consulta) ? '' : 'none';
+      fila.style.display = fila.textContent.toLowerCase().includes(consulta) ? '' : 'none';
     });
   });
 
@@ -666,6 +794,8 @@ document.addEventListener('DOMContentLoaded', () => {
     estado.indiceLineaActiva = 0;
     renderizarListaCodigoG();
     actualizarMetricasTelemetria();
+    const texto = estado.lineasPrograma.map(l => l.texto).join('\n');
+    if (window.puenteCNC) window.puenteCNC.analizarGcode(texto);
     imprimirEnConsola('c-info', '[ARCHIVO] Archivo de demostración pieza_01.nc cargado.');
   });
 
@@ -685,18 +815,31 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('lbl-loaded-filename').textContent = archivo.name;
         renderizarListaCodigoG();
         actualizarMetricasTelemetria();
+        const textoCompleto = lineas.map(l => l.texto).join('\n');
+        if (window.puenteCNC) window.puenteCNC.analizarGcode(textoCompleto);
         imprimirEnConsola('c-info', `[ARCHIVO] Archivo ${archivo.name} cargado con ${lineas.length} líneas.`);
       }
     };
     lector.readAsText(archivo);
   });
 
-  elementos.botonMenuHoming.addEventListener('click', () => procesarComandoMdi('$H'));
-  elementos.botonMenuDesbloquear.addEventListener('click', () => procesarComandoMdi('$X'));
+  elementos.botonMenuHoming.addEventListener('click', () => {
+    if (window.puenteCNC) window.puenteCNC.ejecutarHoming();
+    else procesarComandoMdi('$H');
+  });
+
+  elementos.botonMenuDesbloquear.addEventListener('click', () => {
+    if (window.puenteCNC) window.puenteCNC.desbloquearAlarma();
+    else procesarComandoMdi('$X');
+  });
+
   elementos.botonMenuReiniciarGrbl.addEventListener('click', () => {
-    detenerMecanizado();
-    imprimirEnConsola('c-grbl', '\nGrbl 1.1h [ESCOM Didáctico: Reiniciado]');
-    establecerEstadoOperativo('IDLE');
+    if (window.puenteCNC) window.puenteCNC.paradaEmergencia();
+    else {
+      detenerMecanizado();
+      imprimirEnConsola('c-grbl', '\nGrbl 1.1h [ESCOM Didáctico: Reiniciado]');
+      establecerEstadoOperativo('IDLE');
+    }
   });
 
   elementos.botonMenuAcercaDe.addEventListener('click', () => {
@@ -713,4 +856,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderizarListaCodigoG();
   actualizarLecturasDRO();
   actualizarMetricasTelemetria();
+
+  // Inicializar puente PyQt6
+  inicializarPuentePyQt();
 });

@@ -9,4 +9,10 @@ node_modules/
 dist/
 .vscode/
 .idea/
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+assets/
 *.bak

@@ -41,9 +41,29 @@ La interfaz reproduce fielmente el diseño industrial del Capítulo 5.8 del docu
    - Panel de **Mapa de Alturas** (Auto-leveling probe matrix para PCB).
    - **Diccionario G-Code Educativo:** Tabla interactiva con búsqueda en tiempo real de comandos y explicaciones didácticas.
 
+## 🚀 Instalación y Ejecución en Windows (PyQt6 + Hardware Real)
+
+La interfaz cuenta con una arquitectura de cuatro capas desacopladas conforme al **Capítulo 5 del Trabajo Terminal**, ejecutándose como una aplicación nativa de escritorio en Windows con **Python 3 y PyQt6**, comunicándose directamente con hardware real con **GRBL v1.1** a través de **PySerial** y el puente IPC **QWebChannel**.
+
+### 1. Requisitos Previos
+- Python 3.10 o superior (probado y optimizado en Python 3.14 en Windows).
+- Placa controladora CNC conectada por USB (Arduino Uno con CNC Shield, etc.) o uso del emulador virtual integrado.
+
+### 2. Instalación de Dependencias
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Ejecución de la Aplicación de Escritorio
+```bash
+python main.py
+```
+
+> **Nota:** La aplicación también puede abrirse directamente en cualquier navegador web moderno (`index.html`) para previsualización offline gracias a su arquitectura con degradación elegante.
+
 ---
 
-##  Atajos de Teclado del Sistema
+## ⌨️ Atajos de Teclado del Sistema
 
 | Tecla / Combinación | Acción Realizada |
 | :--- | :--- |
@@ -51,23 +71,29 @@ La interfaz reproduce fielmente el diseño industrial del Capítulo 5.8 del docu
 | `←` / `→` | Jog eje X (Izquierda / Derecha) |
 | `Re Pág` / `Av Pág` | Jog eje Z (Subir / Bajar herramienta) |
 | `Barra Espaciadora` | Pausar / Continuar ejecución del programa |
-| `Escape (ESC)` | Parada de emergencia (**E-STOP**) |
+| `Escape (ESC)` | Parada de emergencia (**E-STOP** inmediata) |
 | `Ctrl + H` | Ejecutar ciclo de Homing (`$H`) |
 
 ---
 
-##  Estructura del Repositorio
+## 📁 Estructura del Repositorio
 
 ```text
 proyecto tt2/
 │
-├── Documento Interfaz de Control CNC .md   # Documento oficial del Trabajo Terminal (ESCOM)
-├── README.md                               # Documentación general y manual de usuario
-├── .gitignore                              # Reglas de exclusión para Git
-├── pieza_01.nc                             # Archivo G-Code de muestra para simulación
+├── main.py                                 # Punto de entrada de la aplicación nativa Windows (PyQt6)
+├── controlador_grbl.py                     # Capa 4: Driver de comunicación serial GRBL v1.1 y streaming
+├── procesador_gcode.py                     # Capa 3: Analizador léxico/sintáctico, estimador y errores
+├── puente_interfaz.py                      # Puente IPC bidireccional (QWebChannel Python <-> JS)
+├── qwebchannel.js                          # Biblioteca de enlace cliente Qt WebChannel
+├── requirements.txt                        # Dependencias de Python (PyQt6, PyQt6-WebEngine, PySerial)
 │
-├── index.html                              # Estructura semántica de la interfaz
-├── styles.css                              # Diseño y paleta industrial oscura
-├── app.js                                  # Lógica reactiva de control, DRO y simulación
-└── visualizer.js                           # Motor gráfico Canvas 2D/3D
+├── index.html                              # Capa 1: Estructura semántica de la interfaz de control
+├── styles.css                              # Sistema de diseño aeronáutico oscuro con Font Awesome
+├── app.js                                  # Controlador reactivo de la interfaz web y suscripción IPC
+├── visualizer.js                           # Motor gráfico Canvas 2D/3D (vistas XY, XZ, 3D e isometría)
+│
+├── pieza_01.nc                             # Archivo G-Code didáctico de prueba (cajeado 2D)
+├── Documento Interfaz de Control CNC .md   # Documento oficial del Trabajo Terminal (ESCOM)
+└── README.md                               # Manual técnico de usuario e instalación
 ```

@@ -1,0 +1,6 @@
+# Dependencias de Python para CNC Basic v1.0
+# Trabajo Terminal 2026-B072 (ESCOM - IPN)
+
+PyQt6>=6.6.0
+PyQt6-WebEngine>=6.6.0
+pyserial>=3.5
