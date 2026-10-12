@@ -1,7 +1,7 @@
 /**
  * CNC Basic v1.0 - Motor Gráfico del Visualizador 2D/3D (visualizer.js)
  * Renderizado en Canvas para trayectorias de herramienta, plano cartesiano,
- * cubo de navegación interactivo (ViewCube 3D) y realce de profundidad en el eje Z.
+ * cubo de navegación interactivo (ViewCube 3D) y orientación espacial correcta (+Z hacia arriba).
  */
 
 class VisualizadorCNC {
@@ -16,10 +16,12 @@ class VisualizadorCNC {
     this.desplazamientoX = -35;
     this.desplazamientoY = 15;
 
-    // Ángulos de cámara 3D para órbita continua (en grados)
-    this.rotacionPitch = 55; // Inclinación vertical (0° = Superior XY, 90° = Frontal XZ)
-    this.rotacionYaw = 40;   // Rotación horizontal alrededor de Z (360°)
-    this.escalaZ = 1.5;      // Factor de realce de profundidad del eje Z (1.0x, 1.5x, 2.5x, 4.0x)
+    // Ángulos de cámara 3D (en grados):
+    // inclinacion: 0° = horizontal (Frontal XZ), 90° = vertical hacia abajo (Superior XY), 35° = perspectiva 3D
+    // azimut: rotación horizontal alrededor del eje Z (-35° = isométrica desde frente-izquierda)
+    this.rotacionInclinacion = 35;
+    this.rotacionAzimut = -35;
+    this.escalaZ = 1.5; // Factor de realce de profundidad del eje Z (1.0x, 1.5x, 2.5x, 4.0x)
 
     // Centro espacial de rotación (alrededor del cual gira la pieza)
     this.centroPieza = { x: 160, y: 180, z: 0 };
@@ -80,7 +82,6 @@ class VisualizadorCNC {
 
   // Control de interacción de ratón (órbita 3D en los 3 ejes, paneo y zoom)
   iniciarEventos() {
-    // Evitar menú contextual en el lienzo para permitir paneo/órbita con clic derecho
     this.lienzo.addEventListener('contextmenu', (e) => e.preventDefault());
 
     this.lienzo.addEventListener('mousedown', (evento) => {
@@ -95,11 +96,9 @@ class VisualizadorCNC {
       } else {
         // Clic izquierdo:
         if (this.modoVista === '3D') {
-          // En modo 3D: Órbita libre en los 3 ejes (X, Y, Z)
           this.tipoArrastre = 'orbit';
           this.lienzo.style.cursor = 'grabbing';
         } else {
-          // En modo 2D: Paneo
           this.tipoArrastre = 'pan';
           this.lienzo.style.cursor = 'grabbing';
         }
@@ -114,9 +113,11 @@ class VisualizadorCNC {
       this.ultimoRatonY = evento.clientY;
 
       if (this.tipoArrastre === 'orbit' || (this.modoVista === '3D' && evento.buttons === 1 && !evento.shiftKey)) {
-        // Rotación 3D: Yaw (horizontal alrededor de Z) y Pitch (vertical)
-        this.rotacionYaw = (this.rotacionYaw + deltaX * 0.45) % 360;
-        this.rotacionPitch = Math.max(5, Math.min(88, this.rotacionPitch + deltaY * 0.45));
+        // Rotación 3D en los ejes con orientación natural:
+        // Arrastrar horizontalmente gira alrededor de Z (azimut)
+        // Arrastrar verticalmente inclina la vista (inclinacion)
+        this.rotacionAzimut = (this.rotacionAzimut + deltaX * 0.45) % 360;
+        this.rotacionInclinacion = Math.max(5, Math.min(88, this.rotacionInclinacion - deltaY * 0.45));
         this.actualizarCuboOrientacion();
         this.actualizarSuperposicionZoom();
         this.solicitarRenderizado();
@@ -170,8 +171,8 @@ class VisualizadorCNC {
       cuboUltimoX = e.clientX;
       cuboUltimoY = e.clientY;
 
-      this.rotacionYaw = (this.rotacionYaw + dx * 0.8) % 360;
-      this.rotacionPitch = Math.max(5, Math.min(88, this.rotacionPitch + dy * 0.8));
+      this.rotacionAzimut = (this.rotacionAzimut + dx * 0.7) % 360;
+      this.rotacionInclinacion = Math.max(5, Math.min(88, this.rotacionInclinacion - dy * 0.7));
 
       if (this.modoVista !== '3D') {
         this.modoVista = '3D';
@@ -213,20 +214,20 @@ class VisualizadorCNC {
           this.establecerModoVista('YZ');
         } else if (tipo === 'back') {
           this.modoVista = '3D';
-          this.rotacionPitch = 90;
-          this.rotacionYaw = 180;
+          this.rotacionInclinacion = 0;
+          this.rotacionAzimut = 180;
           this.actualizarCuboOrientacion();
           this.solicitarRenderizado();
         } else if (tipo === 'left') {
           this.modoVista = '3D';
-          this.rotacionPitch = 90;
-          this.rotacionYaw = 270;
+          this.rotacionInclinacion = 0;
+          this.rotacionAzimut = -90;
           this.actualizarCuboOrientacion();
           this.solicitarRenderizado();
         } else if (tipo === 'bottom') {
           this.modoVista = '3D';
-          this.rotacionPitch = 5;
-          this.rotacionYaw = 0;
+          this.rotacionInclinacion = 5;
+          this.rotacionAzimut = 0;
           this.actualizarCuboOrientacion();
           this.solicitarRenderizado();
         }
@@ -281,21 +282,22 @@ class VisualizadorCNC {
     this.solicitarRenderizado();
   }
 
-  // Sincroniza la rotación CSS 3D del cubo con la orientación actual de la cámara
+  // Sincroniza la rotación CSS 3D del cubo con la orientación actual de la cámara sin deformación
   actualizarCuboOrientacion() {
     const cube = document.getElementById('viewcube-cube');
     if (!cube) return;
 
     if (this.modoVista === 'XY') {
-      cube.style.transform = 'rotateX(-90deg) rotateZ(0deg)';
+      cube.style.transform = 'rotateX(-90deg) rotateY(0deg)';
     } else if (this.modoVista === 'XZ') {
       cube.style.transform = 'rotateX(0deg) rotateY(0deg)';
     } else if (this.modoVista === 'YZ') {
       cube.style.transform = 'rotateX(0deg) rotateY(-90deg)';
     } else {
-      const pitchCSS = this.rotacionPitch - 90;
-      const yawCSS = -this.rotacionYaw;
-      cube.style.transform = `rotateX(${pitchCSS}deg) rotateZ(${yawCSS}deg)`;
+      // En modo 3D: rotación alrededor de X para inclinar y alrededor de Y para azimut (sin rotateZ)
+      const inclCSS = -this.rotacionInclinacion;
+      const azimCSS = -this.rotacionAzimut;
+      cube.style.transform = `rotateX(${inclCSS}deg) rotateY(${azimCSS}deg)`;
     }
 
     const btnIso = document.getElementById('vc-btn-iso');
@@ -319,7 +321,10 @@ class VisualizadorCNC {
       this.zoom = 1.0;
       this.desplazamientoX = -35;
       this.desplazamientoY = 15;
+      this.rotacionInclinacion = 35;
+      this.rotacionAzimut = -35;
       this.actualizarSuperposicionZoom();
+      this.actualizarCuboOrientacion();
       this.solicitarRenderizado();
     }
   }
@@ -354,17 +359,17 @@ class VisualizadorCNC {
   establecerModoVista(modo) {
     this.modoVista = modo;
     if (modo === 'XY') {
-      this.rotacionPitch = 0;
-      this.rotacionYaw = 0;
+      this.rotacionInclinacion = 90;
+      this.rotacionAzimut = 0;
     } else if (modo === 'XZ') {
-      this.rotacionPitch = 90;
-      this.rotacionYaw = 0;
+      this.rotacionInclinacion = 0;
+      this.rotacionAzimut = 0;
     } else if (modo === 'YZ') {
-      this.rotacionPitch = 90;
-      this.rotacionYaw = 90;
+      this.rotacionInclinacion = 0;
+      this.rotacionAzimut = 90;
     } else if (modo === '3D') {
-      this.rotacionPitch = 55;
-      this.rotacionYaw = 40;
+      this.rotacionInclinacion = 35;
+      this.rotacionAzimut = -35;
     }
 
     const etiquetaModo = document.getElementById('lbl-view-mode');
@@ -415,7 +420,7 @@ class VisualizadorCNC {
     this.solicitarRenderizado();
   }
 
-  // Conversión y proyección espacial 2D y 3D con órbita continua
+  // Conversión y proyección espacial 2D y 3D (+Z siempre apunta hacia ARRIBA)
   convertirAPantalla(x, y, z = 0) {
     const escala = 1.65 * this.zoom;
     const cx = this.centroPieza ? this.centroPieza.x : 150;
@@ -433,46 +438,51 @@ class VisualizadorCNC {
         zProf: z
       };
     } else if (this.modoVista === 'XZ') {
-      // Plano 2D frontal (Eje Z vs Eje X)
+      // Plano 2D frontal (Eje Z vs Eje X, +Z hacia arriba)
       return {
         x: centroPantallaX + (x - cx) * escala,
         y: centroPantallaY - ((z - cz) * this.escalaZ * 2.2) * escala,
         zProf: y
       };
     } else if (this.modoVista === 'YZ') {
-      // Plano 2D lateral (Eje Z vs Eje Y)
+      // Plano 2D lateral (Eje Z vs Eje Y, +Z hacia arriba)
       return {
         x: centroPantallaX + (y - cy) * escala,
         y: centroPantallaY - ((z - cz) * this.escalaZ * 2.2) * escala,
         zProf: x
       };
     } else {
-      // Modo 3D con órbita continua en Pitch y Yaw
+      // Modo 3D espacial correcto:
+      // X = horizontal, Y = fondo, Z = altura (+Z hacia arriba)
       const dx = (x - cx);
       const dy = (y - cy);
       const dz = (z - cz) * this.escalaZ;
 
-      const radPitch = (this.rotacionPitch * Math.PI) / 180;
-      const radYaw = (this.rotacionYaw * Math.PI) / 180;
+      const radAzimut = (this.rotacionAzimut * Math.PI) / 180;
+      const radInclinacion = (this.rotacionInclinacion * Math.PI) / 180;
 
-      // 1. Rotación horizontal alrededor del eje Z (Yaw)
-      const cosY = Math.cos(radYaw);
-      const sinY = Math.sin(radYaw);
-      const xr = dx * cosY - dy * sinY;
-      const yr = dx * sinY + dy * cosY;
+      // 1. Rotación horizontal alrededor del eje vertical Z (Azimut / Yaw)
+      const cosA = Math.cos(radAzimut);
+      const sinA = Math.sin(radAzimut);
+      const xr = dx * cosA - dy * sinA;
+      const yr = dx * sinA + dy * cosA;
       const zr = dz;
 
-      // 2. Inclinación vertical (Pitch)
-      const cosP = Math.cos(radPitch);
-      const sinP = Math.sin(radPitch);
-      const xCam = xr;
-      const yCam = yr * cosP - zr * sinP;
-      const zCam = yr * sinP + zr * cosP;
+      // 2. Inclinación de la cámara sobre el plano de la mesa (0° = horizontal, 90° = vertical)
+      const sinI = Math.sin(radInclinacion);
+      const cosI = Math.cos(radInclinacion);
+
+      // Eje horizontal de pantalla (X hacia la derecha)
+      const xPantalla = xr;
+      // Eje vertical en pantalla: +Z sube físicamente hacia arriba (+zr * cosI)
+      // y la profundidad +yr se proyecta hacia el fondo superior (+yr * sinI)
+      const yPantalla = yr * sinI + zr * cosI;
+      const zProfundidad = yr * cosI - zr * sinI;
 
       return {
-        x: centroPantallaX + xCam * escala,
-        y: centroPantallaY - yCam * escala,
-        zProf: zCam
+        x: centroPantallaX + xPantalla * escala,
+        y: centroPantallaY - yPantalla * escala,
+        zProf: zProfundidad
       };
     }
   }
@@ -817,7 +827,7 @@ class VisualizadorCNC {
       const pY = this.convertirAPantalla(0, 40, 0);
       const pZ = this.convertirAPantalla(0, 0, 30);
 
-      // Eje X (Rojo)
+      // Eje X (Rojo hacia la derecha)
       ctx.strokeStyle = '#ff3b30';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -828,7 +838,7 @@ class VisualizadorCNC {
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
       ctx.fillText('+X', pX.x + 4, pX.y + 4);
 
-      // Eje Y (Verde)
+      // Eje Y (Verde hacia el fondo)
       ctx.strokeStyle = '#34c759';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -838,7 +848,7 @@ class VisualizadorCNC {
       ctx.fillStyle = '#34c759';
       ctx.fillText('+Y', pY.x + 4, pY.y + 4);
 
-      // Eje Z (Azul / Cian hacia arriba)
+      // Eje Z (Azul / Cian apuntando hacia ARRIBA)
       ctx.strokeStyle = '#00e5ff';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
@@ -895,7 +905,7 @@ class VisualizadorCNC {
       ctx.fill();
       ctx.stroke();
 
-      // Aristas de profundidad hasta minZ
+      // Aristas de profundidad hacia abajo (corte negativo minZ)
       const b1 = this.convertirAPantalla(limites.minX, limites.minY, minZ);
       const b2 = this.convertirAPantalla(limites.maxX, limites.minY, minZ);
       const b3 = this.convertirAPantalla(limites.maxX, limites.maxY, minZ);
@@ -922,7 +932,7 @@ class VisualizadorCNC {
     if (!this.trayectoria || this.trayectoria.length === 0) return;
     ctx.save();
 
-    // 1. Trazado rápido G0 (líneas discontinuas grises) en un único batch
+    // 1. Trazado rápido G0 (líneas discontinuas grises elevadas) en un único batch
     ctx.strokeStyle = '#738090';
     ctx.lineWidth = 1.2;
     ctx.setLineDash([4, 4]);
@@ -958,7 +968,7 @@ class VisualizadorCNC {
       ctx.stroke();
     }
 
-    // 3. Trayectorias de corte G1/G2/G3 (líneas continuas cian) en un único batch
+    // 3. Trayectorias de corte G1/G2/G3 (líneas continuas cian en profundidad)
     ctx.strokeStyle = '#00e5ff';
     ctx.lineWidth = 1.8;
     ctx.setLineDash([]);
@@ -1005,7 +1015,7 @@ class VisualizadorCNC {
     ctx.restore();
   }
 
-  // Retícula indicadora y silueta de fresa en 3D
+  // Retícula indicadora y silueta cilíndrica de fresa en 3D hacia ARRIBA
   dibujarRetículaHerramienta(ctx) {
     const pos = this.convertirAPantalla(this.posicionHerramienta.x, this.posicionHerramienta.y, this.posicionHerramienta.z);
     ctx.save();
@@ -1027,14 +1037,14 @@ class VisualizadorCNC {
     ctx.arc(pos.x, pos.y, 6, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Silueta 3D de la fresa cilíndrica a lo largo del eje Z
+    // Silueta 3D de la fresa cilíndrica extendiéndose hacia ARRIBA (+Z)
     if (this.modoVista === '3D') {
       const posArriba = this.convertirAPantalla(this.posicionHerramienta.x, this.posicionHerramienta.y, this.posicionHerramienta.z + 20);
       ctx.strokeStyle = '#ffb703';
       ctx.fillStyle = 'rgba(255, 183, 3, 0.35)';
       ctx.lineWidth = 2;
 
-      // Vástago de la herramienta
+      // Vástago de la herramienta desde la punta hacia arriba
       ctx.beginPath();
       ctx.moveTo(pos.x - 4, pos.y);
       ctx.lineTo(posArriba.x - 4, posArriba.y);
@@ -1044,7 +1054,7 @@ class VisualizadorCNC {
       ctx.fill();
       ctx.stroke();
 
-      // Cuello portaherramientas
+      // Cuello portaherramientas (pinza)
       ctx.fillStyle = 'rgba(200, 210, 225, 0.7)';
       ctx.beginPath();
       ctx.rect(posArriba.x - 7, posArriba.y - 8, 14, 8);
