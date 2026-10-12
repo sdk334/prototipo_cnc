@@ -35,6 +35,7 @@ class VentanaPrincipalCNC(QMainWindow):
         self.controlador = ControladorGRBL()
         self.procesador = ProcesadorGCode()
         self.puente = PuenteCNC(self.controlador, self.procesador)
+        self.puente.cb_alternar_pantalla_completa = self.alternar_pantalla_completa
 
         # 2. Configurar vista web integrada Chromium con fondo oscuro nativo
         self.vista_web = QWebEngineView(self)
@@ -69,6 +70,30 @@ class VentanaPrincipalCNC(QMainWindow):
         ajustes.setAttribute(QWebEngineSettings.WebAttribute.ScrollAnimatorEnabled, True)
         ajustes.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
         ajustes.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
+        ajustes.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
+        self.vista_web.page().fullScreenRequested.connect(self._al_solicitar_pantalla_completa)
+
+    def _al_solicitar_pantalla_completa(self, peticion):
+        peticion.accept()
+        if peticion.toggleOn():
+            self.showFullScreen()
+        else:
+            self.showNormal()
+
+    def alternar_pantalla_completa(self):
+        """Alterna entre modo ventana y pantalla completa sin bordes."""
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
+    def keyPressEvent(self, evento):
+        """Atajo F11 nativo para pantalla completa."""
+        if evento.key() == Qt.Key.Key_F11:
+            self.alternar_pantalla_completa()
+            evento.accept()
+        else:
+            super().keyPressEvent(evento)
 
     def closeEvent(self, evento):
         """Asegura el cierre limpio de la comunicación serial al cerrar la ventana."""

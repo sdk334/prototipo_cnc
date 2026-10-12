@@ -1006,6 +1006,23 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('keydown', (evento) => {
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
 
+    if (evento.key === 'F11') {
+      evento.preventDefault();
+      conmutarPantallaCompleta();
+      return;
+    }
+    if (evento.ctrlKey && (evento.key === 'o' || evento.key === 'O')) {
+      evento.preventDefault();
+      elementos.selectorArchivoGcode.click();
+      return;
+    }
+    if (evento.ctrlKey && (evento.key === 's' || evento.key === 'S')) {
+      evento.preventDefault();
+      const btnGuardar = document.getElementById('btn-menu-save-gcode');
+      if (btnGuardar) btnGuardar.click();
+      return;
+    }
+
     if (evento.key === 'ArrowUp') { evento.preventDefault(); moverEjeManual('Y', 1); }
     else if (evento.key === 'ArrowDown') { evento.preventDefault(); moverEjeManual('Y', -1); }
     else if (evento.key === 'ArrowLeft') { evento.preventDefault(); moverEjeManual('X', -1); }
@@ -1136,6 +1153,193 @@ document.addEventListener('DOMContentLoaded', () => {
 
   elementos.botonMenuAcercaDe.addEventListener('click', () => {
     alert('CNC Basic v1.0\nInterfaz de control para máquinas CNC con fines educativos\nTrabajo Terminal 2026-B072 (ESCOM - IPN)\n\nAutores:\n• Josué Martin Echeverría Arteaga\n• Jonathan Uriel Paredes Martínez\n\nDirector:\n• Dr. Gelacio Castillo Cabrera');
+  });
+
+  // ==========================================
+  // OPCIONES DEL MENÚ SUPERIOR
+  // ==========================================
+
+  // --- MENÚ VISTA ---
+  const btnMenuViewXy = document.getElementById('btn-menu-view-xy');
+  if (btnMenuViewXy) {
+    btnMenuViewXy.addEventListener('click', () => {
+      if (window.visualizadorCNC) {
+        window.visualizadorCNC.cambiarModoVista('XY');
+        imprimirEnConsola('c-info', '[VISTA] Cambiado a Vista XY (Planta 2D).');
+      }
+    });
+  }
+
+  const btnMenuViewXz = document.getElementById('btn-menu-view-xz');
+  if (btnMenuViewXz) {
+    btnMenuViewXz.addEventListener('click', () => {
+      if (window.visualizadorCNC) {
+        window.visualizadorCNC.cambiarModoVista('XZ');
+        imprimirEnConsola('c-info', '[VISTA] Cambiado a Vista XZ (Frontal 2D).');
+      }
+    });
+  }
+
+  const btnMenuView3d = document.getElementById('btn-menu-view-3d');
+  if (btnMenuView3d) {
+    btnMenuView3d.addEventListener('click', () => {
+      if (window.visualizadorCNC) {
+        window.visualizadorCNC.cambiarModoVista('3D');
+        imprimirEnConsola('c-info', '[VISTA] Cambiado a Vista 3D Isométrica.');
+      }
+    });
+  }
+
+  const btnMenuToggleGrid = document.getElementById('btn-menu-toggle-grid');
+  if (btnMenuToggleGrid) {
+    btnMenuToggleGrid.addEventListener('click', () => {
+      if (window.visualizadorCNC) {
+        const visible = window.visualizadorCNC.alternarCuadricula();
+        imprimirEnConsola('c-info', `[VISTA] Cuadrícula ${visible ? 'activada' : 'ocultada'}.`);
+        btnMenuToggleGrid.innerHTML = visible
+          ? '<i class="fa-solid fa-border-all"></i> Alternar Cuadrícula'
+          : '<i class="fa-solid fa-border-none"></i> Alternar Cuadrícula';
+      }
+    });
+  }
+
+  function conmutarPantallaCompleta() {
+    if (window.puenteCNC && typeof window.puenteCNC.alternarPantallaCompleta === 'function') {
+      window.puenteCNC.alternarPantallaCompleta();
+    } else {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+      }
+    }
+  }
+
+  const btnMenuFullscreen = document.getElementById('btn-menu-fullscreen');
+  if (btnMenuFullscreen) {
+    btnMenuFullscreen.addEventListener('click', () => {
+      conmutarPantallaCompleta();
+    });
+  }
+
+  // --- MENÚ ARCHIVO ---
+  const btnMenuSaveGcode = document.getElementById('btn-menu-save-gcode');
+  if (btnMenuSaveGcode) {
+    btnMenuSaveGcode.addEventListener('click', () => {
+      const contenido = estado.lineasPrograma.map(l => l.texto).join('\n');
+      if (!contenido.trim()) {
+        imprimirEnConsola('c-alarm', '[ARCHIVO] No hay código G cargado para guardar.');
+        return;
+      }
+      const blob = new Blob([contenido], { type: 'text/plain;charset=utf-8' });
+      const enlace = document.createElement('a');
+      enlace.href = URL.createObjectURL(blob);
+      const nombre = document.getElementById('lbl-loaded-filename').textContent || 'programa.nc';
+      enlace.download = nombre.endsWith('.nc') || nombre.endsWith('.gcode') ? nombre : `${nombre}.nc`;
+      enlace.click();
+      imprimirEnConsola('c-system', `[ARCHIVO] Programa guardado como ${enlace.download}.`);
+    });
+  }
+
+  const btnMenuExportLog = document.getElementById('btn-menu-export-log');
+  if (btnMenuExportLog) {
+    btnMenuExportLog.addEventListener('click', () => {
+      const lineasConsola = Array.from(elementos.cuerpoConsola.querySelectorAll('.console-line'))
+        .map(linea => linea.textContent)
+        .join('\n');
+      if (!lineasConsola.trim()) {
+        imprimirEnConsola('c-info', '[BITÁCORA] La consola se encuentra vacía.');
+        return;
+      }
+      const blob = new Blob([lineasConsola], { type: 'text/plain;charset=utf-8' });
+      const enlace = document.createElement('a');
+      enlace.href = URL.createObjectURL(blob);
+      enlace.download = `bitacora_cnc_${new Date().toISOString().slice(0, 10)}.txt`;
+      enlace.click();
+      imprimirEnConsola('c-system', '[BITÁCORA] Bitácora serial exportada exitosamente.');
+    });
+  }
+
+  // --- MENÚ EDICIÓN ---
+  const btnMenuClearGcode = document.getElementById('btn-menu-clear-gcode');
+  if (btnMenuClearGcode) {
+    btnMenuClearGcode.addEventListener('click', () => {
+      estado.lineasPrograma = [];
+      estado.indiceLineaActiva = 0;
+      document.getElementById('lbl-loaded-filename').textContent = 'Ninguno';
+      renderizarListaCodigoG();
+      if (window.visualizadorCNC) {
+        window.visualizadorCNC.limpiarTrayectoria();
+      }
+      imprimirEnConsola('c-info', '[EDICIÓN] Programa G-Code limpiado del espacio de trabajo.');
+    });
+  }
+
+  const btnMenuClearConsole = document.getElementById('btn-menu-clear-console');
+  if (btnMenuClearConsole) {
+    btnMenuClearConsole.addEventListener('click', () => {
+      elementos.cuerpoConsola.innerHTML = '';
+      imprimirEnConsola('c-info', '[CONSOLA] Bitácora de consola serial limpiada.');
+    });
+  }
+
+  // --- MENÚ MÁQUINA ---
+  const btnMenuGotoOrigin = document.getElementById('btn-menu-goto-origin');
+  if (btnMenuGotoOrigin) {
+    btnMenuGotoOrigin.addEventListener('click', () => {
+      procesarComandoMdi('G0 X0 Y0 Z0');
+    });
+  }
+
+  // --- MENÚ HERRAMIENTAS ---
+  const btnMenuHeightmap = document.getElementById('btn-menu-heightmap');
+  if (btnMenuHeightmap) {
+    btnMenuHeightmap.addEventListener('click', () => {
+      elementos.modalConfiguracion.classList.remove('hidden');
+      const pestana = document.querySelector('.cfg-tab-btn[data-tab="tab-control"]');
+      if (pestana) pestana.click();
+      imprimirEnConsola('c-info', '[HERRAMIENTAS] Asistente de nivelación y mapa de alturas.');
+    });
+  }
+
+  const btnMenuCalibration = document.getElementById('btn-menu-calibration');
+  if (btnMenuCalibration) {
+    btnMenuCalibration.addEventListener('click', () => {
+      elementos.modalConfiguracion.classList.remove('hidden');
+      const pestana = document.querySelector('.cfg-tab-btn[data-tab="tab-motores"]');
+      if (pestana) pestana.click();
+      imprimirEnConsola('c-info', '[HERRAMIENTAS] Calibración de pasos por milímetro.');
+    });
+  }
+
+  const btnMenuMacros = document.getElementById('btn-menu-macros');
+  if (btnMenuMacros) {
+    btnMenuMacros.addEventListener('click', () => {
+      elementos.modalConfiguracion.classList.remove('hidden');
+      const pestana = document.querySelector('.cfg-tab-btn[data-tab="tab-macros"]');
+      if (pestana) pestana.click();
+      imprimirEnConsola('c-info', '[HERRAMIENTAS] Comandos rápidos y macros.');
+    });
+  }
+
+  // --- MENÚ AYUDA ---
+  const btnMenuManual = document.getElementById('btn-menu-manual');
+  if (btnMenuManual) {
+    btnMenuManual.addEventListener('click', () => {
+      elementos.modalDiccionario.classList.remove('hidden');
+      imprimirEnConsola('c-info', '[AYUDA] Abriendo guía y diccionario de comandos G-Code.');
+    });
+  }
+
+  // Cerrar menús desplegables inmediatamente al hacer clic en cualquier opción
+  document.querySelectorAll('.dropdown-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const dropdown = item.closest('.dropdown-menu');
+      if (dropdown) {
+        dropdown.style.display = 'none';
+        setTimeout(() => { dropdown.style.display = ''; }, 200);
+      }
+    });
   });
 
   [elementos.modalConfiguracion, elementos.modalDiccionario].forEach(modal => {

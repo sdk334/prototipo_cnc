@@ -40,6 +40,7 @@ class VisualizadorCNC {
     this.trayectoria = [];
     this.limitesMaterial = null;
     this.limitesZ = { minZ: -1.0, maxZ: 5.0 };
+    this.mostrarCuadricula = true;
     this.cargarTrayectoriaEjemplo();
 
     this.redibujadoPendiente = false;
@@ -798,6 +799,10 @@ class VisualizadorCNC {
     const centroPantallaY = (this.altoPantalla / 2) + this.desplazamientoY;
 
     if (this.modoVista === 'XY') {
+      if (!this.mostrarCuadricula) {
+        ctx.restore();
+        return;
+      }
       // Límites visibles en coordenadas del mundo milimétrico
       const xMin = cx + (0 - centroPantallaX) / escala;
       const xMax = cx + (this.anchoPantalla - centroPantallaX) / escala;
@@ -862,6 +867,10 @@ class VisualizadorCNC {
         }
       }
     } else if (this.modoVista === 'XZ') {
+      if (!this.mostrarCuadricula) {
+        ctx.restore();
+        return;
+      }
       const xMin = cx + (0 - centroPantallaX) / escala;
       const xMax = cx + (this.anchoPantalla - centroPantallaX) / escala;
       const inicioX = Math.floor(xMin / principal) * principal;
@@ -886,31 +895,33 @@ class VisualizadorCNC {
       ctx.stroke();
       ctx.setLineDash([]);
     } else {
-      // Rejilla 3D adaptativa sobre el plano Z = 0
-      const limites = this.limitesMaterial || { minX: 0, maxX: 300, minY: 0, maxY: 250 };
-      const margen = Math.max(15, 35 / escala);
-      const minX = Math.floor((limites.minX - margen) / principal) * principal;
-      const maxX = Math.ceil((limites.maxX + margen) / principal) * principal;
-      const minY = Math.floor((limites.minY - margen) / principal) * principal;
-      const maxY = Math.ceil((limites.maxY + margen) / principal) * principal;
+      if (this.mostrarCuadricula) {
+        // Rejilla 3D adaptativa sobre el plano Z = 0
+        const limites = this.limitesMaterial || { minX: 0, maxX: 300, minY: 0, maxY: 250 };
+        const margen = Math.max(15, 35 / escala);
+        const minX = Math.floor((limites.minX - margen) / principal) * principal;
+        const maxX = Math.ceil((limites.maxX + margen) / principal) * principal;
+        const minY = Math.floor((limites.minY - margen) / principal) * principal;
+        const maxY = Math.ceil((limites.maxY + margen) / principal) * principal;
 
-      ctx.strokeStyle = '#141a22';
-      ctx.beginPath();
-      const lineasMaximas = 60;
-      const pasoReal = (maxX - minX) / principal > lineasMaximas ? principal * 2 : principal;
-      for (let x = minX; x <= maxX; x += pasoReal) {
-        const p1 = this.convertirAPantalla(x, minY, 0);
-        const p2 = this.convertirAPantalla(x, maxY, 0);
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
+        ctx.strokeStyle = '#141a22';
+        ctx.beginPath();
+        const lineasMaximas = 60;
+        const pasoReal = (maxX - minX) / principal > lineasMaximas ? principal * 2 : principal;
+        for (let x = minX; x <= maxX; x += pasoReal) {
+          const p1 = this.convertirAPantalla(x, minY, 0);
+          const p2 = this.convertirAPantalla(x, maxY, 0);
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+        }
+        for (let y = minY; y <= maxY; y += pasoReal) {
+          const p1 = this.convertirAPantalla(minX, y, 0);
+          const p2 = this.convertirAPantalla(maxX, y, 0);
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+        }
+        ctx.stroke();
       }
-      for (let y = minY; y <= maxY; y += pasoReal) {
-        const p1 = this.convertirAPantalla(minX, y, 0);
-        const p2 = this.convertirAPantalla(maxX, y, 0);
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-      }
-      ctx.stroke();
 
       // Tríada tridimensional de ejes en el origen WCS (0,0,0)
       const origen = this.convertirAPantalla(0, 0, 0);
@@ -1181,10 +1192,26 @@ class VisualizadorCNC {
     ctx.restore();
   }
 
+  // Alternar visibilidad de la cuadrícula milimétrica / 3D
+  alternarCuadricula() {
+    this.mostrarCuadricula = !this.mostrarCuadricula;
+    this.solicitarRenderizado();
+    return this.mostrarCuadricula;
+  }
+
+  // Limpiar la trayectoria gráfica en el lienzo
+  limpiarTrayectoria() {
+    this.trayectoria = [];
+    this.envolventePieza = null;
+    this.solicitarRenderizado();
+  }
+
   // Métodos puente para compatibilidad
   setToolPosition(x, y, z) { this.establecerPosicionHerramienta(x, y, z); }
   setViewMode(modo) { this.establecerModoVista(modo); }
   cambiarModoVista(modo) { this.establecerModoVista(modo); }
+  toggleGrid() { return this.alternarCuadricula(); }
+  clearTrajectory() { this.limpiarTrayectoria(); }
   setZoom(delta) { this.establecerZoom(delta); }
   resetView() { this.reiniciarVista(); }
   render() { this.solicitarRenderizado(); }

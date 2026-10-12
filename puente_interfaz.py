@@ -45,6 +45,9 @@ class PuenteCNC(QObject):
         self.temporizador_hotplug.timeout.connect(self._verificar_cambios_hotplug)
         self.temporizador_hotplug.start(1000)
 
+        # Callback nativo para alternar pantalla completa
+        self.cb_alternar_pantalla_completa = None
+
     # =========================================================================
     # DISPATCHERS DE CALLBACKS DE PYTHON A SEÑALES QT
     # =========================================================================
@@ -104,6 +107,12 @@ class PuenteCNC(QObject):
     # =========================================================================
     # SLOTS INVOCABLES DIRECTAMENTE DESDE JAVASCRIPT
     # =========================================================================
+
+    @pyqtSlot()
+    def alternarPantallaCompleta(self):
+        """Alterna el modo de pantalla completa de la ventana principal."""
+        if self.cb_alternar_pantalla_completa:
+            self.cb_alternar_pantalla_completa()
 
     @pyqtSlot()
     def escanearPuertos(self):
