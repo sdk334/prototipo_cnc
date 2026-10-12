@@ -39,6 +39,7 @@ class VentanaPrincipalCNC(QMainWindow):
         # 2. Configurar vista web integrada Chromium con fondo oscuro nativo
         self.vista_web = QWebEngineView(self)
         self.vista_web.page().setBackgroundColor(QColor("#0a0c0e"))
+        self.vista_web.setStyleSheet("background-color: #0a0c0e;")
         self.configurar_motor_web()
 
         # 3. Configurar el canal IPC QWebChannel

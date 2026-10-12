@@ -38,6 +38,10 @@ class VisualizadorCNC {
 
   // Solicita redibujado sincronizado con la tasa de refresco del monitor (60 FPS / vsync)
   solicitarRenderizado() {
+    // Si hay un modal visible, no redibujar el canvas en segundo plano para evitar colisiones GPU y parpadeos
+    if (document.querySelector('.modal-backdrop:not(.hidden)')) {
+      return;
+    }
     if (this.redibujadoPendiente) return;
     this.redibujadoPendiente = true;
     requestAnimationFrame(() => {

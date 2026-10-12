@@ -821,11 +821,18 @@ document.addEventListener('DOMContentLoaded', () => {
   elementos.botonAbrirConfiguracion.addEventListener('click', () => {
     elementos.modalConfiguracion.classList.remove('hidden');
   });
-  elementos.botonCerrarConfiguracion.addEventListener('click', () => elementos.modalConfiguracion.classList.add('hidden'));
-  elementos.botonCancelarConfiguracion.addEventListener('click', () => elementos.modalConfiguracion.classList.add('hidden'));
+  elementos.botonCerrarConfiguracion.addEventListener('click', () => {
+    elementos.modalConfiguracion.classList.add('hidden');
+    if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+  });
+  elementos.botonCancelarConfiguracion.addEventListener('click', () => {
+    elementos.modalConfiguracion.classList.add('hidden');
+    if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+  });
   elementos.botonGuardarConfiguracion.addEventListener('click', () => {
     elementos.modalConfiguracion.classList.add('hidden');
     imprimirEnConsola('c-info', '[CONFIG] Parámetros guardados correctamente.');
+    if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
   });
 
   elementos.botonesPestañasConfiguracion.forEach(botonPestaña => {
@@ -842,12 +849,16 @@ document.addEventListener('DOMContentLoaded', () => {
     botonMacro.addEventListener('click', (evento) => {
       const comandosMacro = evento.currentTarget.dataset.macro.split(';');
       elementos.modalConfiguracion.classList.add('hidden');
+      if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
       comandosMacro.forEach(c => procesarComandoMdi(c));
     });
   });
 
   elementos.botonMenuDiccionario.addEventListener('click', () => elementos.modalDiccionario.classList.remove('hidden'));
-  elementos.botonCerrarDiccionario.addEventListener('click', () => elementos.modalDiccionario.classList.add('hidden'));
+  elementos.botonCerrarDiccionario.addEventListener('click', () => {
+    elementos.modalDiccionario.classList.add('hidden');
+    if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+  });
 
   elementos.campoBusquedaDiccionario.addEventListener('input', (evento) => {
     const consulta = evento.target.value.toLowerCase();
@@ -915,7 +926,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   [elementos.modalConfiguracion, elementos.modalDiccionario].forEach(modal => {
     modal.addEventListener('click', (evento) => {
-      if (evento.target === modal) modal.classList.add('hidden');
+      if (evento.target === modal) {
+        modal.classList.add('hidden');
+        if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+      }
     });
   });
 
