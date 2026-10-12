@@ -569,6 +569,19 @@ class ControladorGRBL:
         self.enviar_directo(f"{cmd}\n")
         self._notificar_consola("c-ok", f"> {cmd}")
 
+    def establecer_feed_override(self, porcentaje: float):
+        """Ajusta el multiplicador dinámico de velocidad de avance (10% a 250%)."""
+        pct = max(10.0, min(250.0, float(porcentaje)))
+        self.feed_override = pct / 100.0
+        self.estado_maquina["override_feed"] = int(pct)
+        if self.cb_estado_actualizado:
+            self.cb_estado_actualizado(dict(self.estado_maquina))
+
+        if not self.modo_virtual and self.esta_conectado:
+            # En GRBL v1.1 real, los códigos de tiempo real modifican el feed override:
+            if round(pct) == 100:
+                self.enviar_tiempo_real(0x90)
+
     def controlar_spindle(self, encendido: bool, rpm: int):
         """Enciende (M3 S...) o apaga (M5) el husillo."""
         rpm = max(0, int(rpm))
@@ -796,7 +809,9 @@ class ControladorGRBL:
             distancia = math.sqrt(dx * dx + dy * dy + dz * dz)
 
             es_rapido = (modo_movimiento_actual == "G0")
-            vel = 2500.0 if es_rapido else velocidad_avance_actual
+            override_mult = getattr(self, "feed_override", 1.0)
+            vel_base = 2500.0 if es_rapido else velocidad_avance_actual
+            vel = vel_base * override_mult
             self.estado_maquina["feed_real"] = vel
 
             if distancia > 0.01:
@@ -818,10 +833,15 @@ class ControladorGRBL:
                     self.estado_maquina["wpos"][2] = round(z_ini + dz * fraccion, 3)
                     self.estado_maquina["mpos"] = list(self.estado_maquina["wpos"])
 
+                    # Re-evaluar override en tiempo real
+                    ov_actual = getattr(self, "feed_override", 1.0)
+                    self.estado_maquina["feed_real"] = vel_base * ov_actual
+
                     if self.cb_estado_actualizado:
                         self.cb_estado_actualizado(dict(self.estado_maquina))
 
-                    time.sleep(dt)
+                    # dt adaptativo según el override para acelerar o frenar de inmediato
+                    time.sleep(max(0.008, dt / max(0.1, ov_actual)))
             else:
                 # Comandos sin movimiento físico (M3, M5, G21, G90, etc.)
                 if self.cb_estado_actualizado:

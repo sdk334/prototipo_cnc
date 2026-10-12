@@ -131,6 +131,11 @@ class PuenteCNC(QObject):
         """Ejecuta un movimiento manual (Jog) en el eje solicitado."""
         self.controlador.mover_jog(eje, paso, velocidad)
 
+    @pyqtSlot(float)
+    def establecerFeedOverride(self, porcentaje: float):
+        """Ajusta el porcentaje de velocidad de avance (Feed Override) entre 10% y 200%."""
+        self.controlador.establecer_feed_override(porcentaje)
+
     @pyqtSlot()
     def paradaEmergencia(self):
         """Activa de inmediato la parada de emergencia E-STOP."""

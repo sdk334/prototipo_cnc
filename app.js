@@ -30,19 +30,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Estado operativo de GRBL ('IDLE', 'RUN', 'HOLD', 'ALARM', 'JOG', 'DESCONECTADO')
     estadoOperativo: 'DESCONECTADO',
     limitesHabilitados: false,
-    incrementoPaso: 0.1, // Distancia por pulsación (mm)
-    porcentajeVelocidadManual: 50,
-    // Control del husillo (Spindle)
-    husilloActivo: false,
-    revolucionesPorMinuto: 12000,
-    modificadorHusillo: 100, // Override en porcentaje
-    // Programa cargado y flujo de ejecución
-    indiceLineaActiva: 0,
-    enEjecucion: false,
-    enPausa: false,
-    segundosTranscurridos: 0,
-    segundosTotalesEstimados: 525,
-    velocidadAvanceNominal: 800, // mm/min
+    // Velocidad de avance y estimación de tiempo
+    porcentajeVelocidadManual: 100, // Override en porcentaje (100% nominal)
+    segundosEstimadosBase: 37, // Duración base estimada a 100%
+    velocidadAvanceNominal: 800, // mm/min base
     lineasPrograma: [
       { texto: "G21 ; Unidades metricas en milimetros" },
       { texto: "G90 ; Posicionamiento absoluto" },
@@ -134,6 +125,7 @@ document.addEventListener('DOMContentLoaded', () => {
     metricaVelocidadAvance: document.getElementById('metric-feed'),
     metricaTiempoTranscurrido: document.getElementById('metric-time'),
     metricaPorcentajeAvance: document.getElementById('metric-feed-pct'),
+    metricaOverride: document.getElementById('metric-override'),
     barraProgresoRelleno: document.getElementById('progress-bar-fill'),
     etiquetaPorcentajeProgreso: document.getElementById('lbl-progress-percent'),
     botonIniciarMecanizado: document.getElementById('btn-execution-action'),
@@ -319,12 +311,15 @@ document.addEventListener('DOMContentLoaded', () => {
     puente.senial_analisis_gcode.connect((jsonAnalisis) => {
       try {
         const r = JSON.parse(jsonAnalisis);
-        document.getElementById('tele-total').textContent = r.tiempo_estimado_formato;
+        if (r.tiempo_estimado_segundos) {
+          estado.segundosEstimadosBase = r.tiempo_estimado_segundos;
+        }
         document.getElementById('tele-vertices').textContent = r.total_lineas;
         if (r.segmentos && r.segmentos.length > 0 && window.visualizadorCNC) {
           window.visualizadorCNC.establecerSegmentosTrayectoria(r.segmentos, r.envolvente);
         }
-        imprimirEnConsola('c-info', `[ANÁLISIS] Tiempo estimado: ${r.tiempo_estimado_formato} | Distancia corte: ${r.distancia_corte_mm} mm`);
+        actualizarTiempoEstimado();
+        imprimirEnConsola('c-info', `[ANÁLISIS] Tiempo base (100%): ${r.tiempo_estimado_formato} | Distancia corte: ${r.distancia_corte_mm} mm`);
       } catch (e) {
         console.error('Error al procesar análisis de G-code:', e);
       }
@@ -471,8 +466,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   elementos.deslizadorVelocidadJog.addEventListener('input', (evento) => {
-    estado.porcentajeVelocidadManual = parseInt(evento.target.value, 10);
+    estado.porcentajeVelocidadManual = parseInt(evento.target.value, 10) || 100;
     elementos.etiquetaVelocidadJog.textContent = `${estado.porcentajeVelocidadManual}%`;
+    actualizarTiempoEstimado();
   });
 
   // Valida si la máquina está en condiciones de aceptar comandos de puesta a cero
@@ -820,6 +816,82 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================
   // EJECUCIÓN Y STREAMING DE MECANIZADO
   // ==========================================
+  // Estima la duración física base del programa en segundos a 100% de avance
+  function estimarSegundosBaseDesdeLineas(lineas) {
+    let x = 0, y = 0, z = 0;
+    let distCorte = 0, distRapido = 0;
+    let velF = 800;
+
+    for (let i = 0; i < lineas.length; i++) {
+      const l = lineas[i];
+      const texto = (typeof l === 'string' ? l : (l.texto || '')).replace(/\(.*?\)/g, '').split(';')[0].trim().toUpperCase();
+      if (!texto) continue;
+
+      const mF = texto.match(/F(\d+(?:\.\d+)?)/);
+      if (mF) velF = Math.max(1, parseFloat(mF[1]));
+
+      const mX = texto.match(/X([-+]?\d*\.?\d+)/);
+      const mY = texto.match(/Y([-+]?\d*\.?\d+)/);
+      const mZ = texto.match(/Z([-+]?\d*\.?\d+)/);
+
+      if (mX || mY || mZ) {
+        const nx = mX ? parseFloat(mX[1]) : x;
+        const ny = mY ? parseFloat(mY[1]) : y;
+        const nz = mZ ? parseFloat(mZ[1]) : z;
+        const d = Math.hypot(nx - x, ny - y, nz - z);
+
+        const esRapido = /\bG00?\b/.test(texto) || (!texto.includes('G') && mZ && nz > z);
+        if (esRapido) distRapido += d;
+        else distCorte += d;
+
+        x = nx; y = ny; z = nz;
+      }
+    }
+
+    const segs = (distCorte / (velF / 60)) + (distRapido / (2500 / 60));
+    return Math.max(1, Math.round(segs));
+  }
+
+  // Recalcula dinámicamente el tiempo estimado en función del porcentaje de velocidad / override actual
+  function actualizarTiempoEstimado() {
+    const porcentaje = Math.max(5, estado.porcentajeVelocidadManual || 100);
+    const factor = porcentaje / 100;
+    const segundosBase = estado.segundosEstimadosBase || 37;
+
+    // Si la velocidad sube (ej. 200%), el tiempo se reduce a la mitad. Si baja (ej. 50%), el tiempo se duplica.
+    const segundosAjustados = Math.max(1, Math.round(segundosBase / factor));
+
+    const hrs = Math.floor(segundosAjustados / 3600);
+    const min = Math.floor((segundosAjustados % 3600) / 60);
+    const seg = segundosAjustados % 60;
+
+    const formato = hrs > 0
+      ? `${hrs.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}:${seg.toString().padStart(2, '0')}`
+      : `${min.toString().padStart(2, '0')}:${seg.toString().padStart(2, '0')}`;
+
+    // Actualizar indicador de tiempo total en el visor
+    const elemTeleTotal = document.getElementById('tele-total');
+    if (elemTeleTotal) elemTeleTotal.textContent = formato;
+
+    // Actualizar métricas del panel de ejecución
+    if (elementos.metricaOverride) {
+      elementos.metricaOverride.textContent = `${porcentaje}%`;
+    }
+    if (elementos.metricaPorcentajeAvance) {
+      elementos.metricaPorcentajeAvance.textContent = `${porcentaje}%`;
+    }
+
+    const feedEfectivo = Math.round(estado.velocidadAvanceNominal * factor);
+    if (elementos.metricaVelocidadAvance) {
+      elementos.metricaVelocidadAvance.textContent = `${feedEfectivo} mm/min`;
+    }
+
+    // Notificar al puente nativo Python (en modo virtual y en hardware real)
+    if (window.puenteCNC && window.puenteCNC.establecerFeedOverride) {
+      window.puenteCNC.establecerFeedOverride(porcentaje);
+    }
+  }
+
   function actualizarMetricasTelemetria() {
     const totalLineas = estado.lineasPrograma.length;
     const lineaActual = estado.indiceLineaActiva + 1;
@@ -993,10 +1065,13 @@ document.addEventListener('DOMContentLoaded', () => {
   elementos.botonCargarDemo.addEventListener('click', () => {
     estado.indiceLineaActiva = 0;
     renderizarListaCodigoG();
+    estado.segundosEstimadosBase = estimarSegundosBaseDesdeLineas(estado.lineasPrograma);
     actualizarMetricasTelemetria();
+    actualizarTiempoEstimado();
     const texto = estado.lineasPrograma.map(l => l.texto).join('\n');
     if (window.visualizadorCNC) {
       window.visualizadorCNC.cargarTrayectoriaDesdeGCode(texto);
+      window.visualizadorCNC.ajustarVistaAPieza();
     }
     if (window.puenteCNC) window.puenteCNC.analizarGcode(texto);
     imprimirEnConsola('c-info', '[ARCHIVO] Archivo de demostración pieza_01.nc cargado.');
@@ -1018,7 +1093,9 @@ document.addEventListener('DOMContentLoaded', () => {
         estado.indiceLineaActiva = 0;
         document.getElementById('lbl-loaded-filename').textContent = archivo.name;
         renderizarListaCodigoG();
+        estado.segundosEstimadosBase = estimarSegundosBaseDesdeLineas(lineas);
         actualizarMetricasTelemetria();
+        actualizarTiempoEstimado();
         if (window.visualizadorCNC) {
           window.visualizadorCNC.cargarTrayectoriaDesdeGCode(contenidoTexto);
           window.visualizadorCNC.ajustarVistaAPieza();
@@ -1066,7 +1143,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Render inicial de la aplicación y sincronización de trayectoria
   renderizarListaCodigoG();
   actualizarLecturasDRO();
+  estado.segundosEstimadosBase = estimarSegundosBaseDesdeLineas(estado.lineasPrograma);
   actualizarMetricasTelemetria();
+  actualizarTiempoEstimado();
   if (window.visualizadorCNC) {
     window.visualizadorCNC.cargarTrayectoriaDesdeGCode(estado.lineasPrograma.map(l => l.texto).join('\n'));
   }
