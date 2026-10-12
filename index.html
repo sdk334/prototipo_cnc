@@ -9,6 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <!-- Font Awesome CDN -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
   <link rel="stylesheet" href="styles.css">
 </head>
 <body class="theme-dark">
@@ -19,62 +21,62 @@
       <div class="menu-item" id="menu-archivo">
         <button class="menu-btn" type="button">Archivo</button>
         <div class="dropdown-menu">
-          <button class="dropdown-item" id="btn-menu-open-file">📂 Abrir Archivo G-Code... <span class="shortcut">Ctrl+O</span></button>
-          <button class="dropdown-item" id="btn-menu-load-sample">📄 Cargar pieza_01.nc (Demo)</button>
+          <button class="dropdown-item" id="btn-menu-open-file"><i class="fa-solid fa-folder-open"></i> Abrir Archivo G-Code... <span class="shortcut">Ctrl+O</span></button>
+          <button class="dropdown-item" id="btn-menu-load-sample"><i class="fa-solid fa-file-code"></i> Cargar pieza_01.nc (Demo)</button>
           <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="btn-menu-save-gcode">💾 Guardar G-Code <span class="shortcut">Ctrl+S</span></button>
+          <button class="dropdown-item" id="btn-menu-save-gcode"><i class="fa-solid fa-floppy-disk"></i> Guardar G-Code <span class="shortcut">Ctrl+S</span></button>
           <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="btn-menu-export-log">📤 Exportar Bitácora de Sesión</button>
+          <button class="dropdown-item" id="btn-menu-export-log"><i class="fa-solid fa-file-export"></i> Exportar Bitácora de Sesión</button>
         </div>
       </div>
 
       <div class="menu-item" id="menu-editar">
         <button class="menu-btn" type="button">Editar</button>
         <div class="dropdown-menu">
-          <button class="dropdown-item" id="btn-menu-clear-gcode">Limpiar Programa</button>
-          <button class="dropdown-item" id="btn-menu-clear-console">Limpiar Consola Serial</button>
+          <button class="dropdown-item" id="btn-menu-clear-gcode"><i class="fa-solid fa-eraser"></i> Limpiar Programa</button>
+          <button class="dropdown-item" id="btn-menu-clear-console"><i class="fa-solid fa-trash-can"></i> Limpiar Consola Serial</button>
         </div>
       </div>
 
       <div class="menu-item" id="menu-maquina">
         <button class="menu-btn" type="button">Máquina</button>
         <div class="dropdown-menu">
-          <button class="dropdown-item" id="btn-menu-homing">🏠 Ciclo de Homing ($H)</button>
-          <button class="dropdown-item" id="btn-menu-unlock">🔓 Desbloquear Alarma ($X)</button>
-          <button class="dropdown-item" id="btn-menu-reset-grbl">🔄 Reset Software (Ctrl+X)</button>
+          <button class="dropdown-item" id="btn-menu-homing"><i class="fa-solid fa-house"></i> Ciclo de Homing ($H)</button>
+          <button class="dropdown-item" id="btn-menu-unlock"><i class="fa-solid fa-lock-open"></i> Desbloquear Alarma ($X)</button>
+          <button class="dropdown-item" id="btn-menu-reset-grbl"><i class="fa-solid fa-rotate-right"></i> Reset Software (Ctrl+X)</button>
           <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="btn-menu-goto-origin">📍 Ir a Cero Pieza (G0 X0 Y0 Z0)</button>
+          <button class="dropdown-item" id="btn-menu-goto-origin"><i class="fa-solid fa-location-crosshairs"></i> Ir a Cero Pieza (G0 X0 Y0 Z0)</button>
         </div>
       </div>
 
       <div class="menu-item" id="menu-herramientas">
         <button class="menu-btn" type="button">Herramientas</button>
         <div class="dropdown-menu">
-          <button class="dropdown-item" id="btn-menu-heightmap">🗺️ Mapa de Alturas (Auto-Level)</button>
-          <button class="dropdown-item" id="btn-menu-calibration">📐 Asistente de Calibración Pasos/mm</button>
-          <button class="dropdown-item" id="btn-menu-macros">⚡ Comandos Rápidos de Usuario</button>
+          <button class="dropdown-item" id="btn-menu-heightmap"><i class="fa-solid fa-layer-group"></i> Mapa de Alturas (Auto-Level)</button>
+          <button class="dropdown-item" id="btn-menu-calibration"><i class="fa-solid fa-ruler-combined"></i> Asistente de Calibración Pasos/mm</button>
+          <button class="dropdown-item" id="btn-menu-macros"><i class="fa-solid fa-bolt"></i> Comandos Rápidos de Usuario</button>
         </div>
       </div>
 
       <div class="menu-item" id="menu-vista">
         <button class="menu-btn" type="button">Vista</button>
         <div class="dropdown-menu">
-          <button class="dropdown-item" id="btn-menu-view-xy">Vista XY (Planta)</button>
-          <button class="dropdown-item" id="btn-menu-view-xz">Vista XZ (Frontal)</button>
-          <button class="dropdown-item" id="btn-menu-view-3d">Vista 3D Isométrica</button>
+          <button class="dropdown-item" id="btn-menu-view-xy"><i class="fa-solid fa-vector-square"></i> Vista XY (Planta)</button>
+          <button class="dropdown-item" id="btn-menu-view-xz"><i class="fa-solid fa-bars-staggered"></i> Vista XZ (Frontal)</button>
+          <button class="dropdown-item" id="btn-menu-view-3d"><i class="fa-solid fa-cube"></i> Vista 3D Isométrica</button>
           <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="btn-menu-toggle-grid">Alternar Cuadrícula</button>
-          <button class="dropdown-item" id="btn-menu-fullscreen">Pantalla Completa <span class="shortcut">F11</span></button>
+          <button class="dropdown-item" id="btn-menu-toggle-grid"><i class="fa-solid fa-border-all"></i> Alternar Cuadrícula</button>
+          <button class="dropdown-item" id="btn-menu-fullscreen"><i class="fa-solid fa-expand"></i> Pantalla Completa <span class="shortcut">F11</span></button>
         </div>
       </div>
 
       <div class="menu-item" id="menu-ayuda">
         <button class="menu-btn" type="button">Ayuda</button>
         <div class="dropdown-menu">
-          <button class="dropdown-item" id="btn-menu-gcode-dict">📖 Diccionario G-Code Interactivo</button>
-          <button class="dropdown-item" id="btn-menu-manual">📚 Guía Rápida de Operación CNC</button>
+          <button class="dropdown-item" id="btn-menu-gcode-dict"><i class="fa-solid fa-book-bookmark"></i> Diccionario G-Code Interactivo</button>
+          <button class="dropdown-item" id="btn-menu-manual"><i class="fa-solid fa-book-open"></i> Guía Rápida de Operación CNC</button>
           <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="btn-menu-about">ℹ️ Acerca de CNC Basic v1.0 (TT ESCOM)</button>
+          <button class="dropdown-item" id="btn-menu-about"><i class="fa-solid fa-circle-info"></i> Acerca de CNC Basic v1.0 (TT ESCOM)</button>
         </div>
       </div>
     </nav>
@@ -85,7 +87,7 @@
     <div class="statusbar-left">
       <!-- Big E-STOP Button -->
       <button class="btn-estop" id="btn-estop" title="Parada de Emergencia Inmediata">
-        <span class="estop-icon">🛑</span> E-STOP
+        <i class="fa-solid fa-hand estop-icon"></i> E-STOP
       </button>
 
       <!-- Serial Port Dropdown Pill -->
@@ -97,7 +99,7 @@
           <option value="COM4:115200">COM4 / 115200</option>
           <option value="SIM:115200">GRBL Simulator (Virtual)</option>
         </select>
-        <span class="pill-arrow">⌄</span>
+        <i class="fa-solid fa-chevron-down pill-arrow"></i>
       </div>
 
       <!-- Machine State Pill -->
@@ -119,10 +121,7 @@
         <span class="brand-version">v1.0</span>
       </div>
       <button class="btn-config" id="btn-open-config" title="Configuración del Sistema">
-        <svg class="gear-icon" viewBox="0 0 24 24" width="16" height="16">
-          <path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.45.17-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
-        </svg>
-        Config
+        <i class="fa-solid fa-gear gear-icon"></i> Config
       </button>
     </div>
   </section>
@@ -152,11 +151,11 @@
             <span class="legend-text">Rápido (G0)</span>
           </div>
           <div class="legend-row">
-            <span class="legend-symbol icon-tool">⊕</span>
+            <i class="fa-solid fa-crosshairs legend-symbol icon-tool"></i>
             <span class="legend-text">Herramienta</span>
           </div>
           <div class="legend-row">
-            <span class="legend-symbol icon-origin">●</span>
+            <i class="fa-solid fa-circle-dot legend-symbol icon-origin"></i>
             <span class="legend-text">Origen WCS</span>
           </div>
         </div>
@@ -193,9 +192,9 @@
           </div>
 
           <div class="viz-btn-group zoom-controls">
-            <button class="viz-btn" id="btn-zoom-in">🔍 Zoom +</button>
-            <button class="viz-btn" id="btn-zoom-out">🔍 Zoom -</button>
-            <button class="viz-btn" id="btn-zoom-reset">⟲ Reset</button>
+            <button class="viz-btn" id="btn-zoom-in"><i class="fa-solid fa-magnifying-glass-plus"></i> Zoom +</button>
+            <button class="viz-btn" id="btn-zoom-out"><i class="fa-solid fa-magnifying-glass-minus"></i> Zoom -</button>
+            <button class="viz-btn" id="btn-zoom-reset"><i class="fa-solid fa-arrows-rotate"></i> Reset</button>
           </div>
 
           <div class="viz-tabs">
@@ -204,6 +203,7 @@
           </div>
 
           <div class="loaded-file-indicator">
+            <i class="fa-solid fa-file-code file-icon"></i>
             <span class="file-label">ARCHIVO:</span>
             <span class="file-name" id="lbl-loaded-filename">pieza_01.nc</span>
           </div>
@@ -216,8 +216,8 @@
         <!-- G-Code & Serial Console Section -->
         <div class="panel-box panel-code-console">
           <div class="panel-header-tabs">
-            <button class="panel-tab active" id="tab-btn-gcode">G-CODE</button>
-            <button class="panel-tab" id="tab-btn-console">CONSOLA SERIAL</button>
+            <button class="panel-tab active" id="tab-btn-gcode"><i class="fa-solid fa-code"></i> G-CODE</button>
+            <button class="panel-tab" id="tab-btn-console"><i class="fa-solid fa-terminal"></i> CONSOLA SERIAL</button>
           </div>
 
           <!-- G-Code Viewer Tab Content -->
@@ -231,7 +231,7 @@
             <div class="mdi-bar">
               <span class="mdi-prefix">MDI&gt;</span>
               <input type="text" class="mdi-input" id="mdi-input-cmd" value="G0 X0 Y0" placeholder="Escriba comando G-code o GRBL ($$, $H, G0...)">
-              <button class="btn-mdi-send" id="btn-mdi-send">ENVIAR</button>
+              <button class="btn-mdi-send" id="btn-mdi-send"><i class="fa-solid fa-paper-plane"></i> ENVIAR</button>
             </div>
           </div>
 
@@ -248,7 +248,7 @@
             <div class="console-input-bar">
               <span class="mdi-prefix">&gt;</span>
               <input type="text" class="mdi-input" id="console-cmd-input" placeholder="Comando GRBL directo (ej. ? , $$ , $I , G91)">
-              <button class="btn-mdi-send" id="btn-console-send">ENVIAR</button>
+              <button class="btn-mdi-send" id="btn-console-send"><i class="fa-solid fa-paper-plane"></i> ENVIAR</button>
             </div>
           </div>
         </div>
@@ -256,7 +256,7 @@
         <!-- Execution Control Panel -->
         <div class="panel-box panel-execution-control">
           <div class="panel-title-bar">
-            <span>CONTROL DE EJECUCIÓN</span>
+            <span><i class="fa-solid fa-gauge-high"></i> CONTROL DE EJECUCIÓN</span>
           </div>
 
           <div class="telemetry-grid">
@@ -300,13 +300,13 @@
           <!-- Main Start/Execution Action Button -->
           <div class="execution-actions">
             <button class="btn-start-execution" id="btn-execution-action">
-              <span class="play-icon">▶</span> START
+              <i class="fa-solid fa-play"></i> START
             </button>
             <button class="btn-pause-execution hidden" id="btn-execution-pause">
-              <span>⏸</span> PAUSA
+              <i class="fa-solid fa-pause"></i> PAUSA
             </button>
             <button class="btn-stop-execution hidden" id="btn-execution-stop">
-              <span>⏹</span> DETENER
+              <i class="fa-solid fa-stop"></i> DETENER
             </button>
           </div>
         </div>
@@ -320,7 +320,7 @@
       <!-- DRO: POSICIÓN ACTUAL -->
       <section class="sidebar-block dro-block">
         <div class="sidebar-header">
-          <span class="title-cyan">DRO</span>
+          <span class="title-cyan"><i class="fa-solid fa-crosshairs"></i> DRO</span>
           <span class="header-divider">—</span>
           <span class="title-sub">POSICIÓN ACTUAL</span>
         </div>
@@ -359,16 +359,16 @@
 
         <!-- Zero Buttons Group -->
         <div class="dro-actions-row">
-          <button class="btn-secondary-action" id="btn-zero-xy">ZERO XY</button>
-          <button class="btn-secondary-action" id="btn-zero-z-action">ZERO Z</button>
-          <button class="btn-secondary-action" id="btn-zero-all">ZERO ALL</button>
+          <button class="btn-secondary-action" id="btn-zero-xy"><i class="fa-solid fa-bullseye"></i> ZERO XY</button>
+          <button class="btn-secondary-action" id="btn-zero-z-action"><i class="fa-solid fa-bullseye"></i> ZERO Z</button>
+          <button class="btn-secondary-action" id="btn-zero-all"><i class="fa-solid fa-bullseye"></i> ZERO ALL</button>
         </div>
       </section>
 
       <!-- JOG MANUAL -->
       <section class="sidebar-block jog-block">
         <div class="sidebar-header collapsible">
-          <span class="collapse-icon">⌄</span>
+          <i class="fa-solid fa-gamepad header-icon"></i>
           <span class="title-sub">JOG MANUAL</span>
         </div>
 
@@ -378,23 +378,23 @@
             <!-- XY D-Pad -->
             <div class="dpad-xy">
               <div class="dpad-cell"></div>
-              <button class="jog-btn jog-up" id="btn-jog-y-plus" title="Y+ Adelante">↑</button>
+              <button class="jog-btn jog-up" id="btn-jog-y-plus" title="Y+ Adelante"><i class="fa-solid fa-arrow-up"></i></button>
               <div class="dpad-cell"></div>
 
-              <button class="jog-btn jog-left" id="btn-jog-x-minus" title="X- Izquierda">←</button>
+              <button class="jog-btn jog-left" id="btn-jog-x-minus" title="X- Izquierda"><i class="fa-solid fa-arrow-left"></i></button>
               <div class="dpad-center-label">XY</div>
-              <button class="jog-btn jog-right" id="btn-jog-x-plus" title="X+ Derecha">→</button>
+              <button class="jog-btn jog-right" id="btn-jog-x-plus" title="X+ Derecha"><i class="fa-solid fa-arrow-right"></i></button>
 
               <div class="dpad-cell"></div>
-              <button class="jog-btn jog-down" id="btn-jog-y-minus" title="Y- Atrás">↓</button>
+              <button class="jog-btn jog-down" id="btn-jog-y-minus" title="Y- Atrás"><i class="fa-solid fa-arrow-down"></i></button>
               <div class="dpad-cell"></div>
             </div>
 
             <!-- Z Column Pad -->
             <div class="dpad-z">
-              <button class="jog-btn jog-z-up" id="btn-jog-z-plus" title="Z+ Subir Herramienta">Z+</button>
+              <button class="jog-btn jog-z-up" id="btn-jog-z-plus" title="Z+ Subir Herramienta">Z+ <i class="fa-solid fa-chevron-up"></i></button>
               <div class="dpad-z-label">Z</div>
-              <button class="jog-btn jog-z-down" id="btn-jog-z-minus" title="Z- Bajar Herramienta">Z-</button>
+              <button class="jog-btn jog-z-down" id="btn-jog-z-minus" title="Z- Bajar Herramienta">Z- <i class="fa-solid fa-chevron-down"></i></button>
             </div>
           </div>
 
@@ -420,14 +420,14 @@
       <!-- SPINDLE (HUSILLO) -->
       <section class="sidebar-block spindle-block">
         <div class="sidebar-header collapsible">
-          <span class="collapse-icon">⌄</span>
+          <i class="fa-solid fa-fan header-icon"></i>
           <span class="title-sub">SPINDLE</span>
         </div>
 
         <div class="spindle-content">
           <div class="spindle-actions-row">
             <button class="btn-spindle-toggle" id="btn-spindle-toggle">
-              <span class="spindle-indicator" id="spindle-indicator-dot"></span>
+              <i class="fa-solid fa-fan spindle-icon" id="spindle-fan-icon"></i>
               <span id="lbl-spindle-btn-text">Spindle OFF</span>
             </button>
             <div class="spindle-rpm-badge">
@@ -454,42 +454,45 @@
     <div class="modal-dialog modal-large">
       <div class="modal-header">
         <div class="modal-title-group">
-          <span class="modal-icon">⚙</span>
+          <i class="fa-solid fa-sliders modal-icon"></i>
           <h2 class="modal-title">Configuración del Sistema CNC</h2>
           <span class="modal-subtitle">Parámetros GRBL v1.1 &amp; Preferencias de Usuario</span>
         </div>
-        <button class="btn-modal-close" id="btn-close-config-modal">✕</button>
+        <button class="btn-modal-close" id="btn-close-config-modal"><i class="fa-solid fa-xmark"></i></button>
       </div>
 
       <div class="modal-body modal-split">
         <!-- Sidebar Navigation of Config Sections -->
         <nav class="config-nav-tabs">
           <button class="cfg-tab-btn active" data-target="cfg-tab-conexion">
-            <span class="tab-icon">🔌</span> Ajustes de Conexión
+            <i class="fa-solid fa-network-wired tab-icon"></i> Ajustes de Conexión
           </button>
           <button class="cfg-tab-btn" data-target="cfg-tab-maquina">
-            <span class="tab-icon">⚙️</span> Info de la Máquina
+            <i class="fa-solid fa-microchip tab-icon"></i> Info de la Máquina
           </button>
           <button class="cfg-tab-btn" data-target="cfg-tab-emisor">
-            <span class="tab-icon">📡</span> Ajustes Emisor
+            <i class="fa-solid fa-tower-broadcast tab-icon"></i> Ajustes Emisor
           </button>
           <button class="cfg-tab-btn" data-target="cfg-tab-ui">
-            <span class="tab-icon">🎨</span> Interfaz de Usuario
+            <i class="fa-solid fa-palette tab-icon"></i> Interfaz de Usuario
           </button>
           <button class="cfg-tab-btn" data-target="cfg-tab-atajos">
-            <span class="tab-icon">⌨️</span> Ajustes y Atajos
+            <i class="fa-solid fa-keyboard tab-icon"></i> Ajustes y Atajos
           </button>
           <button class="cfg-tab-btn" data-target="cfg-tab-visualizador">
-            <span class="tab-icon">👁️</span> Ajustes Visualizador
+            <i class="fa-solid fa-eye tab-icon"></i> Ajustes Visualizador
           </button>
           <button class="cfg-tab-btn" data-target="cfg-tab-consola">
-            <span class="tab-icon">💻</span> Ajustes Consola
+            <i class="fa-solid fa-terminal tab-icon"></i> Ajustes Consola
           </button>
           <button class="cfg-tab-btn" data-target="cfg-tab-macros">
-            <span class="tab-icon">⚡</span> Comandos de Usuario
+            <i class="fa-solid fa-bolt tab-icon"></i> Comandos de Usuario
           </button>
           <button class="cfg-tab-btn" data-target="cfg-tab-heightmap">
-            <span class="tab-icon">🗺️</span> Mapa de Alturas
+            <i class="fa-solid fa-layer-group tab-icon"></i> Mapa de Alturas
+          </button>
+          <button class="cfg-tab-btn cfg-tab-credits-highlight" data-target="cfg-tab-creditos">
+            <i class="fa-solid fa-award tab-icon"></i> Derechos de Autor y Agradecimientos
           </button>
         </nav>
 
@@ -498,7 +501,7 @@
 
           <!-- 1. Ajustes de Conexión (Fig. 6) -->
           <div class="cfg-panel active" id="cfg-tab-conexion">
-            <h3 class="panel-section-title">Ajustes de Conexión Serial (UART)</h3>
+            <h3 class="panel-section-title"><i class="fa-solid fa-network-wired"></i> Ajustes de Conexión Serial (UART)</h3>
             <div class="form-grid">
               <div class="form-group">
                 <label>Puerto Serial COM:</label>
@@ -531,7 +534,7 @@
 
           <!-- 2. Información de la Máquina (Fig. 7) -->
           <div class="cfg-panel" id="cfg-tab-maquina">
-            <h3 class="panel-section-title">Parámetros del Controlador CNC (GRBL)</h3>
+            <h3 class="panel-section-title"><i class="fa-solid fa-microchip"></i> Parámetros del Controlador CNC (GRBL)</h3>
             <div class="form-grid">
               <div class="form-group">
                 <label>Firmware Detectado:</label>
@@ -566,7 +569,7 @@
 
           <!-- 3. Ajustes Emisor (Fig. 8) -->
           <div class="cfg-panel" id="cfg-tab-emisor">
-            <h3 class="panel-section-title">Ajustes del Emisor de Código G (Streamer)</h3>
+            <h3 class="panel-section-title"><i class="fa-solid fa-tower-broadcast"></i> Ajustes del Emisor de Código G (Streamer)</h3>
             <div class="form-grid">
               <div class="form-group">
                 <label>Modo de Envío de Líneas:</label>
@@ -589,7 +592,7 @@
 
           <!-- 4. Ajustes Interfaz de Usuario (Fig. 9) -->
           <div class="cfg-panel" id="cfg-tab-ui">
-            <h3 class="panel-section-title">Personalización de la Interfaz</h3>
+            <h3 class="panel-section-title"><i class="fa-solid fa-palette"></i> Personalización de la Interfaz</h3>
             <div class="form-grid">
               <div class="form-group">
                 <label>Tema Visual:</label>
@@ -619,7 +622,7 @@
 
           <!-- 5. Ajustes y Atajos (Fig. 10) -->
           <div class="cfg-panel" id="cfg-tab-atajos">
-            <h3 class="panel-section-title">Atajos de Teclado del Sistema</h3>
+            <h3 class="panel-section-title"><i class="fa-solid fa-keyboard"></i> Atajos de Teclado del Sistema</h3>
             <div class="shortcuts-table">
               <div class="shortcut-row"><span>Flechas Arriba / Abajo</span> <b>Mover Eje Y (Adelante / Atrás)</b></div>
               <div class="shortcut-row"><span>Flechas Izq / Der</span> <b>Mover Eje X (Izquierda / Derecha)</b></div>
@@ -633,7 +636,7 @@
 
           <!-- 6. Ajustes Visualizador (Fig. 11) -->
           <div class="cfg-panel" id="cfg-tab-visualizador">
-            <h3 class="panel-section-title">Ajustes del Renderizador de Trayectoria</h3>
+            <h3 class="panel-section-title"><i class="fa-solid fa-eye"></i> Ajustes del Renderizador de Trayectoria</h3>
             <div class="form-grid">
               <div class="form-group">
                 <label>Color de Trayectoria de Corte (G1/G2):</label>
@@ -653,7 +656,7 @@
 
           <!-- 7. Ajustes Consola (Fig. 12) -->
           <div class="cfg-panel" id="cfg-tab-consola">
-            <h3 class="panel-section-title">Ajustes de la Consola Serial de Diagnóstico</h3>
+            <h3 class="panel-section-title"><i class="fa-solid fa-terminal"></i> Ajustes de la Consola Serial de Diagnóstico</h3>
             <div class="form-grid checkbox-group">
               <label><input type="checkbox" checked> Auto-desplazamiento automático al recibir mensajes</label>
               <label><input type="checkbox" checked> Incluir marcas de tiempo (Timestamps [HH:MM:SS])</label>
@@ -664,26 +667,26 @@
 
           <!-- 8. Comandos de Usuario / Macros (Fig. 2 y 13) -->
           <div class="cfg-panel" id="cfg-tab-macros">
-            <h3 class="panel-section-title">Comandos Rápidos y Macros Educativas</h3>
+            <h3 class="panel-section-title"><i class="fa-solid fa-bolt"></i> Comandos Rápidos y Macros Educativas</h3>
             <div class="macros-list">
               <div class="macro-card">
                 <div class="macro-head">
-                  <span class="macro-name">⚡ Sonda Cero Z (Touch Plate)</span>
-                  <button class="btn-run-macro" data-macro="G38.2 Z-20 F100; G92 Z5; G0 Z15">Ejecutar</button>
+                  <span class="macro-name"><i class="fa-solid fa-bolt"></i> Sonda Cero Z (Touch Plate)</span>
+                  <button class="btn-run-macro" data-macro="G38.2 Z-20 F100; G92 Z5; G0 Z15"><i class="fa-solid fa-play"></i> Ejecutar</button>
                 </div>
                 <code>G38.2 Z-20 F100 ; Sonda táctil<br>G92 Z5.0 ; Fijar espesor placa<br>G0 Z15.0 ; Retraer</code>
               </div>
               <div class="macro-card">
                 <div class="macro-head">
-                  <span class="macro-name">📍 Aparcamiento de Seguridad (Safe Park)</span>
-                  <button class="btn-run-macro" data-macro="G0 Z25; G0 X0 Y200">Ejecutar</button>
+                  <span class="macro-name"><i class="fa-solid fa-location-dot"></i> Aparcamiento de Seguridad (Safe Park)</span>
+                  <button class="btn-run-macro" data-macro="G0 Z25; G0 X0 Y200"><i class="fa-solid fa-play"></i> Ejecutar</button>
                 </div>
                 <code>G90 ; Modo absoluto<br>G0 Z25.0 ; Elevar herramienta<br>G0 X0 Y200 ; Enviar mesa al frente</code>
               </div>
               <div class="macro-card">
                 <div class="macro-head">
-                  <span class="macro-name">🔄 Calentamiento de Husillo (Spindle Warmup)</span>
-                  <button class="btn-run-macro" data-macro="M3 S5000; G4 P5; M3 S12000">Ejecutar</button>
+                  <span class="macro-name"><i class="fa-solid fa-fan"></i> Calentamiento de Husillo (Spindle Warmup)</span>
+                  <button class="btn-run-macro" data-macro="M3 S5000; G4 P5; M3 S12000"><i class="fa-solid fa-play"></i> Ejecutar</button>
                 </div>
                 <code>M3 S5000 ; Encender a baja RPM<br>G4 P5 ; Esperar 5 seg<br>M3 S12000 ; Velocidad de corte</code>
               </div>
@@ -692,7 +695,7 @@
 
           <!-- 9. Mapa de Alturas / Auto-Leveling (Fig. 3) -->
           <div class="cfg-panel" id="cfg-tab-heightmap">
-            <h3 class="panel-section-title">Módulo de Mapa de Alturas (Compensación de Cama)</h3>
+            <h3 class="panel-section-title"><i class="fa-solid fa-layer-group"></i> Módulo de Mapa de Alturas (Compensación de Cama)</h3>
             <p class="panel-desc">Realiza un sondeo matricial en el eje Z para compensar irregularidades de la superficie en placas PCB o grabados finos.</p>
             <div class="form-grid">
               <div class="form-group">
@@ -709,8 +712,87 @@
               </div>
             </div>
             <div class="heightmap-actions">
-              <button class="btn-primary-action" id="btn-start-probing">▶ Iniciar Muestreo Automático</button>
-              <button class="btn-secondary-action" id="btn-clear-heightmap">Limpiar Compensación</button>
+              <button class="btn-primary-action" id="btn-start-probing"><i class="fa-solid fa-play"></i> Iniciar Muestreo Automático</button>
+              <button class="btn-secondary-action" id="btn-clear-heightmap"><i class="fa-solid fa-eraser"></i> Limpiar Compensación</button>
+            </div>
+          </div>
+
+          <!-- 10. DERECHOS DE AUTOR Y AGRADECIMIENTOS (NUEVO) -->
+          <div class="cfg-panel" id="cfg-tab-creditos">
+            <h3 class="panel-section-title"><i class="fa-solid fa-scale-balanced"></i> Derechos de Autor, Propiedad Intelectual y Agradecimientos</h3>
+            
+            <div class="credits-container">
+              <!-- Tarjeta Institucional IPN / ESCOM -->
+              <div class="credits-card institution-card">
+                <div class="credits-card-header">
+                  <i class="fa-solid fa-graduation-cap card-icon"></i>
+                  <div>
+                    <h4 class="card-title">Instituto Politécnico Nacional — ESCOM</h4>
+                    <span class="card-subtitle">Trabajo Terminal 2026-B072: “Interfaz de control para máquinas CNC con fines educativos”</span>
+                  </div>
+                </div>
+                <div class="credits-card-body">
+                  <p class="credits-text">
+                    Desarrollado en el marco del programa de Ingeniería en Sistemas Computacionales de la <b>Escuela Superior de Cómputo (ESCOM)</b>.
+                  </p>
+                  <div class="credits-people-grid">
+                    <div class="person-item">
+                      <span class="person-role">Director del Proyecto:</span>
+                      <span class="person-name">Dr. Gelacio Castillo Cabrera</span>
+                      <small class="person-desc">Agradecimiento sincero por su guía técnica, rigor metodológico y asesoría continua durante la investigación y concepción del prototipo.</small>
+                    </div>
+                    <div class="person-item">
+                      <span class="person-role">Autores y Desarrolladores:</span>
+                      <span class="person-name">Josué Martin Echeverría Arteaga</span>
+                      <span class="person-name">Jonathan Uriel Paredes Martínez</span>
+                      <small class="person-desc">Estudiantes de Ingeniería en Sistemas Computacionales (Contacto: jparedesm1600@alumno.ipn.mx).</small>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Tarjeta de Agradecimientos a Librerías y Software Libre -->
+              <div class="credits-card open-source-card">
+                <div class="credits-card-header">
+                  <i class="fa-solid fa-heart card-icon icon-pink"></i>
+                  <div>
+                    <h4 class="card-title">Agradecimientos a la Comunidad de Software Libre</h4>
+                    <span class="card-subtitle">Herramientas, tipografías y recursos de código abierto utilizados</span>
+                  </div>
+                </div>
+                <div class="credits-card-body">
+                  <ul class="credits-resources-list">
+                    <li>
+                      <i class="fa-brands fa-font-awesome list-bullet-icon"></i>
+                      <div>
+                        <b>Font Awesome (Fonticons, Inc.):</b> Agradecemos a los creadores de Font Awesome por su suite iconográfica universal bajo licencia <i>SIL Open Font License 1.1 / Creative Commons CC BY 4.0</i>.
+                      </div>
+                    </li>
+                    <li>
+                      <i class="fa-solid fa-microchip list-bullet-icon"></i>
+                      <div>
+                        <b>Firmware GRBL v1.1:</b> Agradecimiento y reconocimiento al autor Sonny Jeon (Gnea/GRBL) y la comunidad internacional por el motor de movimiento CNC libre bajo licencia <i>GNU General Public License v3.0 (GPLv3)</i>.
+                      </div>
+                    </li>
+                    <li>
+                      <i class="fa-brands fa-google list-bullet-icon"></i>
+                      <div>
+                        <b>Google Fonts:</b> Tipografías abiertas <i>Chakra Petch</i> (Cadson Demak), <i>JetBrains Mono</i> (JetBrains) e <i>Inter</i> (Rasmus Andersson) bajo licencia <i>SIL Open Font License 1.1</i>.
+                      </div>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
+              <!-- Nota Legal de Derechos de Autor -->
+              <div class="legal-notice-box">
+                <i class="fa-solid fa-shield-halved legal-icon"></i>
+                <div class="legal-text">
+                  <b>Declaración de Propiedad Intelectual:</b>
+                  El código fuente, mockups de interfaz y documentación de este Trabajo Terminal se encuentran protegidos conforme a la legislación nacional sobre Derechos de Autor en México (<b>INDAUTOR</b>) y la normativa institucional del <b>Instituto Politécnico Nacional</b> (Reglamento de Propiedad Intelectual del IPN).
+                </div>
+              </div>
+
             </div>
           </div>
 
@@ -729,10 +811,10 @@
     <div class="modal-dialog">
       <div class="modal-header">
         <div class="modal-title-group">
-          <span class="modal-icon">📖</span>
+          <i class="fa-solid fa-book-bookmark modal-icon"></i>
           <h2 class="modal-title">Diccionario G-Code Didáctico (ESCOM)</h2>
         </div>
-        <button class="btn-modal-close" id="btn-close-dict-modal">✕</button>
+        <button class="btn-modal-close" id="btn-close-dict-modal"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <div class="modal-body">
         <input type="text" class="dict-search-input" id="dict-search" placeholder="Buscar comando (ej. G0, G1, M3, G90...)">

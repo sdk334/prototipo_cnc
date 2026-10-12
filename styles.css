@@ -1458,3 +1458,189 @@ body {
   font-family: var(--font-mono);
   color: var(--cyan-primary);
 }
+
+/* ==========================================================================
+   11. ESTILOS FONT AWESOME Y PANEL DE DERECHOS DE AUTOR
+   ========================================================================== */
+.fa-solid, .fa-regular, .fa-brands {
+  display: inline-block;
+  vertical-align: -0.125em;
+}
+
+.menu-btn i, .dropdown-item i {
+  margin-right: 6px;
+  width: 14px;
+  text-align: center;
+}
+
+.viz-btn i, .btn-secondary-action i, .btn-primary-action i,
+.btn-start-execution i, .btn-pause-execution i, .btn-stop-execution i {
+  margin-right: 4px;
+}
+
+.panel-tab i {
+  margin-right: 5px;
+}
+
+.btn-spindle-toggle i.spindle-icon {
+  font-size: 14px;
+  margin-right: 6px;
+  transition: transform 0.2s ease;
+}
+
+.btn-spindle-toggle.active i.spindle-icon {
+  color: var(--gold-tool);
+  animation: spin-fan 0.8s infinite linear;
+}
+
+@keyframes spin-fan {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.cfg-tab-credits-highlight {
+  border-left: 3px solid #ffb703 !important;
+  color: #ffb703 !important;
+}
+
+.cfg-tab-credits-highlight.active {
+  background-color: #332600 !important;
+  color: #ffc83b !important;
+}
+
+/* Sección de Derechos de Autor y Agradecimientos */
+.credits-container {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.credits-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.credits-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 10px;
+}
+
+.card-icon {
+  font-size: 24px;
+  color: var(--cyan-primary);
+}
+
+.card-icon.icon-pink {
+  color: #f72585;
+}
+
+.card-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.card-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.credits-text {
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.credits-people-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.person-item {
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.person-role {
+  font-size: 10px;
+  font-family: var(--font-display);
+  color: var(--cyan-primary);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.person-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.person-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.3;
+  margin-top: 4px;
+}
+
+.credits-resources-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.credits-resources-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 12px;
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 8px 10px;
+  line-height: 1.4;
+}
+
+.list-bullet-icon {
+  font-size: 16px;
+  color: var(--cyan-primary);
+  margin-top: 2px;
+}
+
+.legal-notice-box {
+  background-color: rgba(255, 183, 3, 0.08);
+  border: 1px solid rgba(255, 183, 3, 0.35);
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.legal-icon {
+  font-size: 22px;
+  color: #ffb703;
+}
+
+.legal-text {
+  font-size: 11px;
+  color: #e2e8f0;
+  line-height: 1.4;
+}
+
