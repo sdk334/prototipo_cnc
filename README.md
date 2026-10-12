@@ -5,12 +5,12 @@
 
 - **Autores:** 
   - Josué Martin Echeverría Arteaga
-  - Jonathan Uriel Paredes Martínez (`jparedesm1600@alumno.ipn.mx`)
+  - Jonathan Uriel Paredes Martínez
 - **Director:** Dr. Gelacio Castillo Cabrera
 
 ---
 
-## 📌 Descripción del Proyecto
+##  Descripción del Proyecto
 
 Este repositorio contiene la suite de **Mockups Interactivos de Alta Fidelidad** desarrollados en tecnologías web estándares (**HTML5, CSS3 y JavaScript ES6+**), diseñados para la estación de control CNC educativa basada en microcontrolador y firmware **GRBL v1.1**.
 
@@ -18,9 +18,9 @@ La interfaz reproduce fielmente el diseño industrial del Capítulo 5.8 del docu
 
 ---
 
-## 🚀 Características y Módulos Implementados
+##  Características y Módulos Implementados
 
-1. **Pantalla Principal (Figura 1):**
+1. **Pantalla Principal:**
    - **DRO (Digital Read Out):** Coordenadas de trabajo (WCS) y de máquina (MCS) para los ejes X, Y y Z con resolución de 3 decimales y botones individuales y colectivos de puesta a cero (`ZERO XY`, `ZERO Z`, `ZERO ALL`).
    - **Control de Movimiento Manual (Jogging):** Mando tipo D-Pad en cruz para XY, controles dedicados de elevación Z, selectores de incremento de paso (`0.01`, `0.1`, `1`, `10` mm) y regulador de velocidad de avance.
    - **Control de Husillo (Spindle):** Interruptor de encendido/apagado, selector de RPM (hasta 24,000 RPM) y deslizador de override.
@@ -43,27 +43,7 @@ La interfaz reproduce fielmente el diseño industrial del Capítulo 5.8 del docu
 
 ---
 
-## 💻 Cómo Ejecutar los Mockups
-
-No se requieren dependencias externas. Puedes abrir la interfaz de dos maneras:
-
-### Opción 1: Apertura Directa en el Navegador
-Haz doble clic sobre el archivo `index.html` en tu explorador de archivos para abrirlo en Chrome, Edge, Firefox o tu navegador preferido.
-
-### Opción 2: Servidor Local Liviano (Recomendado)
-Desde una terminal en este directorio:
-```bash
-# Con Python:
-python -m http.server 8080
-
-# O con npx (Node.js):
-npx serve .
-```
-Luego abre `http://localhost:8080` en tu navegador.
-
----
-
-## ⌨️ Atajos de Teclado del Sistema
+##  Atajos de Teclado del Sistema
 
 | Tecla / Combinación | Acción Realizada |
 | :--- | :--- |
@@ -76,7 +56,7 @@ Luego abre `http://localhost:8080` en tu navegador.
 
 ---
 
-## 📦 Estructura del Repositorio
+##  Estructura del Repositorio
 
 ```text
 proyecto tt2/
@@ -90,18 +70,4 @@ proyecto tt2/
 ├── styles.css                              # Diseño y paleta industrial oscura
 ├── app.js                                  # Lógica reactiva de control, DRO y simulación
 └── visualizer.js                           # Motor gráfico Canvas 2D/3D
-```
-
----
-
-## 📤 Subir a GitHub
-
-Para publicar estos cambios en tu cuenta de GitHub (`jparedesm1600@alumno.ipn.mx`):
-
-1. **Crea un nuevo repositorio en GitHub** (por ejemplo: `cnc-interface-mockups` o `trabajo-terminal-cnc`).
-2. **Vincula tu repositorio remoto y haz push:**
-```bash
-git remote add origin https://github.com/TU_USUARIO/TU_REPOSITORIO.git
-git branch -M main
-git push -u origin main
 ```

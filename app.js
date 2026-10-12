@@ -1,723 +1,716 @@
 /**
- * CNC Basic v1.0 - Controlador Principal (app.js)
- * Manejo de estado del sistema, DRO, Jogging, Simulación de G-Code, MDI y Modales.
+ * CNC Basic v1.0 - Controlador de Lógica y Telemetría (app.js)
+ * Gestión del estado del sistema, DRO, jogging manual, simulación de código G y comunicación serial.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Inicializar renderizador Canvas
-  window.cncVisualizer = new CNCVisualizer('cnc-canvas');
+  // Inicialización del motor gráfico en el lienzo principal
+  window.visualizadorCNC = new VisualizadorCNC('cnc-canvas');
+  window.cncVisualizer = window.visualizadorCNC;
 
   // ==========================================
-  // ESTADO GLOBAL DE LA MÁQUINA
+  // ESTADO GLOBAL DE LA MÁQUINA CNC
   // ==========================================
-  const state = {
-    // Coordenadas de Trabajo (WCS - G54)
-    wcs: { x: 266.715, y: 224.548, z: 0.000 },
-    // Coordenadas de Máquina (MCS)
-    mcs: { x: 266.715, y: 224.548, z: 0.000 },
-    // Estado GRBL: 'IDLE', 'RUN', 'HOLD', 'ALARM'
-    machineStatus: 'IDLE',
-    limitsEnabled: false,
-    selectedStep: 0.1, // mm
-    jogSpeedPct: 50,
-    // Spindle
-    spindleOn: false,
-    spindleRpm: 12000,
-    spindleOverride: 100,
-    // G-Code y Ejecución
-    activeLineIndex: 12, // Línea 13 (0-indexed 12)
-    isRunning: false,
-    isPaused: false,
-    elapsedSeconds: 13,
-    totalSeconds: 525, // 08:45
-    feedrate: 800,
-    gcodeLines: [
-      { text: "G21 ; Unidades metricas en milimetros" },
-      { text: "G90 ; Posicionamiento absoluto" },
-      { text: "G94 ; Avance en mm/min" },
-      { text: "G0 Z5.0" },
-      { text: "M3 S12000 ; spindle ON" },
-      { text: "G0 X110.0 Y140.0" },
-      { text: "G1 Z-1.0 F300" },
-      { text: "G1 X210.0 F800" },
-      { text: "G1 Y220.0" },
-      { text: "G1 X110.0" },
-      { text: "G1 Y140.0" },
-      { text: "G0 Z5.0" },
-      { text: "M5 ; spindle OFF" }
+  const estado = {
+    // Coordenadas relativas de trabajo (WCS - G54)
+    coordenadasTrabajo: { x: 266.715, y: 224.548, z: 0.000 },
+    // Coordenadas absolutas de la máquina (MCS)
+    coordenadasMaquina: { x: 266.715, y: 224.548, z: 0.000 },
+    // Estado operativo de GRBL ('IDLE', 'RUN', 'HOLD', 'ALARM')
+    estadoOperativo: 'IDLE',
+    limitesHabilitados: false,
+    incrementoPaso: 0.1, // Distancia por pulsación (mm)
+    porcentajeVelocidadManual: 50,
+    // Control del husillo (Spindle)
+    husilloActivo: false,
+    revolucionesPorMinuto: 12000,
+    modificadorHusillo: 100, // Override en porcentaje
+    // Programa cargado y flujo de ejecución
+    indiceLineaActiva: 12, // Resalta línea 13 (base 0)
+    enEjecucion: false,
+    enPausa: false,
+    segundosTranscurridos: 13,
+    segundosTotalesEstimados: 525, // 08:45 minutos
+    velocidadAvanceNominal: 800, // mm/min
+    lineasPrograma: [
+      { texto: "G21 ; Unidades metricas en milimetros" },
+      { texto: "G90 ; Posicionamiento absoluto" },
+      { texto: "G94 ; Avance en mm/min" },
+      { texto: "G0 Z5.0" },
+      { texto: "M3 S12000 ; spindle ON" },
+      { texto: "G0 X110.0 Y140.0" },
+      { texto: "G1 Z-1.0 F300" },
+      { texto: "G1 X210.0 F800" },
+      { texto: "G1 Y220.0" },
+      { texto: "G1 X110.0" },
+      { texto: "G1 Y140.0" },
+      { texto: "G0 Z5.0" },
+      { texto: "M5 ; spindle OFF" }
     ],
-    simulationTimer: null,
-    clockTimer: null
+    temporizadorEjecucion: null
   };
 
   // ==========================================
-  // REFERENCIAS DOM
+  // REFERENCIAS DE ELEMENTOS DE LA INTERFAZ
   // ==========================================
-  const dom = {
-    // DRO Readouts
-    droValX: document.getElementById('dro-val-x'),
-    droValY: document.getElementById('dro-val-y'),
-    droValZ: document.getElementById('dro-val-z'),
-    droMachX: document.getElementById('dro-mach-x'),
-    droMachY: document.getElementById('dro-mach-y'),
-    droMachZ: document.getElementById('dro-mach-z'),
-    // Botones Zero
-    btnZeroX: document.getElementById('btn-zero-x'),
-    btnZeroY: document.getElementById('btn-zero-y'),
-    btnZeroZ: document.getElementById('btn-zero-z'),
-    btnZeroXY: document.getElementById('btn-zero-xy'),
-    btnZeroZAction: document.getElementById('btn-zero-z-action'),
-    btnZeroAll: document.getElementById('btn-zero-all'),
-    // Jog D-Pad
-    btnJogYPlus: document.getElementById('btn-jog-y-plus'),
-    btnJogYMinus: document.getElementById('btn-jog-y-minus'),
-    btnJogXPlus: document.getElementById('btn-jog-x-plus'),
-    btnJogXMinus: document.getElementById('btn-jog-x-minus'),
-    btnJogZPlus: document.getElementById('btn-jog-z-plus'),
-    btnJogZMinus: document.getElementById('btn-jog-z-minus'),
-    stepButtons: document.querySelectorAll('.step-btn'),
-    sliderJogSpeed: document.getElementById('slider-jog-speed'),
-    lblJogVel: document.getElementById('lbl-jog-vel'),
-    // Spindle
-    btnSpindleToggle: document.getElementById('btn-spindle-toggle'),
-    lblSpindleBtnText: document.getElementById('lbl-spindle-btn-text'),
-    inputSpindleRpm: document.getElementById('input-spindle-rpm'),
-    lblSpindleSpeedLive: document.getElementById('lbl-spindle-speed-live'),
-    sliderSpindleOverride: document.getElementById('slider-spindle-override'),
-    metricSpindleState: document.getElementById('metric-spindle-state'),
-    // Status Bar & E-STOP
-    btnEstop: document.getElementById('btn-estop'),
-    lblMachineState: document.getElementById('lbl-machine-state'),
-    stateStatusDot: document.getElementById('state-status-dot'),
-    pillLimitsState: document.getElementById('pill-limits-state'),
-    limitsStatusDot: document.getElementById('limits-status-dot'),
-    lblLimitsState: document.getElementById('lbl-limits-state'),
-    // Visualizer Mode & Zoom
-    btnViewXY: document.getElementById('btn-view-xy'),
-    btnViewXZ: document.getElementById('btn-view-xz'),
-    btnView3D: document.getElementById('btn-view-3d'),
-    btnZoomIn: document.getElementById('btn-zoom-in'),
-    btnZoomOut: document.getElementById('btn-zoom-out'),
-    btnZoomReset: document.getElementById('btn-zoom-reset'),
-    // G-Code Viewport
-    gcodeContainer: document.getElementById('gcode-lines-container'),
-    tabBtnGcode: document.getElementById('tab-btn-gcode'),
-    tabBtnConsole: document.getElementById('tab-btn-console'),
-    paneGcode: document.getElementById('pane-gcode'),
-    paneConsole: document.getElementById('pane-console'),
-    // MDI & Console
-    mdiInput: document.getElementById('mdi-input-cmd'),
-    btnMdiSend: document.getElementById('btn-mdi-send'),
-    consoleOutput: document.getElementById('console-output'),
-    consoleInput: document.getElementById('console-cmd-input'),
-    btnConsoleSend: document.getElementById('btn-console-send'),
-    // Execution Control
-    metricLine: document.getElementById('metric-line'),
-    metricFeed: document.getElementById('metric-feed'),
-    metricTime: document.getElementById('metric-time'),
-    metricFeedPct: document.getElementById('metric-feed-pct'),
-    progressBarFill: document.getElementById('progress-bar-fill'),
-    lblProgressPercent: document.getElementById('lbl-progress-percent'),
-    btnExecutionAction: document.getElementById('btn-execution-action'),
-    btnExecutionPause: document.getElementById('btn-execution-pause'),
-    btnExecutionStop: document.getElementById('btn-execution-stop'),
-    teleElapsed: document.getElementById('tele-elapsed'),
-    teleBuffer: document.getElementById('tele-buffer'),
-    // Modales
-    btnOpenConfig: document.getElementById('btn-open-config'),
-    modalConfig: document.getElementById('modal-config-backdrop'),
-    btnCloseConfig: document.getElementById('btn-close-config-modal'),
-    btnCancelConfig: document.getElementById('btn-cancel-config'),
-    btnSaveConfig: document.getElementById('btn-save-config'),
-    cfgTabBtns: document.querySelectorAll('.cfg-tab-btn'),
-    cfgPanels: document.querySelectorAll('.cfg-panel'),
-    modalDict: document.getElementById('modal-dict-backdrop'),
-    btnCloseDict: document.getElementById('btn-close-dict-modal'),
-    dictSearch: document.getElementById('dict-search'),
-    dictTableBody: document.getElementById('dict-table-body'),
-    fileInputGcode: document.getElementById('file-input-gcode'),
-    btnMenuLoadSample: document.getElementById('btn-menu-load-sample'),
-    btnMenuOpenFile: document.getElementById('btn-menu-open-file'),
-    btnMenuGcodeDict: document.getElementById('btn-menu-gcode-dict'),
-    btnMenuAbout: document.getElementById('btn-menu-about'),
-    btnMenuHoming: document.getElementById('btn-menu-homing'),
-    btnMenuUnlock: document.getElementById('btn-menu-unlock'),
-    btnMenuResetGrbl: document.getElementById('btn-menu-reset-grbl')
+  const elementos = {
+    // Pantalla DRO (Lectura Digital de Coordenadas)
+    droValorX: document.getElementById('dro-val-x'),
+    droValorY: document.getElementById('dro-val-y'),
+    droValorZ: document.getElementById('dro-val-z'),
+    droMaquinaX: document.getElementById('dro-mach-x'),
+    droMaquinaY: document.getElementById('dro-mach-y'),
+    droMaquinaZ: document.getElementById('dro-mach-z'),
+    // Botones de puesta a cero
+    botonCeroX: document.getElementById('btn-zero-x'),
+    botonCeroY: document.getElementById('btn-zero-y'),
+    botonCeroZ: document.getElementById('btn-zero-z'),
+    botonCeroXY: document.getElementById('btn-zero-xy'),
+    botonCeroSoloZ: document.getElementById('btn-zero-z-action'),
+    botonCeroTodos: document.getElementById('btn-zero-all'),
+    // Control manual (Jogging D-Pad)
+    botonJogYMas: document.getElementById('btn-jog-y-plus'),
+    botonJogYMenos: document.getElementById('btn-jog-y-minus'),
+    botonJogXMas: document.getElementById('btn-jog-x-plus'),
+    botonJogXMenos: document.getElementById('btn-jog-x-minus'),
+    botonJogZMas: document.getElementById('btn-jog-z-plus'),
+    botonJogZMenos: document.getElementById('btn-jog-z-minus'),
+    botonesPaso: document.querySelectorAll('.step-btn'),
+    deslizadorVelocidadJog: document.getElementById('slider-jog-speed'),
+    etiquetaVelocidadJog: document.getElementById('lbl-jog-vel'),
+    // Control del husillo
+    botonAlternarHusillo: document.getElementById('btn-spindle-toggle'),
+    iconoVentiladorHusillo: document.getElementById('spindle-fan-icon'),
+    textoBotonHusillo: document.getElementById('lbl-spindle-btn-text'),
+    entradaRpmHusillo: document.getElementById('input-spindle-rpm'),
+    etiquetaRpmEnVivo: document.getElementById('lbl-spindle-speed-live'),
+    deslizadorModificadorHusillo: document.getElementById('slider-spindle-override'),
+    metricaEstadoHusillo: document.getElementById('metric-spindle-state'),
+    // Barra de estado y paro de emergencia
+    botonParoEmergencia: document.getElementById('btn-estop'),
+    etiquetaEstadoControlador: document.getElementById('lbl-machine-state'),
+    puntoIndicadorEstado: document.getElementById('state-status-dot'),
+    indicadorLimites: document.getElementById('pill-limits-state'),
+    puntoIndicadorLimites: document.getElementById('limits-status-dot'),
+    etiquetaEstadoLimites: document.getElementById('lbl-limits-state'),
+    // Controles de cámara del visor
+    botonVistaXY: document.getElementById('btn-view-xy'),
+    botonVistaXZ: document.getElementById('btn-view-xz'),
+    botonVista3D: document.getElementById('btn-view-3d'),
+    botonZoomMas: document.getElementById('btn-zoom-in'),
+    botonZoomMenos: document.getElementById('btn-zoom-out'),
+    botonReiniciarZoom: document.getElementById('btn-zoom-reset'),
+    // Visor de instrucciones y consola
+    contenedorLineasGcode: document.getElementById('gcode-lines-container'),
+    pestañaBotonGcode: document.getElementById('tab-btn-gcode'),
+    pestañaBotonConsola: document.getElementById('tab-btn-console'),
+    panelGcode: document.getElementById('pane-gcode'),
+    panelConsola: document.getElementById('pane-console'),
+    // Entrada manual MDI y terminal
+    entradaMdi: document.getElementById('mdi-input-cmd'),
+    botonEnviarMdi: document.getElementById('btn-mdi-send'),
+    salidaConsola: document.getElementById('console-output'),
+    entradaConsola: document.getElementById('console-cmd-input'),
+    botonEnviarConsola: document.getElementById('btn-console-send'),
+    // Panel de métricas y control de avance
+    metricaNumeroLinea: document.getElementById('metric-line'),
+    metricaVelocidadAvance: document.getElementById('metric-feed'),
+    metricaTiempoTranscurrido: document.getElementById('metric-time'),
+    metricaPorcentajeAvance: document.getElementById('metric-feed-pct'),
+    barraProgresoRelleno: document.getElementById('progress-bar-fill'),
+    etiquetaPorcentajeProgreso: document.getElementById('lbl-progress-percent'),
+    botonIniciarMecanizado: document.getElementById('btn-execution-action'),
+    botonPausarMecanizado: document.getElementById('btn-execution-pause'),
+    botonDetenerMecanizado: document.getElementById('btn-execution-stop'),
+    telemetriaBuffer: document.getElementById('tele-buffer'),
+    telemetriaTiempoTranscurrido: document.getElementById('tele-elapsed'),
+    // Ventanas modales
+    botonAbrirConfiguracion: document.getElementById('btn-open-config'),
+    modalConfiguracion: document.getElementById('modal-config-backdrop'),
+    botonCerrarConfiguracion: document.getElementById('btn-close-config-modal'),
+    botonCancelarConfiguracion: document.getElementById('btn-cancel-config'),
+    botonGuardarConfiguracion: document.getElementById('btn-save-config'),
+    botonesPestañasConfiguracion: document.querySelectorAll('.cfg-tab-btn'),
+    panelesConfiguracion: document.querySelectorAll('.cfg-panel'),
+    modalDiccionario: document.getElementById('modal-dict-backdrop'),
+    botonCerrarDiccionario: document.getElementById('btn-close-dict-modal'),
+    campoBusquedaDiccionario: document.getElementById('dict-search'),
+    cuerpoTablaDiccionario: document.getElementById('dict-table-body'),
+    selectorArchivoGcode: document.getElementById('file-input-gcode'),
+    botonCargarDemo: document.getElementById('btn-menu-load-sample'),
+    botonAbrirArchivoMenu: document.getElementById('btn-menu-open-file'),
+    botonMenuDiccionario: document.getElementById('btn-menu-gcode-dict'),
+    botonMenuAcercaDe: document.getElementById('btn-menu-about'),
+    botonMenuHoming: document.getElementById('btn-menu-homing'),
+    botonMenuDesbloquear: document.getElementById('btn-menu-unlock'),
+    botonMenuReiniciarGrbl: document.getElementById('btn-menu-reset-grbl')
   };
 
   // ==========================================
-  // FUNCIONES DE SINCRONIZACIÓN Y DRO
+  // SINCRONIZACIÓN DE COORDENADAS Y PANTALLA DRO
   // ==========================================
-  function updateDRO() {
-    dom.droValX.textContent = state.wcs.x.toFixed(3);
-    dom.droValY.textContent = state.wcs.y.toFixed(3);
-    dom.droValZ.textContent = state.wcs.z.toFixed(3);
+  function actualizarLecturasDRO() {
+    elementos.droValorX.textContent = estado.coordenadasTrabajo.x.toFixed(3);
+    elementos.droValorY.textContent = estado.coordenadasTrabajo.y.toFixed(3);
+    elementos.droValorZ.textContent = estado.coordenadasTrabajo.z.toFixed(3);
 
-    dom.droMachX.textContent = state.mcs.x.toFixed(3);
-    dom.droMachY.textContent = state.mcs.y.toFixed(3);
-    dom.droMachZ.textContent = state.mcs.z.toFixed(3);
+    elementos.droMaquinaX.textContent = estado.coordenadasMaquina.x.toFixed(3);
+    elementos.droMaquinaY.textContent = estado.coordenadasMaquina.y.toFixed(3);
+    elementos.droMaquinaZ.textContent = estado.coordenadasMaquina.z.toFixed(3);
 
-    // Sincronizar posición con visualizador Canvas
-    if (window.cncVisualizer) {
-      window.cncVisualizer.setToolPosition(state.wcs.x, state.wcs.y, state.wcs.z);
+    if (window.visualizadorCNC) {
+      window.visualizadorCNC.establecerPosicionHerramienta(
+        estado.coordenadasTrabajo.x,
+        estado.coordenadasTrabajo.y,
+        estado.coordenadasTrabajo.z
+      );
     }
   }
 
-  function setMachineState(newState) {
-    state.machineStatus = newState;
-    dom.lblMachineState.textContent = newState;
-    dom.stateStatusDot.className = 'indicator-dot';
+  // Actualiza visualmente el estado del controlador (IDLE, RUN, ALARM)
+  function establecerEstadoOperativo(nuevoEstado) {
+    estado.estadoOperativo = nuevoEstado;
+    elementos.etiquetaEstadoControlador.textContent = nuevoEstado;
+    elementos.puntoIndicadorEstado.className = 'indicator-dot';
 
-    if (newState === 'IDLE') {
-      dom.stateStatusDot.classList.add('dot-idle');
-      dom.btnEstop.classList.remove('alarm-active');
-    } else if (newState === 'RUN') {
-      dom.stateStatusDot.classList.add('dot-run');
-      dom.btnEstop.classList.remove('alarm-active');
-    } else if (newState === 'ALARM') {
-      dom.stateStatusDot.classList.add('dot-alarm');
-      dom.btnEstop.classList.add('alarm-active');
+    if (nuevoEstado === 'IDLE') {
+      elementos.puntoIndicadorEstado.classList.add('dot-idle');
+      elementos.botonParoEmergencia.classList.remove('alarm-active');
+    } else if (nuevoEstado === 'RUN') {
+      elementos.puntoIndicadorEstado.classList.add('dot-run');
+      elementos.botonParoEmergencia.classList.remove('alarm-active');
+    } else if (nuevoEstado === 'ALARM') {
+      elementos.puntoIndicadorEstado.classList.add('dot-alarm');
+      elementos.botonParoEmergencia.classList.add('alarm-active');
     }
   }
 
   // ==========================================
-  // JOGGING Y MOVIMIENTO MANUAL
+  // DESPLAZAMIENTO MANUAL DE EJES (JOGGING)
   // ==========================================
-  function jogAxis(axis, direction) {
-    if (state.machineStatus === 'ALARM') {
-      appendConsole('c-error', '[ALARMA] Máquina bloqueada por E-STOP. Use $X para desbloquear.');
+  function moverEjeManual(eje, sentido) {
+    if (estado.estadoOperativo === 'ALARM') {
+      imprimirEnConsola('c-error', '[ALARMA] Movimiento bloqueado por paro de emergencia (E-STOP). Use $X para rearmar.');
       return;
     }
 
-    const delta = state.selectedStep * direction;
-    if (axis === 'X') {
-      state.wcs.x = Math.max(0, Math.min(320, state.wcs.x + delta));
-      state.mcs.x = state.wcs.x;
-    } else if (axis === 'Y') {
-      state.wcs.y = Math.max(0, Math.min(220, state.wcs.y + delta));
-      state.mcs.y = state.wcs.y;
-    } else if (axis === 'Z') {
-      state.wcs.z = Math.max(-50, Math.min(60, state.wcs.z + delta));
-      state.mcs.z = state.wcs.z;
+    const desplazamiento = estado.incrementoPaso * sentido;
+    if (eje === 'X') {
+      estado.coordenadasTrabajo.x = Math.max(0, Math.min(320, estado.coordenadasTrabajo.x + desplazamiento));
+      estado.coordenadasMaquina.x = estado.coordenadasTrabajo.x;
+    } else if (eje === 'Y') {
+      estado.coordenadasTrabajo.y = Math.max(0, Math.min(220, estado.coordenadasTrabajo.y + desplazamiento));
+      estado.coordenadasMaquina.y = estado.coordenadasTrabajo.y;
+    } else if (eje === 'Z') {
+      estado.coordenadasTrabajo.z = Math.max(-50, Math.min(60, estado.coordenadasTrabajo.z + desplazamiento));
+      estado.coordenadasMaquina.z = estado.coordenadasTrabajo.z;
     }
 
-    updateDRO();
-    appendConsole('c-ok', `> $J=G91 G21 ${axis}${delta > 0 ? '+' : ''}${delta.toFixed(3)} F${Math.round(state.feedrate * (state.jogSpeedPct / 100))}`);
-    appendConsole('c-ok', 'ok');
+    actualizarLecturasDRO();
+    const avanceCalculado = Math.round(estado.velocidadAvanceNominal * (estado.porcentajeVelocidadManual / 100));
+    const signo = desplazamiento > 0 ? '+' : '';
+    imprimirEnConsola('c-ok', `> $J=G91 G21 ${eje}${signo}${desplazamiento.toFixed(3)} F${avanceCalculado}`);
+    imprimirEnConsola('c-ok', 'ok');
   }
 
-  // Eventos de botones Jog
-  dom.btnJogYPlus.addEventListener('click', () => jogAxis('Y', 1));
-  dom.btnJogYMinus.addEventListener('click', () => jogAxis('Y', -1));
-  dom.btnJogXPlus.addEventListener('click', () => jogAxis('X', 1));
-  dom.btnJogXMinus.addEventListener('click', () => jogAxis('X', -1));
-  dom.btnJogZPlus.addEventListener('click', () => jogAxis('Z', 1));
-  dom.btnJogZMinus.addEventListener('click', () => jogAxis('Z', -1));
+  // Eventos de botones del D-Pad
+  elementos.botonJogYMas.addEventListener('click', () => moverEjeManual('Y', 1));
+  elementos.botonJogYMenos.addEventListener('click', () => moverEjeManual('Y', -1));
+  elementos.botonJogXMas.addEventListener('click', () => moverEjeManual('X', 1));
+  elementos.botonJogXMenos.addEventListener('click', () => moverEjeManual('X', -1));
+  elementos.botonJogZMas.addEventListener('click', () => moverEjeManual('Z', 1));
+  elementos.botonJogZMenos.addEventListener('click', () => moverEjeManual('Z', -1));
 
-  // Selectores de incremento de paso (0.01, 0.1, 1, 10 mm)
-  dom.stepButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      dom.stepButtons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      state.selectedStep = parseFloat(btn.dataset.step);
+  // Selección de magnitud del incremento de paso
+  elementos.botonesPaso.forEach(boton => {
+    boton.addEventListener('click', () => {
+      elementos.botonesPaso.forEach(b => b.classList.remove('active'));
+      boton.classList.add('active');
+      estado.incrementoPaso = parseFloat(boton.dataset.step);
     });
   });
 
-  // Slider de velocidad Jog
-  dom.sliderJogSpeed.addEventListener('input', (e) => {
-    state.jogSpeedPct = parseInt(e.target.value, 10);
-    dom.lblJogVel.textContent = `${state.jogSpeedPct}%`;
+  elementos.deslizadorVelocidadJog.addEventListener('input', (evento) => {
+    estado.porcentajeVelocidadManual = parseInt(evento.target.value, 10);
+    elementos.etiquetaVelocidadJog.textContent = `${estado.porcentajeVelocidadManual}%`;
   });
 
-  // Botones de puesta a cero de ejes
-  dom.btnZeroX.addEventListener('click', () => { state.wcs.x = 0; updateDRO(); appendConsole('c-ok', '> G10 L20 P1 X0\nok'); });
-  dom.btnZeroY.addEventListener('click', () => { state.wcs.y = 0; updateDRO(); appendConsole('c-ok', '> G10 L20 P1 Y0\nok'); });
-  dom.btnZeroZ.addEventListener('click', () => { state.wcs.z = 0; updateDRO(); appendConsole('c-ok', '> G10 L20 P1 Z0\nok'); });
-  dom.btnZeroXY.addEventListener('click', () => { state.wcs.x = 0; state.wcs.y = 0; updateDRO(); appendConsole('c-ok', '> G10 L20 P1 X0 Y0\nok'); });
-  dom.btnZeroZAction.addEventListener('click', () => { state.wcs.z = 0; updateDRO(); appendConsole('c-ok', '> G10 L20 P1 Z0\nok'); });
-  dom.btnZeroAll.addEventListener('click', () => { state.wcs.x = 0; state.wcs.y = 0; state.wcs.z = 0; updateDRO(); appendConsole('c-ok', '> G10 L20 P1 X0 Y0 Z0\nok'); });
+  // Funciones de puesta a cero de coordenadas de trabajo
+  elementos.botonCeroX.addEventListener('click', () => { estado.coordenadasTrabajo.x = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 X0\nok'); });
+  elementos.botonCeroY.addEventListener('click', () => { estado.coordenadasTrabajo.y = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 Y0\nok'); });
+  elementos.botonCeroZ.addEventListener('click', () => { estado.coordenadasTrabajo.z = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 Z0\nok'); });
+  elementos.botonCeroXY.addEventListener('click', () => { estado.coordenadasTrabajo.x = 0; estado.coordenadasTrabajo.y = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 X0 Y0\nok'); });
+  elementos.botonCeroSoloZ.addEventListener('click', () => { estado.coordenadasTrabajo.z = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 Z0\nok'); });
+  elementos.botonCeroTodos.addEventListener('click', () => { estado.coordenadasTrabajo.x = 0; estado.coordenadasTrabajo.y = 0; estado.coordenadasTrabajo.z = 0; actualizarLecturasDRO(); imprimirEnConsola('c-ok', '> G10 L20 P1 X0 Y0 Z0\nok'); });
 
   // ==========================================
-  // HUSILLO (SPINDLE)
+  // CONTROL DEL HUSILLO DE FRESADO
   // ==========================================
-  function toggleSpindle() {
-    state.spindleOn = !state.spindleOn;
-    if (state.spindleOn) {
-      dom.btnSpindleToggle.classList.add('active');
-      dom.lblSpindleBtnText.textContent = 'Spindle ON';
-      dom.metricSpindleState.textContent = 'ON';
-      dom.metricSpindleState.classList.add('highlight-cyan');
-      appendConsole('c-grbl', `> M3 S${state.spindleRpm}`);
-      appendConsole('c-ok', 'ok');
+  function alternarHusillo() {
+    estado.husilloActivo = !estado.husilloActivo;
+    if (estado.husilloActivo) {
+      elementos.botonAlternarHusillo.classList.add('active');
+      elementos.textoBotonHusillo.textContent = 'Spindle ON';
+      elementos.metricaEstadoHusillo.textContent = 'ON';
+      elementos.metricaEstadoHusillo.classList.add('highlight-cyan');
+      imprimirEnConsola('c-grbl', `> M3 S${estado.revolucionesPorMinuto}`);
+      imprimirEnConsola('c-ok', 'ok');
     } else {
-      dom.btnSpindleToggle.classList.remove('active');
-      dom.lblSpindleBtnText.textContent = 'Spindle OFF';
-      dom.metricSpindleState.textContent = 'OFF';
-      dom.metricSpindleState.classList.remove('highlight-cyan');
-      appendConsole('c-grbl', '> M5');
-      appendConsole('c-ok', 'ok');
+      elementos.botonAlternarHusillo.classList.remove('active');
+      elementos.textoBotonHusillo.textContent = 'Spindle OFF';
+      elementos.metricaEstadoHusillo.textContent = 'OFF';
+      elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
+      imprimirEnConsola('c-grbl', '> M5');
+      imprimirEnConsola('c-ok', 'ok');
     }
   }
 
-  dom.btnSpindleToggle.addEventListener('click', toggleSpindle);
+  elementos.botonAlternarHusillo.addEventListener('click', alternarHusillo);
 
-  dom.inputSpindleRpm.addEventListener('change', (e) => {
-    state.spindleRpm = parseInt(e.target.value, 10) || 0;
-    dom.lblSpindleSpeedLive.textContent = `${state.spindleRpm} RPM`;
-    if (state.spindleOn) {
-      appendConsole('c-grbl', `> S${state.spindleRpm}`);
+  elementos.entradaRpmHusillo.addEventListener('change', (evento) => {
+    estado.revolucionesPorMinuto = parseInt(evento.target.value, 10) || 0;
+    elementos.etiquetaRpmEnVivo.textContent = `${estado.revolucionesPorMinuto} RPM`;
+    if (estado.husilloActivo) {
+      imprimirEnConsola('c-grbl', `> S${estado.revolucionesPorMinuto}`);
     }
   });
 
-  dom.sliderSpindleOverride.addEventListener('input', (e) => {
-    state.spindleOverride = parseInt(e.target.value, 10);
-    const realRpm = Math.round(state.spindleRpm * (state.spindleOverride / 100));
-    dom.lblSpindleSpeedLive.textContent = `${realRpm} RPM`;
+  elementos.deslizadorModificadorHusillo.addEventListener('input', (evento) => {
+    estado.modificadorHusillo = parseInt(evento.target.value, 10);
+    const rpmAjustadas = Math.round(estado.revolucionesPorMinuto * (estado.modificadorHusillo / 100));
+    elementos.etiquetaRpmEnVivo.textContent = `${rpmAjustadas} RPM`;
   });
 
   // ==========================================
-  // E-STOP & LÍMITES
+  // PARADA DE EMERGENCIA Y SENSORES DE LÍMITE
   // ==========================================
-  dom.btnEstop.addEventListener('click', () => {
-    if (state.machineStatus !== 'ALARM') {
-      setMachineState('ALARM');
-      stopExecution();
-      appendConsole('c-error', '[EMERGENCIA] ¡PARADA E-STOP ACTIVADA! Ejes bloqueados inmediatamente.');
+  elementos.botonParoEmergencia.addEventListener('click', () => {
+    if (estado.estadoOperativo !== 'ALARM') {
+      establecerEstadoOperativo('ALARM');
+      detenerMecanizado();
+      imprimirEnConsola('c-error', '[EMERGENCIA] ¡PARADA E-STOP ACTIVADA! Transmisión y ejes interrumpidos de inmediato.');
     } else {
-      // Si ya estaba en alarma, mostrar diálogo de desbloqueo $X
       if (confirm('¿Desea desbloquear la alarma de seguridad ($X) y rearmar la máquina?')) {
-        setMachineState('IDLE');
-        appendConsole('c-info', '> $X');
-        appendConsole('c-ok', '[MSG:Caution: Unlocked]');
-        appendConsole('c-ok', 'ok');
+        establecerEstadoOperativo('IDLE');
+        imprimirEnConsola('c-info', '> $X');
+        imprimirEnConsola('c-ok', '[MSG:Caution: Unlocked]');
+        imprimirEnConsola('c-ok', 'ok');
       }
     }
   });
 
-  dom.pillLimitsState.addEventListener('click', () => {
-    state.limitsEnabled = !state.limitsEnabled;
-    if (state.limitsEnabled) {
-      dom.limitsStatusDot.className = 'indicator-dot dot-connected';
-      dom.lblLimitsState.textContent = 'Límites: ON';
-      appendConsole('c-info', '[CONFIG] Sensores de límite fin de carrera HABILITADOS ($21=1).');
+  elementos.indicadorLimites.addEventListener('click', () => {
+    estado.limitesHabilitados = !estado.limitesHabilitados;
+    if (estado.limitesHabilitados) {
+      elementos.puntoIndicadorLimites.className = 'indicator-dot dot-connected';
+      elementos.etiquetaEstadoLimites.textContent = 'Límites: ON';
+      imprimirEnConsola('c-info', '[CONFIG] Sensores de límite fin de carrera HABILITADOS ($21=1).');
     } else {
-      dom.limitsStatusDot.className = 'indicator-dot dot-off';
-      dom.lblLimitsState.textContent = 'Límites: OFF';
-      appendConsole('c-info', '[CONFIG] Sensores de límite fin de carrera DESHABILITADOS ($21=0).');
+      elementos.puntoIndicadorLimites.className = 'indicator-dot dot-off';
+      elementos.etiquetaEstadoLimites.textContent = 'Límites: OFF';
+      imprimirEnConsola('c-info', '[CONFIG] Sensores de límite fin de carrera DESHABILITADOS ($21=0).');
     }
   });
 
   // ==========================================
-  // RENDERIZADO DEL VISOR DE G-CODE
+  // VISOR DE LÍNEAS DE CÓDIGO G
   // ==========================================
-  function renderGcodeList() {
-    dom.gcodeContainer.innerHTML = '';
-    state.gcodeLines.forEach((item, index) => {
-      const li = document.createElement('li');
-      li.className = 'gcode-line';
-      if (index === state.activeLineIndex) {
-        li.classList.add('active');
+  function renderizarListaCodigoG() {
+    elementos.contenedorLineasGcode.innerHTML = '';
+    estado.lineasPrograma.forEach((elemento, indice) => {
+      const elementoLista = document.createElement('li');
+      elementoLista.className = 'gcode-line';
+      if (indice === estado.indiceLineaActiva) {
+        elementoLista.classList.add('active');
       }
 
-      const numSpan = document.createElement('span');
-      numSpan.className = 'line-num';
-      numSpan.textContent = (index + 1).toString();
+      const columnaNumero = document.createElement('span');
+      columnaNumero.className = 'line-num';
+      columnaNumero.textContent = (indice + 1).toString();
 
-      const textSpan = document.createElement('span');
-      textSpan.className = 'line-text';
-      textSpan.innerHTML = formatGcodeSyntax(item.text);
+      const columnaTexto = document.createElement('span');
+      columnaTexto.className = 'line-text';
+      columnaTexto.innerHTML = formatearSintaxisCodigoG(elemento.texto);
 
-      li.appendChild(numSpan);
-      li.appendChild(textSpan);
+      elementoLista.appendChild(columnaNumero);
+      elementoLista.appendChild(columnaTexto);
 
-      li.addEventListener('click', () => {
-        selectGcodeLine(index);
+      elementoLista.addEventListener('click', () => {
+        seleccionarLineaGcode(indice);
       });
 
-      dom.gcodeContainer.appendChild(li);
+      elementos.contenedorLineasGcode.appendChild(elementoLista);
     });
 
-    scrollActiveLineIntoView();
+    desplazarALineaActiva();
   }
 
-  function formatGcodeSyntax(raw) {
-    let html = raw;
-    // Comentarios
-    if (html.includes(';')) {
-      const parts = html.split(';');
-      const code = parts[0];
-      const comment = parts.slice(1).join(';');
-      html = formatTokens(code) + `<span class="cmd-comment">;${comment}</span>`;
+  // Resaltado léxico de instrucciones G, M y comentarios
+  function formatearSintaxisCodigoG(textoOriginal) {
+    let salida = textoOriginal;
+    if (salida.includes(';')) {
+      const partes = salida.split(';');
+      const codigo = partes[0];
+      const comentario = partes.slice(1).join(';');
+      salida = colorearComandos(codigo) + `<span class="cmd-comment">;${comentario}</span>`;
     } else {
-      html = formatTokens(html);
+      salida = colorearComandos(salida);
     }
-    return html;
+    return salida;
   }
 
-  function formatTokens(str) {
-    return str
+  function colorearComandos(cadena) {
+    return cadena
       .replace(/(G[0-9]+(?:\.[0-9]+)?)/gi, '<span class="cmd-g">$1</span>')
       .replace(/(M[0-9]+)/gi, '<span class="cmd-m">$1</span>')
       .replace(/([XYZFS][0-9.-]+)/gi, '<b>$1</b>');
   }
 
-  function selectGcodeLine(index) {
-    state.activeLineIndex = index;
-    const all = dom.gcodeContainer.querySelectorAll('.gcode-line');
-    all.forEach((el, i) => {
-      if (i === index) el.classList.add('active');
-      else el.classList.remove('active');
+  function seleccionarLineaGcode(indice) {
+    estado.indiceLineaActiva = indice;
+    const todasLasLineas = elementos.contenedorLineasGcode.querySelectorAll('.gcode-line');
+    todasLasLineas.forEach((elem, i) => {
+      if (i === indice) elem.classList.add('active');
+      else elem.classList.remove('active');
     });
-    updateTelemetry();
+    actualizarMetricasTelemetria();
   }
 
-  function scrollActiveLineIntoView() {
-    const activeEl = dom.gcodeContainer.querySelector('.gcode-line.active');
-    if (activeEl) {
-      activeEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  function desplazarALineaActiva() {
+    const lineaSeleccionada = elementos.contenedorLineasGcode.querySelector('.gcode-line.active');
+    if (lineaSeleccionada) {
+      lineaSeleccionada.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   }
 
   // ==========================================
-  // CONSOLA SERIAL Y MDI
+  // CONSOLA SERIAL Y TERMINAL MDI
   // ==========================================
-  function appendConsole(cssClass, text) {
-    const div = document.createElement('div');
-    div.className = `console-line ${cssClass}`;
-    div.textContent = text;
-    dom.consoleOutput.appendChild(div);
-    dom.consoleOutput.scrollTop = dom.consoleOutput.scrollHeight;
+  function imprimirEnConsola(claseCss, mensaje) {
+    const renglon = document.createElement('div');
+    renglon.className = `console-line ${claseCss}`;
+    renglon.textContent = mensaje;
+    elementos.salidaConsola.appendChild(renglon);
+    elementos.salidaConsola.scrollTop = elementos.salidaConsola.scrollHeight;
   }
 
-  function handleMdiCommand(rawCmd) {
-    const cmd = rawCmd.trim();
-    if (!cmd) return;
+  function procesarComandoMdi(comandoSinFormato) {
+    const comando = comandoSinFormato.trim();
+    if (!comando) return;
 
-    appendConsole('c-ok', `> ${cmd}`);
+    imprimirEnConsola('c-ok', `> ${comando}`);
+    const comandoMayusculas = comando.toUpperCase();
 
-    // Procesar comandos educativos comunes
-    const upper = cmd.toUpperCase();
-    if (upper === '$$') {
-      appendConsole('c-grbl', '$100=250.000 (x:step/mm)\n$101=250.000 (y:step/mm)\n$102=400.000 (z:step/mm)\n$110=1000.000 (x:max feed)\n$120=50.000 (x:accel)\n$130=300.000 (x:max travel)');
-      appendConsole('c-ok', 'ok');
-    } else if (upper === '$H') {
-      appendConsole('c-info', '[HOMING] Ejecutando búsqueda de límites de referencia...');
-      state.wcs.x = 0; state.wcs.y = 0; state.wcs.z = 0;
-      updateDRO();
-      appendConsole('c-ok', 'ok');
-    } else if (upper === '$X') {
-      setMachineState('IDLE');
-      appendConsole('c-info', '[MSG:Caution: Unlocked]');
-      appendConsole('c-ok', 'ok');
-    } else if (upper.startsWith('G0') || upper.startsWith('G1')) {
-      // Simular movimiento según coordenadas pasadas en el comando
-      const matchX = upper.match(/X([0-9.-]+)/);
-      const matchY = upper.match(/Y([0-9.-]+)/);
-      const matchZ = upper.match(/Z([0-9.-]+)/);
-      if (matchX) state.wcs.x = parseFloat(matchX[1]);
-      if (matchY) state.wcs.y = parseFloat(matchY[1]);
-      if (matchZ) state.wcs.z = parseFloat(matchZ[1]);
-      updateDRO();
-      appendConsole('c-ok', 'ok');
-    } else if (upper === 'M3' || upper.startsWith('M3 ')) {
-      toggleSpindle();
-    } else if (upper === 'M5') {
-      if (state.spindleOn) toggleSpindle();
+    if (comandoMayusculas === '$$') {
+      imprimirEnConsola('c-grbl', '$100=250.000 (x:step/mm)\n$101=250.000 (y:step/mm)\n$102=400.000 (z:step/mm)\n$110=1000.000 (x:max feed)\n$120=50.000 (x:accel)\n$130=300.000 (x:max travel)');
+      imprimirEnConsola('c-ok', 'ok');
+    } else if (comandoMayusculas === '$H') {
+      imprimirEnConsola('c-info', '[HOMING] Ejecutando búsqueda de límites de referencia física...');
+      estado.coordenadasTrabajo.x = 0; estado.coordenadasTrabajo.y = 0; estado.coordenadasTrabajo.z = 0;
+      actualizarLecturasDRO();
+      imprimirEnConsola('c-ok', 'ok');
+    } else if (comandoMayusculas === '$X') {
+      establecerEstadoOperativo('IDLE');
+      imprimirEnConsola('c-info', '[MSG:Caution: Unlocked]');
+      imprimirEnConsola('c-ok', 'ok');
+    } else if (comandoMayusculas.startsWith('G0') || comandoMayusculas.startsWith('G1')) {
+      const coincidenciaX = comandoMayusculas.match(/X([0-9.-]+)/);
+      const coincidenciaY = comandoMayusculas.match(/Y([0-9.-]+)/);
+      const coincidenciaZ = comandoMayusculas.match(/Z([0-9.-]+)/);
+      if (coincidenciaX) estado.coordenadasTrabajo.x = parseFloat(coincidenciaX[1]);
+      if (coincidenciaY) estado.coordenadasTrabajo.y = parseFloat(coincidenciaY[1]);
+      if (coincidenciaZ) estado.coordenadasTrabajo.z = parseFloat(coincidenciaZ[1]);
+      actualizarLecturasDRO();
+      imprimirEnConsola('c-ok', 'ok');
+    } else if (comandoMayusculas === 'M3' || comandoMayusculas.startsWith('M3 ')) {
+      alternarHusillo();
+    } else if (comandoMayusculas === 'M5') {
+      if (estado.husilloActivo) alternarHusillo();
     } else {
-      appendConsole('c-ok', 'ok');
+      imprimirEnConsola('c-ok', 'ok');
     }
   }
 
-  dom.btnMdiSend.addEventListener('click', () => {
-    handleMdiCommand(dom.mdiInput.value);
+  elementos.botonEnviarMdi.addEventListener('click', () => {
+    procesarComandoMdi(elementos.entradaMdi.value);
   });
 
-  dom.mdiInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      handleMdiCommand(dom.mdiInput.value);
+  elementos.entradaMdi.addEventListener('keydown', (evento) => {
+    if (evento.key === 'Enter') {
+      procesarComandoMdi(elementos.entradaMdi.value);
     }
   });
 
-  dom.btnConsoleSend.addEventListener('click', () => {
-    handleMdiCommand(dom.consoleInput.value);
-    dom.consoleInput.value = '';
+  elementos.botonEnviarConsola.addEventListener('click', () => {
+    procesarComandoMdi(elementos.entradaConsola.value);
+    elementos.entradaConsola.value = '';
   });
 
-  dom.consoleInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      handleMdiCommand(dom.consoleInput.value);
-      dom.consoleInput.value = '';
+  elementos.entradaConsola.addEventListener('keydown', (evento) => {
+    if (evento.key === 'Enter') {
+      procesarComandoMdi(elementos.entradaConsola.value);
+      elementos.entradaConsola.value = '';
     }
   });
 
-  // Pestañas G-Code / Consola
-  dom.tabBtnGcode.addEventListener('click', () => {
-    dom.tabBtnGcode.classList.add('active');
-    dom.tabBtnConsole.classList.remove('active');
-    dom.paneGcode.classList.add('active');
-    dom.paneConsole.classList.remove('active');
+  elementos.pestañaBotonGcode.addEventListener('click', () => {
+    elementos.pestañaBotonGcode.classList.add('active');
+    elementos.pestañaBotonConsola.classList.remove('active');
+    elementos.panelGcode.classList.add('active');
+    elementos.panelConsola.classList.remove('active');
   });
 
-  dom.tabBtnConsole.addEventListener('click', () => {
-    dom.tabBtnConsole.classList.add('active');
-    dom.tabBtnGcode.classList.remove('active');
-    dom.paneConsole.classList.add('active');
-    dom.paneGcode.classList.remove('active');
+  elementos.pestañaBotonConsola.addEventListener('click', () => {
+    elementos.pestañaBotonConsola.classList.add('active');
+    elementos.pestañaBotonGcode.classList.remove('active');
+    elementos.panelConsola.classList.add('active');
+    elementos.panelGcode.classList.remove('active');
   });
 
   // ==========================================
-  // CONTROL DE EJECUCIÓN (SIMULACIÓN DIDÁCTICA)
+  // SIMULACIÓN Y TELEMETRÍA DE MECANIZADO
   // ==========================================
-  function updateTelemetry() {
-    const totalLines = state.gcodeLines.length;
-    const currentLine = state.activeLineIndex + 1;
-    dom.metricLine.textContent = `${currentLine} / ${totalLines}`;
-    dom.teleBuffer.textContent = `${currentLine} / ${totalLines}`;
+  function actualizarMetricasTelemetria() {
+    const totalLineas = estado.lineasPrograma.length;
+    const lineaActual = estado.indiceLineaActiva + 1;
+    elementos.metricaNumeroLinea.textContent = `${lineaActual} / ${totalLineas}`;
+    elementos.telemetriaBuffer.textContent = `${lineaActual} / ${totalLineas}`;
 
-    const pct = Math.round((currentLine / totalLines) * 100);
-    dom.progressBarFill.style.width = `${pct}%`;
-    dom.lblProgressPercent.textContent = `${pct}%`;
+    const porcentajeAvance = Math.round((lineaActual / totalLineas) * 100);
+    elementos.barraProgresoRelleno.style.width = `${porcentajeAvance}%`;
+    elementos.etiquetaPorcentajeProgreso.textContent = `${porcentajeAvance}%`;
 
-    dom.metricTime.textContent = formatTime(state.elapsedSeconds);
-    dom.teleElapsed.textContent = formatTime(state.elapsedSeconds);
+    elementos.metricaTiempoTranscurrido.textContent = formatearTiempo(estado.segundosTranscurridos);
+    elementos.telemetriaTiempoTranscurrido.textContent = formatearTiempo(estado.segundosTranscurridos);
   }
 
-  function formatTime(sec) {
-    const h = String(Math.floor(sec / 3600)).padStart(2, '0');
-    const m = String(Math.floor((sec % 3600) / 60)).padStart(2, '0');
-    const s = String(sec % 60).padStart(2, '0');
-    return `${h}:${m}:${s}`;
+  function formatearTiempo(segundos) {
+    const horas = String(Math.floor(segundos / 3600)).padStart(2, '0');
+    const minutos = String(Math.floor((segundos % 3600) / 60)).padStart(2, '0');
+    const segs = String(segundos % 60).padStart(2, '0');
+    return `${horas}:${minutos}:${segs}`;
   }
 
-  function startExecution() {
-    if (state.machineStatus === 'ALARM') {
-      alert('La máquina está en estado de ALARMA (E-STOP). Desbloquee antes de iniciar.');
+  function iniciarMecanizado() {
+    if (estado.estadoOperativo === 'ALARM') {
+      alert('La máquina se encuentra en ALARMA. Desbloquee con $X antes de comenzar.');
       return;
     }
 
-    state.isRunning = true;
-    state.isPaused = false;
-    setMachineState('RUN');
+    estado.enEjecucion = true;
+    estado.enPausa = false;
+    establecerEstadoOperativo('RUN');
 
-    dom.btnExecutionAction.classList.add('hidden');
-    dom.btnExecutionPause.classList.remove('hidden');
-    dom.btnExecutionStop.classList.remove('hidden');
+    elementos.botonIniciarMecanizado.classList.add('hidden');
+    elementos.botonPausarMecanizado.classList.remove('hidden');
+    elementos.botonDetenerMecanizado.classList.remove('hidden');
 
-    appendConsole('c-info', '[EJECUCIÓN] Iniciando transmisión de programa pieza_01.nc...');
+    imprimirEnConsola('c-info', '[EJECUCIÓN] Transmitiendo programa al controlador GRBL...');
 
-    // Si ya estaba al final, reiniciar desde la línea 1
-    if (state.activeLineIndex >= state.gcodeLines.length - 1) {
-      state.activeLineIndex = 0;
-      state.elapsedSeconds = 0;
+    if (estado.indiceLineaActiva >= estado.lineasPrograma.length - 1) {
+      estado.indiceLineaActiva = 0;
+      estado.segundosTranscurridos = 0;
     }
 
-    state.simulationTimer = setInterval(stepExecution, 900);
+    estado.temporizadorEjecucion = setInterval(avanzarPasoMecanizado, 900);
   }
 
-  function stepExecution() {
-    if (state.activeLineIndex < state.gcodeLines.length - 1) {
-      selectGcodeLine(state.activeLineIndex + 1);
-      state.elapsedSeconds += 2;
-      updateTelemetry();
+  function avanzarPasoMecanizado() {
+    if (estado.indiceLineaActiva < estado.lineasPrograma.length - 1) {
+      seleccionarLineaGcode(estado.indiceLineaActiva + 1);
+      estado.segundosTranscurridos += 2;
+      actualizarMetricasTelemetria();
 
-      const lineText = state.gcodeLines[state.activeLineIndex].text;
-      handleLineCoordinates(lineText);
-      appendConsole('c-grbl', `> ${lineText}`);
+      const textoLinea = estado.lineasPrograma[estado.indiceLineaActiva].texto;
+      extraerCoordenadasDeTexto(textoLinea);
+      imprimirEnConsola('c-grbl', `> ${textoLinea}`);
     } else {
-      // Fin del programa
-      stopExecution();
-      appendConsole('c-info', '[FIN] Mecanizado completado con éxito (M30/M5).');
+      detenerMecanizado();
+      imprimirEnConsola('c-info', '[FIN] Mecanizado concluido satisfactoriamente (M30/M5).');
     }
   }
 
-  function handleLineCoordinates(text) {
-    const upper = text.toUpperCase();
-    const mx = upper.match(/X([0-9.-]+)/);
-    const my = upper.match(/Y([0-9.-]+)/);
-    const mz = upper.match(/Z([0-9.-]+)/);
-    if (mx) state.wcs.x = parseFloat(mx[1]);
-    if (my) state.wcs.y = parseFloat(my[1]);
-    if (mz) state.wcs.z = parseFloat(mz[1]);
-    updateDRO();
+  function extraerCoordenadasDeTexto(texto) {
+    const mayusculas = texto.toUpperCase();
+    const mx = mayusculas.match(/X([0-9.-]+)/);
+    const my = mayusculas.match(/Y([0-9.-]+)/);
+    const mz = mayusculas.match(/Z([0-9.-]+)/);
+    if (mx) estado.coordenadasTrabajo.x = parseFloat(mx[1]);
+    if (my) estado.coordenadasTrabajo.y = parseFloat(my[1]);
+    if (mz) estado.coordenadasTrabajo.z = parseFloat(mz[1]);
+    actualizarLecturasDRO();
   }
 
-  function pauseExecution() {
-    state.isPaused = !state.isPaused;
-    if (state.isPaused) {
-      clearInterval(state.simulationTimer);
-      dom.btnExecutionPause.textContent = '▶ CONTINUAR';
-      setMachineState('HOLD');
-      appendConsole('c-info', '[PAUSA] Transmisión detenida temporalmente (! Feed Hold).');
+  function pausarMecanizado() {
+    estado.enPausa = !estado.enPausa;
+    if (estado.enPausa) {
+      clearInterval(estado.temporizadorEjecucion);
+      elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-play"></i> CONTINUAR';
+      establecerEstadoOperativo('HOLD');
+      imprimirEnConsola('c-info', '[PAUSA] Transmisión pausada (! Feed Hold activado).');
     } else {
-      dom.btnExecutionPause.textContent = '⏸ PAUSA';
-      setMachineState('RUN');
-      state.simulationTimer = setInterval(stepExecution, 900);
-      appendConsole('c-info', '[REANUDAR] Continuando ejecución (~ Cycle Start).');
+      elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-pause"></i> PAUSA';
+      establecerEstadoOperativo('RUN');
+      estado.temporizadorEjecucion = setInterval(avanzarPasoMecanizado, 900);
+      imprimirEnConsola('c-info', '[REANUDAR] Continuando ejecución (~ Cycle Start activado).');
     }
   }
 
-  function stopExecution() {
-    state.isRunning = false;
-    state.isPaused = false;
-    clearInterval(state.simulationTimer);
-    setMachineState('IDLE');
+  function detenerMecanizado() {
+    estado.enEjecucion = false;
+    estado.enPausa = false;
+    clearInterval(estado.temporizadorEjecucion);
+    establecerEstadoOperativo('IDLE');
 
-    dom.btnExecutionAction.classList.remove('hidden');
-    dom.btnExecutionPause.classList.add('hidden');
-    dom.btnExecutionStop.classList.add('hidden');
-    dom.btnExecutionPause.textContent = '⏸ PAUSA';
+    elementos.botonIniciarMecanizado.classList.remove('hidden');
+    elementos.botonPausarMecanizado.classList.add('hidden');
+    elementos.botonDetenerMecanizado.classList.add('hidden');
+    elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-pause"></i> PAUSA';
   }
 
-  dom.btnExecutionAction.addEventListener('click', startExecution);
-  dom.btnExecutionPause.addEventListener('click', pauseExecution);
-  dom.btnExecutionStop.addEventListener('click', stopExecution);
+  elementos.botonIniciarMecanizado.addEventListener('click', iniciarMecanizado);
+  elementos.botonPausarMecanizado.addEventListener('click', pausarMecanizado);
+  elementos.botonDetenerMecanizado.addEventListener('click', detenerMecanizado);
 
   // ==========================================
-  // CONTROLES DE VISTA Y ZOOM DEL VISUALIZADOR
+  // CONTROLES DE PERSPECTIVA DEL VISUALIZADOR
   // ==========================================
-  dom.btnViewXY.addEventListener('click', () => {
-    setActiveViewBtn(dom.btnViewXY);
-    window.cncVisualizer.setViewMode('XY');
+  elementos.botonVistaXY.addEventListener('click', () => {
+    activarBotonVista(elementos.botonVistaXY);
+    window.visualizadorCNC.establecerModoVista('XY');
   });
 
-  dom.btnViewXZ.addEventListener('click', () => {
-    setActiveViewBtn(dom.btnViewXZ);
-    window.cncVisualizer.setViewMode('XZ');
+  elementos.botonVistaXZ.addEventListener('click', () => {
+    activarBotonVista(elementos.botonVistaXZ);
+    window.visualizadorCNC.establecerModoVista('XZ');
   });
 
-  dom.btnView3D.addEventListener('click', () => {
-    setActiveViewBtn(dom.btnView3D);
-    window.cncVisualizer.setViewMode('3D');
+  elementos.botonVista3D.addEventListener('click', () => {
+    activarBotonVista(elementos.botonVista3D);
+    window.visualizadorCNC.establecerModoVista('3D');
   });
 
-  function setActiveViewBtn(activeBtn) {
-    [dom.btnViewXY, dom.btnViewXZ, dom.btnView3D].forEach(b => b.classList.remove('active'));
-    activeBtn.classList.add('active');
+  function activarBotonVista(botonActivo) {
+    [elementos.botonVistaXY, elementos.botonVistaXZ, elementos.botonVista3D].forEach(b => b.classList.remove('active'));
+    botonActivo.classList.add('active');
   }
 
-  dom.btnZoomIn.addEventListener('click', () => window.cncVisualizer.setZoom(0.25));
-  dom.btnZoomOut.addEventListener('click', () => window.cncVisualizer.setZoom(-0.25));
-  dom.btnZoomReset.addEventListener('click', () => window.cncVisualizer.resetView());
+  elementos.botonZoomMas.addEventListener('click', () => window.visualizadorCNC.establecerZoom(0.25));
+  elementos.botonZoomMenos.addEventListener('click', () => window.visualizadorCNC.establecerZoom(-0.25));
+  elementos.botonReiniciarZoom.addEventListener('click', () => window.visualizadorCNC.reiniciarVista());
 
   // ==========================================
-  // ATAJOS DE TECLADO
+  // ATAJOS RÁPIDOS DE TECLADO
   // ==========================================
-  window.addEventListener('keydown', (e) => {
-    // Si el usuario está escribiendo en un input, no disparar jog
+  window.addEventListener('keydown', (evento) => {
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
       return;
     }
 
-    if (e.key === 'ArrowUp') { e.preventDefault(); jogAxis('Y', 1); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); jogAxis('Y', -1); }
-    else if (e.key === 'ArrowLeft') { e.preventDefault(); jogAxis('X', -1); }
-    else if (e.key === 'ArrowRight') { e.preventDefault(); jogAxis('X', 1); }
-    else if (e.key === 'PageUp') { e.preventDefault(); jogAxis('Z', 1); }
-    else if (e.key === 'PageDown') { e.preventDefault(); jogAxis('Z', -1); }
-    else if (e.key === ' ') { e.preventDefault(); if (state.isRunning) pauseExecution(); }
-    else if (e.key === 'Escape') { dom.btnEstop.click(); }
+    if (evento.key === 'ArrowUp') { evento.preventDefault(); moverEjeManual('Y', 1); }
+    else if (evento.key === 'ArrowDown') { evento.preventDefault(); moverEjeManual('Y', -1); }
+    else if (evento.key === 'ArrowLeft') { evento.preventDefault(); moverEjeManual('X', -1); }
+    else if (evento.key === 'ArrowRight') { evento.preventDefault(); moverEjeManual('X', 1); }
+    else if (evento.key === 'PageUp') { evento.preventDefault(); moverEjeManual('Z', 1); }
+    else if (evento.key === 'PageDown') { evento.preventDefault(); moverEjeManual('Z', -1); }
+    else if (evento.key === ' ') { evento.preventDefault(); if (estado.enEjecucion) pausarMecanizado(); }
+    else if (evento.key === 'Escape') { elementos.botonParoEmergencia.click(); }
   });
 
   // ==========================================
-  // MODALES Y MENÚS DESPLEGABLES
+  // GESTIÓN DE MODALES Y MENÚS
   // ==========================================
-  dom.btnOpenConfig.addEventListener('click', () => {
-    dom.modalConfig.classList.remove('hidden');
+  elementos.botonAbrirConfiguracion.addEventListener('click', () => {
+    elementos.modalConfiguracion.classList.remove('hidden');
   });
 
-  dom.btnCloseConfig.addEventListener('click', () => dom.modalConfig.classList.add('hidden'));
-  dom.btnCancelConfig.addEventListener('click', () => dom.modalConfig.classList.add('hidden'));
-  dom.btnSaveConfig.addEventListener('click', () => {
-    dom.modalConfig.classList.add('hidden');
-    appendConsole('c-info', '[CONFIG] Parámetros guardados y sincronizados con EEPROM GRBL.');
+  elementos.botonCerrarConfiguracion.addEventListener('click', () => elementos.modalConfiguracion.classList.add('hidden'));
+  elementos.botonCancelarConfiguracion.addEventListener('click', () => elementos.modalConfiguracion.classList.add('hidden'));
+  elementos.botonGuardarConfiguracion.addEventListener('click', () => {
+    elementos.modalConfiguracion.classList.add('hidden');
+    imprimirEnConsola('c-info', '[CONFIG] Parámetros guardados y sincronizados correctamente en la memoria EEPROM.');
   });
 
-  // Pestañas internas del modal de configuración
-  dom.cfgTabBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      dom.cfgTabBtns.forEach(b => b.classList.remove('active'));
-      dom.cfgPanels.forEach(p => p.classList.remove('active'));
+  elementos.botonesPestañasConfiguracion.forEach(botonPestaña => {
+    botonPestaña.addEventListener('click', () => {
+      elementos.botonesPestañasConfiguracion.forEach(b => b.classList.remove('active'));
+      elementos.panelesConfiguracion.forEach(p => p.classList.remove('active'));
 
-      btn.classList.add('active');
-      const targetPanel = document.getElementById(btn.dataset.target);
-      if (targetPanel) targetPanel.classList.add('active');
+      botonPestaña.classList.add('active');
+      const panelDestino = document.getElementById(botonPestaña.dataset.target);
+      if (panelDestino) panelDestino.classList.add('active');
     });
   });
 
-  // Ejecución de Macros desde el modal
-  document.querySelectorAll('.btn-run-macro').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const macroCmds = e.target.dataset.macro.split(';');
-      dom.modalConfig.classList.add('hidden');
-      macroCmds.forEach(c => handleMdiCommand(c));
+  document.querySelectorAll('.btn-run-macro').forEach(botonMacro => {
+    botonMacro.addEventListener('click', (evento) => {
+      const comandosMacro = evento.currentTarget.dataset.macro.split(';');
+      elementos.modalConfiguracion.classList.add('hidden');
+      comandosMacro.forEach(c => procesarComandoMdi(c));
     });
   });
 
-  // Modal Diccionario G-Code
-  dom.btnMenuGcodeDict.addEventListener('click', () => dom.modalDict.classList.remove('hidden'));
-  dom.btnCloseDict.addEventListener('click', () => dom.modalDict.classList.add('hidden'));
+  elementos.botonMenuDiccionario.addEventListener('click', () => elementos.modalDiccionario.classList.remove('hidden'));
+  elementos.botonCerrarDiccionario.addEventListener('click', () => elementos.modalDiccionario.classList.add('hidden'));
 
-  dom.dictSearch.addEventListener('input', (e) => {
-    const query = e.target.value.toLowerCase();
-    const rows = dom.dictTableBody.querySelectorAll('tr');
-    rows.forEach(r => {
-      const txt = r.textContent.toLowerCase();
-      r.style.display = txt.includes(query) ? '' : 'none';
+  elementos.campoBusquedaDiccionario.addEventListener('input', (evento) => {
+    const consulta = evento.target.value.toLowerCase();
+    const filas = elementos.cuerpoTablaDiccionario.querySelectorAll('tr');
+    filas.forEach(fila => {
+      const textoFila = fila.textContent.toLowerCase();
+      fila.style.display = textoFila.includes(consulta) ? '' : 'none';
     });
   });
 
-  // Carga de archivo demo
-  dom.btnMenuLoadSample.addEventListener('click', () => {
-    state.activeLineIndex = 0;
-    renderGcodeList();
-    updateTelemetry();
-    appendConsole('c-info', '[ARCHIVO] Se ha cargado el programa pieza_01.nc.');
+  elementos.botonCargarDemo.addEventListener('click', () => {
+    estado.indiceLineaActiva = 0;
+    renderizarListaCodigoG();
+    actualizarMetricasTelemetria();
+    imprimirEnConsola('c-info', '[ARCHIVO] Archivo de demostración pieza_01.nc cargado.');
   });
 
-  dom.btnMenuOpenFile.addEventListener('click', () => dom.fileInputGcode.click());
-  dom.fileInputGcode.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const lines = ev.target.result.split('\n')
+  elementos.botonAbrirArchivoMenu.addEventListener('click', () => elementos.selectorArchivoGcode.click());
+  elementos.selectorArchivoGcode.addEventListener('change', (evento) => {
+    const archivo = evento.target.files[0];
+    if (!archivo) return;
+    const lector = new FileReader();
+    lector.onload = (ev) => {
+      const lineas = ev.target.result.split('\n')
         .map(l => l.trim())
         .filter(l => l.length > 0)
-        .map(text => ({ text }));
-      if (lines.length > 0) {
-        state.gcodeLines = lines;
-        state.activeLineIndex = 0;
-        document.getElementById('lbl-loaded-filename').textContent = file.name;
-        renderGcodeList();
-        updateTelemetry();
-        appendConsole('c-info', `[ARCHIVO] Archivo ${file.name} cargado con ${lines.length} líneas.`);
+        .map(texto => ({ texto }));
+      if (lineas.length > 0) {
+        estado.lineasPrograma = lineas;
+        estado.indiceLineaActiva = 0;
+        document.getElementById('lbl-loaded-filename').textContent = archivo.name;
+        renderizarListaCodigoG();
+        actualizarMetricasTelemetria();
+        imprimirEnConsola('c-info', `[ARCHIVO] Archivo ${archivo.name} cargado con ${lineas.length} líneas.`);
       }
     };
-    reader.readAsText(file);
+    lector.readAsText(archivo);
   });
 
-  // Menús de Homing y Unlock
-  dom.btnMenuHoming.addEventListener('click', () => handleMdiCommand('$H'));
-  dom.btnMenuUnlock.addEventListener('click', () => handleMdiCommand('$X'));
-  dom.btnMenuResetGrbl.addEventListener('click', () => {
-    stopExecution();
-    appendConsole('c-grbl', '\nGrbl 1.1h [ESCOM Didáctico: Reiniciado]');
-    setMachineState('IDLE');
+  elementos.botonMenuHoming.addEventListener('click', () => procesarComandoMdi('$H'));
+  elementos.botonMenuDesbloquear.addEventListener('click', () => procesarComandoMdi('$X'));
+  elementos.botonMenuReiniciarGrbl.addEventListener('click', () => {
+    detenerMecanizado();
+    imprimirEnConsola('c-grbl', '\nGrbl 1.1h [ESCOM Didáctico: Reiniciado]');
+    establecerEstadoOperativo('IDLE');
   });
 
-  dom.btnMenuAbout.addEventListener('click', () => {
+  elementos.botonMenuAcercaDe.addEventListener('click', () => {
     alert('CNC Basic v1.0\nInterfaz de control para máquinas CNC con fines educativos\nTrabajo Terminal 2026-B072 (ESCOM - IPN)\n\nAutores:\n• Josué Martin Echeverría Arteaga\n• Jonathan Uriel Paredes Martínez\n\nDirector:\n• Dr. Gelacio Castillo Cabrera');
   });
 
-  // Cerrar modales al hacer clic en el backdrop
-  [dom.modalConfig, dom.modalDict].forEach(m => {
-    m.addEventListener('click', (e) => {
-      if (e.target === m) m.classList.add('hidden');
+  [elementos.modalConfiguracion, elementos.modalDiccionario].forEach(modal => {
+    modal.addEventListener('click', (evento) => {
+      if (evento.target === modal) modal.classList.add('hidden');
     });
   });
 
-  // Render inicial
-  renderGcodeList();
-  updateDRO();
-  updateTelemetry();
+  // Render inicial de la aplicación
+  renderizarListaCodigoG();
+  actualizarLecturasDRO();
+  actualizarMetricasTelemetria();
 });

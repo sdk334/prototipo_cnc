@@ -1,206 +1,194 @@
 /**
- * CNC Basic v1.0 - Renderizador Canvas 2D/3D (visualizer.js)
- * Dibuja la rejilla métrica, trayectorias G-Code, origen WCS y retícula de herramienta en tiempo real.
+ * CNC Basic v1.0 - Motor Gráfico del Visualizador 2D/3D (visualizer.js)
+ * Renderizado en Canvas para trayectorias de herramienta, plano cartesiano y origen de pieza.
  */
 
-class CNCVisualizer {
-  constructor(canvasId) {
-    this.canvas = document.getElementById(canvasId);
-    if (!this.canvas) return;
-    this.ctx = this.canvas.getContext('2d');
+class VisualizadorCNC {
+  constructor(idLienzo) {
+    this.lienzo = document.getElementById(idLienzo);
+    if (!this.lienzo) return;
+    this.contexto = this.lienzo.getContext('2d');
 
-    // Estado de la cámara / proyección
-    this.viewMode = 'XY'; // 'XY', 'XZ', '3D'
+    // Parámetros de la cámara y proyección
+    this.modoVista = 'XY'; // Opciones: 'XY', 'XZ', '3D'
     this.zoom = 1.0;
-    this.panX = 70;
-    this.panY = -30;
-    this.isDragging = false;
-    this.dragStartX = 0;
-    this.dragStartY = 0;
+    this.desplazamientoX = 70;
+    this.desplazamientoY = -30;
+    this.estaArrastrando = false;
+    this.arrastreInicioX = 0;
+    this.arrastreInicioY = 0;
 
-    // Posición actual de la herramienta (en mm)
-    this.toolPos = { x: 266.715, y: 224.548, z: 0.000 };
+    // Posición espacial actual de la herramienta (en milímetros)
+    this.posicionHerramienta = { x: 266.715, y: 224.548, z: 0.000 };
 
-    // Trayectoria cargada: lista de segmentos { type: 'G0'|'G1', x1, y1, z1, x2, y2, z2 }
-    this.toolpath = [];
-    this.loadSampleToolpath();
+    // Segmentos de trayectoria { tipo: 'G0'|'G1', x1, y1, z1, x2, y2, z2 }
+    this.trayectoria = [];
+    this.cargarTrayectoriaEjemplo();
 
-    // Configuración visual
-    this.gridStep = 50; // mm por cuadrícula mayor
-    this.maxCoordX = 350;
-    this.maxCoordY = 280;
+    // Configuración de la rejilla milimétrica
+    this.pasoCuadricula = 50; // mm por división principal
+    this.coordenadaMaxX = 350;
+    this.coordenadaMaxY = 280;
 
-    this.initEvents();
-    this.resizeCanvas();
-    window.addEventListener('resize', () => this.resizeCanvas());
+    this.iniciarEventos();
+    this.redimensionarLienzo();
+    window.addEventListener('resize', () => this.redimensionarLienzo());
   }
 
-  resizeCanvas() {
-    const rect = this.canvas.parentElement.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    this.canvas.width = rect.width * dpr;
-    this.canvas.height = rect.height * dpr;
-    this.ctx.scale(dpr, dpr);
-    this.displayWidth = rect.width;
-    this.displayHeight = rect.height;
-    this.render();
+  // Ajusta el lienzo a la resolución del dispositivo para máxima nitidez
+  redimensionarLienzo() {
+    const rectangulo = this.lienzo.parentElement.getBoundingClientRect();
+    const proporcionPixeles = window.devicePixelRatio || 1;
+
+    this.lienzo.width = rectangulo.width * proporcionPixeles;
+    this.lienzo.height = rectangulo.height * proporcionPixeles;
+    this.contexto.scale(proporcionPixeles, proporcionPixeles);
+
+    this.anchoPantalla = rectangulo.width;
+    this.altoPantalla = rectangulo.height;
+    this.renderizar();
   }
 
-  initEvents() {
-    // Arrastre con ratón para Paneado
-    this.canvas.addEventListener('mousedown', (e) => {
-      this.isDragging = true;
-      this.dragStartX = e.clientX - this.panX;
-      this.dragStartY = e.clientY - this.panY;
-      this.canvas.style.cursor = 'grabbing';
+  // Control de interacción de ratón (paneo y zoom)
+  iniciarEventos() {
+    this.lienzo.addEventListener('mousedown', (evento) => {
+      this.estaArrastrando = true;
+      this.arrastreInicioX = evento.clientX - this.desplazamientoX;
+      this.arrastreInicioY = evento.clientY - this.desplazamientoY;
+      this.lienzo.style.cursor = 'grabbing';
     });
 
-    window.addEventListener('mousemove', (e) => {
-      if (!this.isDragging) return;
-      this.panX = e.clientX - this.dragStartX;
-      this.panY = e.clientY - this.dragStartY;
-      this.render();
+    window.addEventListener('mousemove', (evento) => {
+      if (!this.estaArrastrando) return;
+      this.desplazamientoX = evento.clientX - this.arrastreInicioX;
+      this.desplazamientoY = evento.clientY - this.arrastreInicioY;
+      this.renderizar();
     });
 
     window.addEventListener('mouseup', () => {
-      this.isDragging = false;
-      this.canvas.style.cursor = 'crosshair';
+      this.estaArrastrando = false;
+      this.lienzo.style.cursor = 'crosshair';
     });
 
-    // Zoom con rueda de ratón
-    this.canvas.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      const zoomFactor = e.deltaY < 0 ? 1.12 : 0.89;
-      this.zoom = Math.max(0.3, Math.min(6.0, this.zoom * zoomFactor));
-      this.updateZoomOverlay();
-      this.render();
+    this.lienzo.addEventListener('wheel', (evento) => {
+      evento.preventDefault();
+      const factorZoom = evento.deltaY < 0 ? 1.12 : 0.89;
+      this.zoom = Math.max(0.3, Math.min(6.0, this.zoom * factorZoom));
+      this.actualizarSuperposicionZoom();
+      this.renderizar();
     }, { passive: false });
   }
 
-  setZoom(delta) {
+  establecerZoom(delta) {
     this.zoom = Math.max(0.3, Math.min(6.0, this.zoom + delta));
-    this.updateZoomOverlay();
-    this.render();
+    this.actualizarSuperposicionZoom();
+    this.renderizar();
   }
 
-  resetView() {
+  reiniciarVista() {
     this.zoom = 1.0;
-    this.panX = 70;
-    this.panY = -30;
-    this.updateZoomOverlay();
-    this.render();
+    this.desplazamientoX = 70;
+    this.desplazamientoY = -30;
+    this.actualizarSuperposicionZoom();
+    this.renderizar();
   }
 
-  setViewMode(mode) {
-    this.viewMode = mode;
-    const modeLbl = document.getElementById('lbl-view-mode');
-    if (modeLbl) modeLbl.textContent = mode;
-    this.render();
+  establecerModoVista(modo) {
+    this.modoVista = modo;
+    const etiquetaModo = document.getElementById('lbl-view-mode');
+    if (etiquetaModo) etiquetaModo.textContent = modo;
+    this.renderizar();
   }
 
-  updateZoomOverlay() {
-    const zoomLbl = document.getElementById('lbl-view-zoom');
-    if (zoomLbl) zoomLbl.textContent = `${Math.round(this.zoom * 100)}%`;
+  actualizarSuperposicionZoom() {
+    const etiquetaZoom = document.getElementById('lbl-view-zoom');
+    if (etiquetaZoom) etiquetaZoom.textContent = `${Math.round(this.zoom * 100)}%`;
   }
 
-  setToolPosition(x, y, z) {
-    this.toolPos.x = x;
-    this.toolPos.y = y;
-    this.toolPos.z = z;
+  // Actualiza la posición de la herramienta y sus indicadores en pantalla
+  establecerPosicionHerramienta(x, y, z) {
+    this.posicionHerramienta.x = x;
+    this.posicionHerramienta.y = y;
+    this.posicionHerramienta.z = z;
 
-    // Actualizar badge flotante
-    const badgeX = document.getElementById('v-tool-x');
-    const badgeY = document.getElementById('v-tool-y');
-    if (badgeX) badgeX.textContent = x.toFixed(1);
-    if (badgeY) badgeY.textContent = y.toFixed(1);
+    const indicadorX = document.getElementById('v-tool-x');
+    const indicadorY = document.getElementById('v-tool-y');
+    if (indicadorX) indicadorX.textContent = x.toFixed(1);
+    if (indicadorY) indicadorY.textContent = y.toFixed(1);
 
-    this.render();
+    this.renderizar();
   }
 
-  // Transforma coordenadas mm CNC a píxeles en canvas
-  toScreen(x, y, z = 0) {
-    const scale = 1.65 * this.zoom;
-    const originX = 60 + this.panX;
-    const originY = (this.displayHeight - 50) + this.panY;
+  // Conversión de coordenadas de la máquina (mm) a coordenadas de pantalla (píxeles)
+  convertirAPantalla(x, y, z = 0) {
+    const escala = 1.65 * this.zoom;
+    const origenX = 60 + this.desplazamientoX;
+    const origenY = (this.altoPantalla - 50) + this.desplazamientoY;
 
-    if (this.viewMode === 'XY') {
+    if (this.modoVista === 'XY') {
       return {
-        x: originX + x * scale,
-        y: originY - y * scale
+        x: origenX + x * escala,
+        y: origenY - y * escala
       };
-    } else if (this.viewMode === 'XZ') {
+    } else if (this.modoVista === 'XZ') {
       return {
-        x: originX + x * scale,
-        y: originY - (z + 40) * scale * 2.5
+        x: origenX + x * escala,
+        y: origenY - (z + 40) * escala * 2.5
       };
     } else {
-      // 3D Isométrico
-      const isoX = (x - y) * Math.cos(Math.PI / 6);
-      const isoY = (x + y) * Math.sin(Math.PI / 6) - (z * 1.5);
+      // Proyección isométrica tridimensional
+      const isometricoX = (x - y) * Math.cos(Math.PI / 6);
+      const isometricoY = (x + y) * Math.sin(Math.PI / 6) - (z * 1.5);
       return {
-        x: originX + 180 + isoX * scale * 0.9,
-        y: originY - 140 + isoY * scale * 0.9
+        x: origenX + 180 + isometricoX * escala * 0.9,
+        y: origenY - 140 + isometricoY * escala * 0.9
       };
     }
   }
 
-  loadSampleToolpath() {
-    // Genera la trayectoria idéntica a la pieza_01.nc de la imagen de referencia
-    this.toolpath = [
-      // Rápido al inicio
-      { type: 'G0', x1: 0, y1: 0, z1: 5, x2: 40, y2: 30, z2: 5 },
-      // Contorno rectangular exterior
-      { type: 'G1', x1: 40, y1: 30, z1: -1, x2: 240, y2: 30, z2: -1 },
-      { type: 'G1', x1: 240, y1: 30, z1: -1, x2: 240, y2: 180, z2: -1 },
-      { type: 'G1', x1: 240, y1: 180, z1: -1, x2: 190, y2: 180, z2: -1 },
-      { type: 'G1', x1: 190, y1: 180, z1: -1, x2: 190, y2: 130, z2: -1 },
-      { type: 'G1', x1: 190, y1: 130, z1: -1, x2: 40, y2: 130, z2: -1 },
-      { type: 'G1', x1: 40, y1: 130, z1: -1, x2: 40, y2: 30, z2: -1 },
-      // Cajera interior
-      { type: 'G0', x1: 40, y1: 30, z1: 5, x2: 110, y2: 70, z2: 5 },
-      { type: 'G1', x1: 110, y1: 70, z1: -1, x2: 170, y2: 70, z2: -1 },
-      { type: 'G1', x1: 170, y1: 70, z1: -1, x2: 170, y2: 140, z2: -1 },
-      { type: 'G1', x1: 170, y1: 140, z1: -1, x2: 110, y2: 140, z2: -1 },
-      { type: 'G1', x1: 110, y1: 140, z1: -1, x2: 110, y2: 70, z2: -1 },
-      // Desplazamiento a posición final de la herramienta
-      { type: 'G0', x1: 110, y1: 70, z1: 5, x2: 266.7, y2: 224.5, z2: 5 }
+  // Trayectoria demostrativa correspondiente a la pieza de prueba
+  cargarTrayectoriaEjemplo() {
+    this.trayectoria = [
+      { tipo: 'G0', x1: 0, y1: 0, z1: 5, x2: 40, y2: 30, z2: 5 },
+      { tipo: 'G1', x1: 40, y1: 30, z1: -1, x2: 240, y2: 30, z2: -1 },
+      { tipo: 'G1', x1: 240, y1: 30, z1: -1, x2: 240, y2: 180, z2: -1 },
+      { tipo: 'G1', x1: 240, y1: 180, z1: -1, x2: 190, y2: 180, z2: -1 },
+      { tipo: 'G1', x1: 190, y1: 180, z1: -1, x2: 190, y2: 130, z2: -1 },
+      { tipo: 'G1', x1: 190, y1: 130, z1: -1, x2: 40, y2: 130, z2: -1 },
+      { tipo: 'G1', x1: 40, y1: 130, z1: -1, x2: 40, y2: 30, z2: -1 },
+      { tipo: 'G0', x1: 40, y1: 30, z1: 5, x2: 110, y2: 70, z2: 5 },
+      { tipo: 'G1', x1: 110, y1: 70, z1: -1, x2: 170, y2: 70, z2: -1 },
+      { tipo: 'G1', x1: 170, y1: 70, z1: -1, x2: 170, y2: 140, z2: -1 },
+      { tipo: 'G1', x1: 170, y1: 140, z1: -1, x2: 110, y2: 140, z2: -1 },
+      { tipo: 'G1', x1: 110, y1: 140, z1: -1, x2: 110, y2: 70, z2: -1 },
+      { tipo: 'G0', x1: 110, y1: 70, z1: 5, x2: 266.7, y2: 224.5, z2: 5 }
     ];
   }
 
-  render() {
-    if (!this.ctx || !this.displayWidth) return;
-    const ctx = this.ctx;
+  // Dibujado del conjunto gráfico completo
+  renderizar() {
+    if (!this.contexto || !this.anchoPantalla) return;
+    const ctx = this.contexto;
 
-    // Limpiar canvas con fondo muy oscuro
+    // Fondo oscuro principal
     ctx.fillStyle = '#0a0c0e';
-    ctx.fillRect(0, 0, this.displayWidth, this.displayHeight);
+    ctx.fillRect(0, 0, this.anchoPantalla, this.altoPantalla);
 
-    // 1. Dibujar Rejilla Métrica
-    this.drawGrid(ctx);
-
-    // 2. Dibujar envolvente de material de trabajo (Stock verde tenue)
-    this.drawStock(ctx);
-
-    // 3. Dibujar Trayectorias G-Code
-    this.drawToolpath(ctx);
-
-    // 4. Dibujar Marcador de Origen WCS (0,0)
-    this.drawOriginWCS(ctx);
-
-    // 5. Dibujar Retícula de la Herramienta en dorado
-    this.drawToolMarker(ctx);
+    this.dibujarCuadricula(ctx);
+    this.dibujarMaterial(ctx);
+    this.dibujarTrayectorias(ctx);
+    this.dibujarOrigenWCS(ctx);
+    this.dibujarRetículaHerramienta(ctx);
   }
 
-  drawGrid(ctx) {
-    const scale = 1.65 * this.zoom;
+  dibujarCuadricula(ctx) {
     ctx.save();
+    ctx.lineWidth = 1;
 
-    if (this.viewMode === 'XY') {
-      // Líneas de la cuadrícula
-      ctx.lineWidth = 1;
-      for (let x = 0; x <= this.maxCoordX; x += this.gridStep) {
-        const p1 = this.toScreen(x, 0);
-        const p2 = this.toScreen(x, this.maxCoordY);
+    if (this.modoVista === 'XY') {
+      for (let x = 0; x <= this.coordenadaMaxX; x += this.pasoCuadricula) {
+        const p1 = this.convertirAPantalla(x, 0);
+        const p2 = this.convertirAPantalla(x, this.coordenadaMaxY);
 
         ctx.strokeStyle = (x % 100 === 0) ? '#1f252d' : '#14181e';
         ctx.beginPath();
@@ -208,7 +196,6 @@ class CNCVisualizer {
         ctx.lineTo(p2.x, p2.y);
         ctx.stroke();
 
-        // Etiquetas numéricas de X
         if (x > 0) {
           ctx.fillStyle = '#4c5663';
           ctx.font = '10px "JetBrains Mono", monospace';
@@ -217,9 +204,9 @@ class CNCVisualizer {
         }
       }
 
-      for (let y = 0; y <= this.maxCoordY; y += this.gridStep) {
-        const p1 = this.toScreen(0, y);
-        const p2 = this.toScreen(this.maxCoordX, y);
+      for (let y = 0; y <= this.coordenadaMaxY; y += this.pasoCuadricula) {
+        const p1 = this.convertirAPantalla(0, y);
+        const p2 = this.convertirAPantalla(this.coordenadaMaxX, y);
 
         ctx.strokeStyle = (y % 100 === 0) ? '#1f252d' : '#14181e';
         ctx.beginPath();
@@ -227,7 +214,6 @@ class CNCVisualizer {
         ctx.lineTo(p2.x, p2.y);
         ctx.stroke();
 
-        // Etiquetas numéricas de Y
         if (y > 0) {
           ctx.fillStyle = '#4c5663';
           ctx.font = '10px "JetBrains Mono", monospace';
@@ -235,33 +221,30 @@ class CNCVisualizer {
           ctx.fillText(y.toString(), p1.x - 8, p1.y + 3);
         }
       }
-    } else if (this.viewMode === 'XZ') {
-      // Vista frontal XZ
+    } else if (this.modoVista === 'XZ') {
       ctx.strokeStyle = '#181e26';
-      ctx.lineWidth = 1;
-      for (let x = 0; x <= this.maxCoordX; x += this.gridStep) {
-        const p1 = this.toScreen(x, 0, -20);
-        const p2 = this.toScreen(x, 0, 50);
+      for (let x = 0; x <= this.coordenadaMaxX; x += this.pasoCuadricula) {
+        const p1 = this.convertirAPantalla(x, 0, -20);
+        const p2 = this.convertirAPantalla(x, 0, 50);
         ctx.beginPath();
         ctx.moveTo(p1.x, p1.y);
         ctx.lineTo(p2.x, p2.y);
         ctx.stroke();
       }
     } else {
-      // Rejilla isométrica 3D
+      // Rejilla de perspectiva isométrica
       ctx.strokeStyle = '#141920';
-      ctx.lineWidth = 1;
       for (let x = 0; x <= 300; x += 50) {
-        const p1 = this.toScreen(x, 0, 0);
-        const p2 = this.toScreen(x, 250, 0);
+        const p1 = this.convertirAPantalla(x, 0, 0);
+        const p2 = this.convertirAPantalla(x, 250, 0);
         ctx.beginPath();
         ctx.moveTo(p1.x, p1.y);
         ctx.lineTo(p2.x, p2.y);
         ctx.stroke();
       }
       for (let y = 0; y <= 250; y += 50) {
-        const p1 = this.toScreen(0, y, 0);
-        const p2 = this.toScreen(300, y, 0);
+        const p1 = this.convertirAPantalla(0, y, 0);
+        const p2 = this.convertirAPantalla(300, y, 0);
         ctx.beginPath();
         ctx.moveTo(p1.x, p1.y);
         ctx.lineTo(p2.x, p2.y);
@@ -272,41 +255,43 @@ class CNCVisualizer {
     ctx.restore();
   }
 
-  drawStock(ctx) {
-    if (this.viewMode !== 'XY') return;
-    const p1 = this.toScreen(35, 25);
-    const p2 = this.toScreen(255, 195);
-    const width = p2.x - p1.x;
-    const height = p1.y - p2.y;
+  // Representa el bloque de material a mecanizar (área verde tenue)
+  dibujarMaterial(ctx) {
+    if (this.modoVista !== 'XY') return;
+    const p1 = this.convertirAPantalla(35, 25);
+    const p2 = this.convertirAPantalla(255, 195);
+    const ancho = p2.x - p1.x;
+    const alto = p1.y - p2.y;
 
     ctx.save();
     ctx.fillStyle = 'rgba(16, 42, 28, 0.22)';
     ctx.strokeStyle = 'rgba(46, 204, 113, 0.28)';
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
-    ctx.fillRect(p1.x, p2.y, width, height);
-    ctx.strokeRect(p1.x, p2.y, width, height);
+    ctx.fillRect(p1.x, p2.y, ancho, alto);
+    ctx.strokeRect(p1.x, p2.y, ancho, alto);
     ctx.restore();
   }
 
-  drawToolpath(ctx) {
+  // Líneas continuas para corte y discontinuas para movimiento en vacío
+  dibujarTrayectorias(ctx) {
     ctx.save();
-    for (const seg of this.toolpath) {
-      const start = this.toScreen(seg.x1, seg.y1, seg.z1);
-      const end = this.toScreen(seg.x2, seg.y2, seg.z2);
+    for (const segmento of this.trayectoria) {
+      const inicio = this.convertirAPantalla(segmento.x1, segmento.y1, segmento.z1);
+      const fin = this.convertirAPantalla(segmento.x2, segmento.y2, segmento.z2);
 
       ctx.beginPath();
-      ctx.moveTo(start.x, start.y);
-      ctx.lineTo(end.x, end.y);
+      ctx.moveTo(inicio.x, inicio.y);
+      ctx.lineTo(fin.x, fin.y);
 
-      if (seg.type === 'G0') {
-        // Movimiento Rápido
+      if (segmento.tipo === 'G0') {
+        // Desplazamiento rápido sin corte
         ctx.strokeStyle = '#6e7a88';
         ctx.lineWidth = 1.2;
         ctx.setLineDash([4, 4]);
         ctx.stroke();
       } else {
-        // Corte G1 / G2
+        // Avance de corte
         ctx.strokeStyle = '#00e5ff';
         ctx.lineWidth = 1.8;
         ctx.setLineDash([]);
@@ -318,52 +303,49 @@ class CNCVisualizer {
     ctx.restore();
   }
 
-  drawOriginWCS(ctx) {
-    const orig = this.toScreen(0, 0, 0);
+  // Punto de origen de coordenadas de trabajo (0,0,0)
+  dibujarOrigenWCS(ctx) {
+    const origen = this.convertirAPantalla(0, 0, 0);
     ctx.save();
     ctx.fillStyle = '#00e5ff';
     ctx.shadowColor = '#00e5ff';
     ctx.shadowBlur = 6;
     ctx.beginPath();
-    ctx.arc(orig.x, orig.y, 4, 0, Math.PI * 2);
+    ctx.arc(origen.x, origen.y, 4, 0, Math.PI * 2);
     ctx.fill();
 
-    // Círculo concéntrico
     ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(orig.x, orig.y, 8, 0, Math.PI * 2);
+    ctx.arc(origen.x, origen.y, 8, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
 
-  drawToolMarker(ctx) {
-    const pos = this.toScreen(this.toolPos.x, this.toolPos.y, this.toolPos.z);
+  // Retícula indicadora de la posición actual del cabezal
+  dibujarRetículaHerramienta(ctx) {
+    const pos = this.convertirAPantalla(this.posicionHerramienta.x, this.posicionHerramienta.y, this.posicionHerramienta.z);
     ctx.save();
 
-    // Cruz dorada
     ctx.strokeStyle = '#ffb703';
     ctx.lineWidth = 1.6;
     ctx.shadowColor = '#ffb703';
     ctx.shadowBlur = 6;
 
-    const crossSize = 12;
+    const tamCruz = 12;
     ctx.beginPath();
-    // Línea horizontal
-    ctx.moveTo(pos.x - crossSize, pos.y);
-    ctx.lineTo(pos.x + crossSize, pos.y);
-    // Línea vertical
-    ctx.moveTo(pos.x, pos.y - crossSize);
-    ctx.lineTo(pos.x, pos.y + crossSize);
+    ctx.moveTo(pos.x - tamCruz, pos.y);
+    ctx.lineTo(pos.x + tamCruz, pos.y);
+    ctx.moveTo(pos.x, pos.y - tamCruz);
+    ctx.lineTo(pos.x, pos.y + tamCruz);
     ctx.stroke();
 
-    // Círculo central
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, 6, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Si es vista 3D, dibuja cono o cilindro de herramienta simulado
-    if (this.viewMode === '3D') {
+    // Silueta de fresa en vista isométrica
+    if (this.modoVista === '3D') {
       ctx.fillStyle = 'rgba(255, 183, 3, 0.25)';
       ctx.beginPath();
       ctx.moveTo(pos.x - 5, pos.y - 25);
@@ -375,7 +357,17 @@ class CNCVisualizer {
 
     ctx.restore();
   }
+
+  // Métodos puente para compatibilidad
+  setToolPosition(x, y, z) { this.establecerPosicionHerramienta(x, y, z); }
+  setViewMode(modo) { this.establecerModoVista(modo); }
+  setZoom(delta) { this.establecerZoom(delta); }
+  resetView() { this.reiniciarVista(); }
+  render() { this.renderizar(); }
 }
 
-// Instancia global del visualizador
+// Compatibilidad de alias global
+window.VisualizadorCNC = VisualizadorCNC;
+window.CNCVisualizer = VisualizadorCNC;
+window.visualizadorCNC = null;
 window.cncVisualizer = null;
