@@ -235,11 +235,32 @@ body {
   font-size: 12px;
   cursor: pointer;
   outline: none;
+  max-width: 260px;
 }
 
 .port-select option {
   background-color: var(--bg-card);
   color: var(--text-primary);
+  padding: 4px;
+}
+
+.btn-refresh-port {
+  background: transparent;
+  border: none;
+  color: var(--cyan-primary);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: transform 0.3s ease, color 0.15s ease;
+}
+
+.btn-refresh-port:hover {
+  color: #ffffff;
+  transform: rotate(180deg);
 }
 
 .pill-arrow {

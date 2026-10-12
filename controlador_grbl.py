@@ -89,22 +89,75 @@ class ControladorGRBL:
     # =========================================================================
 
     @staticmethod
-    def escanear_puertos() -> List[Dict[str, str]]:
-        """Devuelve la lista de puertos COM físicos disponibles en Windows."""
+    def escanear_puertos() -> List[Dict[str, Any]]:
+        """
+        Devuelve la lista de puertos COM físicos disponibles en Windows.
+        Prioriza dispositivos CNC USB reales (CH340, Arduino, FTDI, CP210) sobre vínculos virtuales o Bluetooth.
+        """
         puertos_encontrados = []
         if serial and hasattr(serial.tools, 'list_ports'):
             for p in serial.tools.list_ports.comports():
+                desc = p.description or ""
+                hwid = p.hwid or ""
+                mfr = p.manufacturer or ""
+
+                desc_lower = desc.lower()
+                hwid_lower = hwid.lower()
+                mfr_lower = mfr.lower()
+
+                es_bluetooth = "bluetooth" in desc_lower or "bluetooth" in hwid_lower
+                es_ch340 = "ch340" in desc_lower or "1a86" in hwid_lower
+                es_arduino = "arduino" in desc_lower or "arduino" in mfr_lower or "2341" in hwid_lower
+                es_cp210 = "cp210" in desc_lower or "10c4" in hwid_lower
+                es_ftdi = "ftdi" in desc_lower or "0403" in hwid_lower
+
+                # Formatear etiqueta concisa para la interfaz
+                if es_ch340:
+                    etiqueta = f"{p.device} - USB CH340 (CNC Detectado)"
+                    tipo = "USB_CNC"
+                    prioridad = 1
+                elif es_arduino:
+                    etiqueta = f"{p.device} - Arduino Uno (CNC)"
+                    tipo = "USB_CNC"
+                    prioridad = 1
+                elif es_cp210 or es_ftdi:
+                    etiqueta = f"{p.device} - Adaptador Serial USB"
+                    tipo = "USB_CNC"
+                    prioridad = 2
+                elif es_bluetooth:
+                    etiqueta = f"{p.device} (Bluetooth)"
+                    tipo = "BLUETOOTH"
+                    prioridad = 10
+                elif p.vid:
+                    etiqueta = f"{p.device} - USB Serial"
+                    tipo = "USB_CNC"
+                    prioridad = 3
+                else:
+                    nombre_corto = desc[:20] if len(desc) > 20 else desc
+                    etiqueta = f"{p.device} - {nombre_corto}"
+                    tipo = "GENERICO"
+                    prioridad = 5
+
                 puertos_encontrados.append({
                     "puerto": p.device,
-                    "descripcion": p.description,
-                    "fabricante": p.manufacturer or "Desconocido"
+                    "etiqueta": etiqueta,
+                    "descripcion": desc,
+                    "fabricante": mfr,
+                    "tipo": tipo,
+                    "prioridad": prioridad
                 })
 
-        # Incluir opción de simulación virtual para pruebas didácticas
+        # Ordenar: primero dispositivos USB CNC reales, luego genéricos, luego bluetooth
+        puertos_encontrados.sort(key=lambda x: (x["prioridad"], x["puerto"]))
+
+        # Opción de simulación virtual al final
         puertos_encontrados.append({
             "puerto": "SIMULADOR_VIRTUAL",
+            "etiqueta": "SIMULADOR VIRTUAL GRBL (Didáctico)",
             "descripcion": "Emulador Virtual GRBL v1.1 (Didáctico ESCOM)",
-            "fabricante": "IPN - ESCOM"
+            "fabricante": "IPN - ESCOM",
+            "tipo": "SIMULADOR",
+            "prioridad": 99
         })
         return puertos_encontrados
 
@@ -143,9 +196,12 @@ class ControladorGRBL:
             )
 
             # Esperar inicialización del microcontrolador (reinicio por DTR)
-            time.sleep(1.5)
-            self.puerto_serial.reset_input_buffer()
-            self.puerto_serial.reset_output_buffer()
+            time.sleep(0.6)
+            try:
+                self.puerto_serial.reset_input_buffer()
+                self.puerto_serial.reset_output_buffer()
+            except Exception:
+                pass
 
             self.modo_virtual = False
             self.esta_conectado = True
@@ -156,9 +212,11 @@ class ControladorGRBL:
 
             self._notificar_consola("c-system", f"[CONEXIÓN] Puerto {puerto} abierto exitosamente a {baudrate} baudios.")
 
-            # Enviar solicitud de configuración y modo modal
-            self.enviar_directo("$I\n")
-            self.enviar_directo("$G\n")
+            # Solicitar reporte de estado inmediato y configuración
+            try:
+                self.puerto_serial.write(b'?\n$I\n$G\n')
+            except Exception:
+                pass
             return True
 
         except Exception as e:

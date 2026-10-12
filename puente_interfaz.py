@@ -11,7 +11,7 @@ Responsabilidad:
 """
 
 import json
-from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QTimer
 from controlador_grbl import ControladorGRBL
 from procesador_gcode import ProcesadorGCode
 
@@ -38,6 +38,12 @@ class PuenteCNC(QObject):
         self.controlador.cb_progreso = self._al_actualizar_progreso
         self.controlador.cb_evento_error = self._al_ocurrir_error
 
+        # Monitoreo continuo de conexión/desconexión USB (Hot-Plug cada 1000 ms)
+        self._nombres_puertos_previos = []
+        self.temporizador_hotplug = QTimer(self)
+        self.temporizador_hotplug.timeout.connect(self._verificar_cambios_hotplug)
+        self.temporizador_hotplug.start(1000)
+
     # =========================================================================
     # DISPATCHERS DE CALLBACKS DE PYTHON A SEÑALES QT
     # =========================================================================
@@ -60,6 +66,32 @@ class PuenteCNC(QObject):
         info["codigo"] = codigo
         info["linea_cruda"] = linea_cruda
         self.senial_error_didactico.emit(json.dumps(info))
+
+    def _verificar_cambios_hotplug(self):
+        """Detecta automáticamente si se conecta o desconecta un cable USB CNC."""
+        puertos = self.controlador.escanear_puertos()
+        nombres = [p["puerto"] for p in puertos if p["puerto"] != "SIMULADOR_VIRTUAL"]
+
+        if nombres != self._nombres_puertos_previos:
+            nuevos = set(nombres) - set(self._nombres_puertos_previos)
+            removidos = set(self._nombres_puertos_previos) - set(nombres)
+            self._nombres_puertos_previos = list(nombres)
+
+            # Notificar al frontend con la lista actualizada
+            self.senial_puertos.emit(json.dumps(puertos))
+
+            for n in nuevos:
+                info = next((p for p in puertos if p["puerto"] == n), None)
+                if info:
+                    self.senial_consola.emit("c-system", f"[HOT-PLUG] Dispositivo detectado: {info['etiqueta']}.")
+                    # Conectar automáticamente si es un dispositivo USB CNC y no estamos en hardware real
+                    if info.get("tipo") == "USB_CNC" and (not self.controlador.esta_conectado or self.controlador.modo_virtual):
+                        self.conectar(info["puerto"], 115200)
+
+            for r in removidos:
+                self.senial_consola.emit("c-alarm", f"[HOT-PLUG] Dispositivo en {r} desconectado físicamente del equipo.")
+                if self.controlador.nombre_puerto == r:
+                    self.controlador.desconectar()
 
     # =========================================================================
     # SLOTS INVOCABLES DIRECTAMENTE DESDE JAVASCRIPT

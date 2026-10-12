@@ -93,13 +93,12 @@
       <!-- Serial Port Dropdown Pill -->
       <div class="status-pill pill-port" id="pill-serial-port">
         <span class="indicator-dot dot-connected" id="port-status-dot"></span>
-        <select class="port-select" id="select-com-port" title="Puerto y velocidad serial">
-          <option value="COM3:115200" selected>COM3 / 115200</option>
-          <option value="COM1:115200">COM1 / 115200</option>
-          <option value="COM4:115200">COM4 / 115200</option>
-          <option value="SIM:115200">GRBL Simulator (Virtual)</option>
+        <select class="port-select" id="select-com-port" title="Puerto COM detectado">
+          <option value="" disabled selected>Buscando puertos...</option>
         </select>
-        <i class="fa-solid fa-chevron-down pill-arrow"></i>
+        <button class="btn-refresh-port" id="btn-refresh-ports" type="button" title="Actualizar puertos COM">
+          <i class="fa-solid fa-arrows-rotate"></i>
+        </button>
       </div>
 
       <!-- Machine State Pill -->

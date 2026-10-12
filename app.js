@@ -67,6 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const elementos = {
     // Selector y estado de puertos seriales
     selectorPuertoCom: document.getElementById('select-com-port'),
+    botonRefrescarPuertos: document.getElementById('btn-refresh-ports'),
     puntoIndicadorPuerto: document.getElementById('port-status-dot'),
     // Pantalla DRO (Lectura Digital de Coordenadas)
     droValorX: document.getElementById('dro-val-x'),
@@ -186,19 +187,33 @@ document.addEventListener('DOMContentLoaded', () => {
     puente.senial_puertos.connect((jsonPuertos) => {
       try {
         const listaPuertos = JSON.parse(jsonPuertos);
+        const valorPrevio = elementos.selectorPuertoCom.value;
         elementos.selectorPuertoCom.innerHTML = '';
 
-        listaPuertos.forEach((p, idx) => {
+        let puertoSeleccionado = null;
+
+        listaPuertos.forEach((p) => {
           const opcion = document.createElement('option');
           opcion.value = p.puerto;
-          opcion.textContent = `${p.puerto} - ${p.descripcion}`;
-          if (idx === 0) opcion.selected = true;
+          opcion.textContent = p.etiqueta || `${p.puerto} - ${p.descripcion}`;
+
+          // Si el puerto previamente seleccionado sigue conectado, conservarlo
+          if (p.puerto === valorPrevio) {
+            opcion.selected = true;
+            puertoSeleccionado = p.puerto;
+          }
           elementos.selectorPuertoCom.appendChild(opcion);
         });
 
-        // Conectar al primer puerto o al simulador virtual disponible
-        if (listaPuertos.length > 0) {
-          conectarPuertoSeleccionado();
+        // Si no se conservó el puerto previo, priorizar el dispositivo USB CNC real
+        if (!puertoSeleccionado && listaPuertos.length > 0) {
+          const dispositivoCnc = listaPuertos.find(p => p.tipo === 'USB_CNC');
+          if (dispositivoCnc) {
+            elementos.selectorPuertoCom.value = dispositivoCnc.puerto;
+            conectarPuertoSeleccionado();
+          } else {
+            elementos.selectorPuertoCom.value = listaPuertos[0].puerto;
+          }
         }
       } catch (e) {
         console.error('Error al parsear lista de puertos:', e);
@@ -316,6 +331,29 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   elementos.selectorPuertoCom.addEventListener('change', conectarPuertoSeleccionado);
+
+  // Escaneo manual al hacer clic en el botón de refrescar
+  if (elementos.botonRefrescarPuertos) {
+    elementos.botonRefrescarPuertos.addEventListener('click', () => {
+      const icono = elementos.botonRefrescarPuertos.querySelector('i');
+      if (icono) icono.classList.add('fa-spin');
+      setTimeout(() => {
+        if (icono) icono.classList.remove('fa-spin');
+      }, 700);
+
+      if (window.puenteCNC) {
+        window.puenteCNC.escanearPuertos();
+        imprimirEnConsola('c-info', '[PUERTOS] Actualizando lista de puertos seriales...');
+      }
+    });
+  }
+
+  // Refrescar automáticamente al hacer clic en el menú desplegable para abrirlo
+  elementos.selectorPuertoCom.addEventListener('mousedown', () => {
+    if (window.puenteCNC) {
+      window.puenteCNC.escanearPuertos();
+    }
+  });
 
   // ==========================================
   // SINCRONIZACIÓN DE COORDENADAS Y PANTALLA DRO
@@ -481,11 +519,21 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================
   elementos.botonParoEmergencia.addEventListener('click', () => {
     if (window.puenteCNC) {
-      window.puenteCNC.paradaEmergencia();
+      if (estado.estadoOperativo === 'ALARM') {
+        window.puenteCNC.desbloquearAlarma();
+        imprimirEnConsola('c-info', '[DESBLOQUEO] Enviando comando $X para desbloquear alarma...');
+      } else {
+        window.puenteCNC.paradaEmergencia();
+      }
     } else {
-      establecerEstadoOperativo('ALARM');
-      detenerMecanizado();
-      imprimirEnConsola('c-error', '[EMERGENCIA] ¡PARADA E-STOP ACTIVADA!');
+      if (estado.estadoOperativo === 'ALARM') {
+        establecerEstadoOperativo('IDLE');
+        imprimirEnConsola('c-info', '[DESBLOQUEO] Alarma restablecida.');
+      } else {
+        establecerEstadoOperativo('ALARM');
+        detenerMecanizado();
+        imprimirEnConsola('c-error', '[EMERGENCIA] ¡PARADA E-STOP ACTIVADA!');
+      }
     }
   });
 
