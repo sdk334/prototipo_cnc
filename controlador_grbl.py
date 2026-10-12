@@ -748,119 +748,142 @@ class ControladorGRBL:
         con interpolación geométrica continua y actualización de coordenadas en tiempo real
         para que la punta de la herramienta se desplace visiblemente por el lienzo gráfico.
         """
-        total = self._total_lineas_programa
+        with self._bloque_lock:
+            lineas = list(self._cola_lineas)
+            total = len(lineas)
+
+        if total == 0:
+            self._en_ejecucion_gcode = False
+            return
+
         self.estado_maquina["estado"] = "RUN"
         velocidad_avance_actual = 800.0  # mm/min por defecto
         modo_movimiento_actual = "G0"
+        fue_cancelado = False
 
-        for idx in range(1, total + 1):
-            if not self._en_ejecucion_gcode or self._detener_hilos:
-                break
+        try:
+            for idx, linea in enumerate(lineas, start=1):
+                if not self._en_ejecucion_gcode or self._detener_hilos:
+                    fue_cancelado = True
+                    break
 
-            while self._en_pausa_gcode and self._en_ejecucion_gcode:
-                time.sleep(0.1)
+                while self._en_pausa_gcode and self._en_ejecucion_gcode:
+                    time.sleep(0.1)
 
-            linea = self._cola_lineas[idx - 1]
-            self._notificar_consola("c-ok", f"{idx}: {linea}")
+                if not self._en_ejecucion_gcode or self._detener_hilos:
+                    fue_cancelado = True
+                    break
 
-            linea_limpia = re.sub(r"\(.*?\)", "", linea).split(";")[0].strip().upper()
+                self._notificar_consola("c-ok", f"{idx}: {linea}")
 
-            # Detectar comando modal F (velocidad de avance)
-            match_f = re.search(r"F(\d+(?:\.\d+)?)", linea_limpia)
-            if match_f:
-                velocidad_avance_actual = max(1.0, float(match_f.group(1)))
+                linea_limpia = re.sub(r"\(.*?\)", "", linea).split(";")[0].strip().upper()
 
-            # Detectar encendido / apagado de husillo (M3/M03 y M5/M05)
-            if re.search(r"\bM0?3\b", linea_limpia):
-                self.estado_maquina["spindle_encendido"] = True
-                match_s = re.search(r"S(\d+(?:\.\d+)?)", linea_limpia)
-                rpm = float(match_s.group(1)) if match_s else 12000.0
-                self.estado_maquina["spindle_real"] = rpm
-            elif re.search(r"\bM0?5\b", linea_limpia):
-                self.estado_maquina["spindle_encendido"] = False
-                self.estado_maquina["spindle_real"] = 0.0
+                # Detectar comando modal F (velocidad de avance)
+                match_f = re.search(r"F(\d+(?:\.\d+)?)", linea_limpia)
+                if match_f:
+                    velocidad_avance_actual = max(1.0, float(match_f.group(1)))
 
-            # Modal de movimiento
-            if re.search(r"\bG00?\b", linea_limpia):
-                modo_movimiento_actual = "G0"
-            elif re.search(r"\bG0?1\b", linea_limpia):
-                modo_movimiento_actual = "G1"
-            elif re.search(r"\bG0?[23]\b", linea_limpia):
-                modo_movimiento_actual = "G1"
+                # Detectar encendido / apagado de husillo (M3/M03 y M5/M05)
+                if re.search(r"\bM0?3\b", linea_limpia):
+                    self.estado_maquina["spindle_encendido"] = True
+                    match_s = re.search(r"S(\d+(?:\.\d+)?)", linea_limpia)
+                    rpm = float(match_s.group(1)) if match_s else 12000.0
+                    self.estado_maquina["spindle_real"] = rpm
+                elif re.search(r"\bM0?5\b", linea_limpia):
+                    self.estado_maquina["spindle_encendido"] = False
+                    self.estado_maquina["spindle_real"] = 0.0
 
-            # Posición actual de inicio del segmento
-            x_ini = float(self.estado_maquina["wpos"][0])
-            y_ini = float(self.estado_maquina["wpos"][1])
-            z_ini = float(self.estado_maquina["wpos"][2])
+                # Modal de movimiento
+                if re.search(r"\bG00?\b", linea_limpia):
+                    modo_movimiento_actual = "G0"
+                elif re.search(r"\bG0?1\b", linea_limpia):
+                    modo_movimiento_actual = "G1"
+                elif re.search(r"\bG0?[23]\b", linea_limpia):
+                    modo_movimiento_actual = "G1"
 
-            # Coordenadas objetivo extraídas de la línea
-            match_x = re.search(r"X([-+]?\d*\.?\d+)", linea_limpia)
-            match_y = re.search(r"Y([-+]?\d*\.?\d+)", linea_limpia)
-            match_z = re.search(r"Z([-+]?\d*\.?\d+)", linea_limpia)
+                # Posición actual de inicio del segmento
+                x_ini = float(self.estado_maquina["wpos"][0])
+                y_ini = float(self.estado_maquina["wpos"][1])
+                z_ini = float(self.estado_maquina["wpos"][2])
 
-            x_fin = float(match_x.group(1)) if match_x else x_ini
-            y_fin = float(match_y.group(1)) if match_y else y_ini
-            z_fin = float(match_z.group(1)) if match_z else z_ini
+                # Coordenadas objetivo extraídas de la línea
+                match_x = re.search(r"X([-+]?\d*\.?\d+)", linea_limpia)
+                match_y = re.search(r"Y([-+]?\d*\.?\d+)", linea_limpia)
+                match_z = re.search(r"Z([-+]?\d*\.?\d+)", linea_limpia)
 
-            # Distancia euclidiana en mm
-            dx = x_fin - x_ini
-            dy = y_fin - y_ini
-            dz = z_fin - z_ini
-            distancia = math.sqrt(dx * dx + dy * dy + dz * dz)
+                x_fin = float(match_x.group(1)) if match_x else x_ini
+                y_fin = float(match_y.group(1)) if match_y else y_ini
+                z_fin = float(match_z.group(1)) if match_z else z_ini
 
-            es_rapido = (modo_movimiento_actual == "G0")
-            override_mult = getattr(self, "feed_override", 1.0)
-            vel_base = 2500.0 if es_rapido else velocidad_avance_actual
-            vel = vel_base * override_mult
-            self.estado_maquina["feed_real"] = vel
+                # Distancia euclidiana en mm
+                dx = x_fin - x_ini
+                dy = y_fin - y_ini
+                dz = z_fin - z_ini
+                distancia = math.sqrt(dx * dx + dy * dy + dz * dz)
 
-            if distancia > 0.01:
-                # Duración física del movimiento (con límites pedagógicos adecuados)
-                tiempo_fisico = distancia / (vel / 60.0) if vel > 0 else 0.1
-                tiempo_segmento = max(0.035, min(2.0, tiempo_fisico))
-                dt = 0.035  # Paso de interpolación (~28 FPS)
-                pasos = max(1, int(tiempo_segmento / dt))
+                es_rapido = (modo_movimiento_actual == "G0")
+                override_mult = getattr(self, "feed_override", 1.0)
+                vel_base = 2500.0 if es_rapido else velocidad_avance_actual
+                vel = vel_base * override_mult
+                self.estado_maquina["feed_real"] = vel
 
-                for paso in range(1, pasos + 1):
-                    if not self._en_ejecucion_gcode or self._detener_hilos:
-                        break
-                    while self._en_pausa_gcode and self._en_ejecucion_gcode:
-                        time.sleep(0.1)
+                if distancia > 0.01:
+                    # Duración física del movimiento (con límites pedagógicos adecuados)
+                    tiempo_fisico = distancia / (vel / 60.0) if vel > 0 else 0.1
+                    tiempo_segmento = max(0.035, min(2.0, tiempo_fisico))
+                    dt = 0.035  # Paso de interpolación (~28 FPS)
+                    pasos = max(1, int(tiempo_segmento / dt))
 
-                    fraccion = paso / pasos
-                    self.estado_maquina["wpos"][0] = round(x_ini + dx * fraccion, 3)
-                    self.estado_maquina["wpos"][1] = round(y_ini + dy * fraccion, 3)
-                    self.estado_maquina["wpos"][2] = round(z_ini + dz * fraccion, 3)
-                    self.estado_maquina["mpos"] = list(self.estado_maquina["wpos"])
+                    for paso in range(1, pasos + 1):
+                        if not self._en_ejecucion_gcode or self._detener_hilos:
+                            fue_cancelado = True
+                            break
+                        while self._en_pausa_gcode and self._en_ejecucion_gcode:
+                            time.sleep(0.1)
 
-                    # Re-evaluar override en tiempo real
-                    ov_actual = getattr(self, "feed_override", 1.0)
-                    self.estado_maquina["feed_real"] = vel_base * ov_actual
+                        fraccion = paso / pasos
+                        self.estado_maquina["wpos"][0] = round(x_ini + dx * fraccion, 3)
+                        self.estado_maquina["wpos"][1] = round(y_ini + dy * fraccion, 3)
+                        self.estado_maquina["wpos"][2] = round(z_ini + dz * fraccion, 3)
+                        self.estado_maquina["mpos"] = list(self.estado_maquina["wpos"])
 
+                        # Re-evaluar override en tiempo real
+                        ov_actual = getattr(self, "feed_override", 1.0)
+                        self.estado_maquina["feed_real"] = vel_base * ov_actual
+
+                        if self.cb_estado_actualizado:
+                            self.cb_estado_actualizado(dict(self.estado_maquina))
+
+                        # dt adaptativo según el override para acelerar o frenar de inmediato
+                        time.sleep(max(0.008, dt / max(0.1, ov_actual)))
+                else:
+                    # Comandos sin movimiento físico (M3, M5, G21, G90, etc.)
                     if self.cb_estado_actualizado:
                         self.cb_estado_actualizado(dict(self.estado_maquina))
+                    time.sleep(0.02)
 
-                    # dt adaptativo según el override para acelerar o frenar de inmediato
-                    time.sleep(max(0.008, dt / max(0.1, ov_actual)))
-            else:
-                # Comandos sin movimiento físico (M3, M5, G21, G90, etc.)
-                if self.cb_estado_actualizado:
-                    self.cb_estado_actualizado(dict(self.estado_maquina))
-                time.sleep(0.02)
+                pct = round((idx / total) * 100.0, 1)
+                segundos = int(time.time() - self._tiempo_inicio_ejecucion)
+                tiempo_str = f"{segundos // 60:02d}:{segundos % 60:02d}"
 
-            pct = round((idx / total) * 100.0, 1)
-            segundos = int(time.time() - self._tiempo_inicio_ejecucion)
-            tiempo_str = f"{segundos // 60:02d}:{segundos % 60:02d}"
+                if self.cb_progreso:
+                    self.cb_progreso(idx, total, pct, tiempo_str)
 
-            if self.cb_progreso:
-                self.cb_progreso(idx, total, pct, tiempo_str)
+        except Exception as e:
+            self._notificar_consola("c-alarm", f"[ERROR EJECUCIÓN] {str(e)}")
+            fue_cancelado = True
 
-        self.estado_maquina["estado"] = "IDLE"
-        self.estado_maquina["feed_real"] = 0.0
         self._en_ejecucion_gcode = False
-        if self.cb_estado_actualizado:
-            self.cb_estado_actualizado(dict(self.estado_maquina))
-        self._notificar_consola("c-system", "[PROGRAMA] Simulación virtual finalizada exitosamente.")
+        self.estado_maquina["feed_real"] = 0.0
+
+        if not fue_cancelado and self.estado_maquina.get("estado") != "ALARM":
+            self.estado_maquina["estado"] = "IDLE"
+            if self.cb_estado_actualizado:
+                self.cb_estado_actualizado(dict(self.estado_maquina))
+            self._notificar_consola("c-system", "[PROGRAMA] Simulación virtual finalizada exitosamente.")
+        else:
+            if self.cb_estado_actualizado:
+                self.cb_estado_actualizado(dict(self.estado_maquina))
 
     # =========================================================================
     # AUXILIARES DE NOTIFICACIÓN
