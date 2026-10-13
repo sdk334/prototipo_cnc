@@ -1550,7 +1550,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const ANCHO_ORIGINAL = 340; // Ancho original estándar de la interfaz
     const ANCHO_MAX = 340;      // Límite estricto: NO permitir mover el panel más a la izquierda del tamaño original
-    const ANCHO_MIN = 220;      // Límite compacto al ajustar hacia la derecha
+    const ANCHO_MIN = 250;      // Límite compacto al ajustar hacia la derecha
 
     // Cargar ancho guardado en almacenamiento local (siempre restringido entre ANCHO_MIN y ANCHO_MAX)
     let anchoActual = parseFloat(localStorage.getItem('cnc_sidebar_width')) || ANCHO_ORIGINAL;

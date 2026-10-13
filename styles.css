@@ -433,6 +433,7 @@ body {
   height: 100%;
   overflow: hidden;
   min-width: 260px;
+  min-height: 0;
 }
 
 /* ==========================================================================
@@ -513,8 +514,8 @@ body.resizing-col * {
    4. VISUALIZER 2D/3D (CANVAS)
    ========================================================================== */
 .visualizer-container {
-  flex: 1;
-  min-height: 280px;
+  flex: 1 1 0;
+  min-height: 180px;
   background-color: #0b0d0f;
   border: 1px solid var(--border-color);
   border-radius: 4px;
@@ -525,10 +526,11 @@ body.resizing-col * {
 }
 
 .canvas-wrapper {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   position: relative;
   width: 100%;
-  height: 100%;
+  height: auto;
 }
 
 #cnc-canvas {
@@ -854,8 +856,13 @@ body.resizing-col * {
   padding: 6px 12px;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   height: 38px;
+  min-height: 38px;
+  max-height: 38px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 20;
 }
 
 .viz-btn-group {
@@ -929,6 +936,8 @@ body.resizing-col * {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   height: 250px;
+  min-height: 250px;
+  flex-shrink: 0;
 }
 
 .panel-box {
@@ -1152,6 +1161,8 @@ body.resizing-col * {
   justify-content: space-between;
   align-items: center;
   font-size: 11px;
+  gap: 4px;
+  white-space: nowrap;
 }
 
 .tele-label {
@@ -1270,7 +1281,7 @@ body.resizing-col * {
   overflow-y: auto;
   overflow-x: hidden;
   padding-left: 4px;
-  min-width: 240px;
+  min-width: 250px;
   max-width: 340px;
 }
 
@@ -1478,42 +1489,45 @@ body.resizing-col * {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  margin: 10px 0;
+  gap: 22px;
+  margin: 12px 0;
 }
 
 .dpad-xy {
   display: grid;
-  grid-template-columns: 36px 36px 36px;
-  grid-template-rows: 36px 36px 36px;
-  gap: 4px;
+  grid-template-columns: 42px 42px 42px;
+  grid-template-rows: 42px 42px 42px;
+  gap: 8px;
 }
 
 .dpad-z {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
+  align-items: center;
 }
 
 .jog-btn {
   background-color: var(--bg-card);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
-  border-radius: 4px;
+  border-radius: 6px;
   font-family: var(--font-display);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.1s, transform 0.05s, border-color 0.1s;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
+  transition: background-color 0.12s ease, transform 0.08s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
 .jog-btn:hover {
   background-color: var(--bg-hover);
   border-color: var(--cyan-primary);
   color: var(--cyan-primary);
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.2);
 }
 
 .jog-btn:active {
@@ -1522,8 +1536,10 @@ body.resizing-col * {
 }
 
 .dpad-z .jog-btn {
-  width: 38px;
-  height: 36px;
+  width: 44px;
+  height: 42px;
+  gap: 2px;
+  font-size: 12px;
 }
 
 .dpad-center-label, .dpad-z-label {
@@ -1533,25 +1549,37 @@ body.resizing-col * {
   color: var(--text-subtle);
   font-family: var(--font-mono);
   font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.dpad-z-label {
+  height: 42px;
 }
 
 /* Increments */
 .jog-increments-row {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
-  margin: 8px 0;
+  gap: 6px;
+  margin: 10px 0;
 }
 
 .step-btn {
   background-color: var(--bg-card);
   border: 1px solid var(--border-color);
   color: var(--text-muted);
-  padding: 5px 0;
-  border-radius: 3px;
+  padding: 6px 0;
+  border-radius: 4px;
   font-family: var(--font-mono);
   font-size: 11px;
   cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.step-btn:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text-primary);
 }
 
 .step-btn.active {
@@ -1559,7 +1587,7 @@ body.resizing-col * {
   border-color: var(--cyan-primary);
   color: #0c1c13;
   font-weight: 700;
-  box-shadow: 0 0 8px var(--cyan-glow);
+  box-shadow: 0 0 10px var(--cyan-glow);
 }
 
 /* Speed Slider */
