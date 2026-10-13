@@ -1514,6 +1514,134 @@ document.addEventListener('DOMContentLoaded', () => {
   // Monitoreo y sincronización de límites físicos de la máquina
   configurarMonitoreoLimites();
 
+  // ==========================================
+  // REDIMENSIONAMIENTO DEL PANEL LATERAL DERECHO
+  // ==========================================
+  function inicializarRedimensionamientoSidebar() {
+    const resizer = document.getElementById('sidebar-resizer');
+    const workspace = document.querySelector('.app-workspace');
+    const sidebar = document.getElementById('main-sidebar');
+    const btnToggle = document.getElementById('btn-toggle-sidebar');
+    const iconToggle = document.getElementById('icon-toggle-sidebar');
+    if (!resizer || !workspace || !sidebar) return;
+
+    const ANCHO_MIN = 240; // Límite para que DRO y Jog quepan holgadamente
+    const ANCHO_DEFECTO = 320;
+
+    function obtenerAnchoMax() {
+      return Math.min(650, Math.floor(window.innerWidth * 0.55));
+    }
+
+    // Cargar ancho guardado en almacenamiento local
+    let anchoActual = parseFloat(localStorage.getItem('cnc_sidebar_width')) || ANCHO_DEFECTO;
+    if (anchoActual < ANCHO_MIN) anchoActual = ANCHO_MIN;
+    if (anchoActual > obtenerAnchoMax()) anchoActual = obtenerAnchoMax();
+
+    let colapsado = localStorage.getItem('cnc_sidebar_collapsed') === 'true';
+
+    function aplicarDimensiones(ancho, guardar = true) {
+      workspace.style.setProperty('--sidebar-width', `${Math.round(ancho)}px`);
+      if (guardar) localStorage.setItem('cnc_sidebar_width', Math.round(ancho));
+      if (window.visualizadorCNC) {
+        window.visualizadorCNC.redimensionarLienzo();
+      }
+    }
+
+    function aplicarEstadoColapso(estaColapsado, guardar = true) {
+      if (estaColapsado) {
+        workspace.classList.add('sidebar-collapsed');
+        if (iconToggle) iconToggle.className = 'fa-solid fa-chevron-left';
+        if (btnToggle) btnToggle.title = 'Mostrar panel lateral';
+      } else {
+        workspace.classList.remove('sidebar-collapsed');
+        if (iconToggle) iconToggle.className = 'fa-solid fa-chevron-right';
+        if (btnToggle) btnToggle.title = 'Ocultar panel lateral';
+      }
+      if (guardar) localStorage.setItem('cnc_sidebar_collapsed', estaColapsado ? 'true' : 'false');
+      if (window.visualizadorCNC) {
+        window.visualizadorCNC.redimensionarLienzo();
+      }
+    }
+
+    // Inicializar estado previo
+    aplicarDimensiones(anchoActual, false);
+    if (colapsado) aplicarEstadoColapso(true, false);
+
+    // Toggle de colapso rápido mediante el botón en el divisor
+    if (btnToggle) {
+      btnToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        colapsado = !workspace.classList.contains('sidebar-collapsed');
+        aplicarEstadoColapso(colapsado, true);
+      });
+    }
+
+    // Arrastre manual para ajustar el tamaño del panel hacia la derecha o izquierda
+    let arrastrando = false;
+    let xInicial = 0;
+    let anchoInicial = anchoActual;
+
+    resizer.addEventListener('mousedown', (e) => {
+      // Ignorar si el clic fue en el botón de toggle
+      if (e.target.closest('#btn-toggle-sidebar')) return;
+
+      e.preventDefault();
+      // Si estaba colapsado, restaurarlo primero
+      if (workspace.classList.contains('sidebar-collapsed')) {
+        aplicarEstadoColapso(false, true);
+      }
+
+      arrastrando = true;
+      resizer.classList.add('is-dragging');
+      document.body.classList.add('resizing-col');
+      xInicial = e.clientX;
+      anchoInicial = sidebar.getBoundingClientRect().width;
+
+      const alMoverMouse = (evento) => {
+        if (!arrastrando) return;
+        // Al arrastrar el ratón a la derecha, la cota X aumenta, por lo que el ancho debe disminuir
+        const delta = xInicial - evento.clientX;
+        let nuevoAncho = anchoInicial + delta;
+
+        const maximo = obtenerAnchoMax();
+        if (nuevoAncho < ANCHO_MIN) nuevoAncho = ANCHO_MIN;
+        if (nuevoAncho > maximo) nuevoAncho = maximo;
+
+        aplicarDimensiones(nuevoAncho, false);
+      };
+
+      const alSoltarMouse = () => {
+        if (!arrastrando) return;
+        arrastrando = false;
+        resizer.classList.remove('is-dragging');
+        document.body.classList.remove('resizing-col');
+        window.removeEventListener('mousemove', alMoverMouse);
+        window.removeEventListener('mouseup', alSoltarMouse);
+
+        const anchoFinal = sidebar.getBoundingClientRect().width;
+        aplicarDimensiones(anchoFinal, true);
+      };
+
+      window.addEventListener('mousemove', alMoverMouse);
+      window.addEventListener('mouseup', alSoltarMouse);
+    });
+
+    // Doble clic en la barra para alternar rápidamente entre tamaño compacto (250px) y estándar (340px)
+    resizer.addEventListener('dblclick', (e) => {
+      if (e.target.closest('#btn-toggle-sidebar')) return;
+      if (workspace.classList.contains('sidebar-collapsed')) {
+        aplicarEstadoColapso(false, true);
+        return;
+      }
+      const anchoActualPx = sidebar.getBoundingClientRect().width;
+      const nuevoAncho = (anchoActualPx <= 270) ? 340 : 250;
+      aplicarDimensiones(nuevoAncho, true);
+    });
+  }
+
+  // Inicializar divisor ajustable del panel lateral
+  inicializarRedimensionamientoSidebar();
+
   // Inicializar puente PyQt6
   inicializarPuentePyQt();
 });
