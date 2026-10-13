@@ -909,6 +909,18 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    // Comprobación de límites físicos de la máquina CNC ($130, $131, $132)
+    if (window.visualizadorCNC && window.visualizadorCNC.estadoLimites && window.visualizadorCNC.estadoLimites.hayDesbordamiento) {
+      const confirmacion = confirm(
+        '⚠️ ADVERTENCIA DE SEGURIDAD (Soft Limits):\n\n' +
+        'El archivo G-code sobrepasa el área física de trabajo de la máquina:\n' +
+        window.visualizadorCNC.estadoLimites.mensaje + '\n\n' +
+        'Si inicia el trabajo, la máquina activará una Alarma 2 (Soft Limit) o el carro mecánico colisionará con los topes de carrera.\n\n' +
+        '¿Desea continuar de todos modos?'
+      );
+      if (!confirmacion) return;
+    }
+
     estado.enEjecucion = true;
     estado.enPausa = false;
     establecerEstadoOperativo('RUN');
@@ -1048,8 +1060,28 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
   });
   elementos.botonGuardarConfiguracion.addEventListener('click', () => {
+    // 1. Guardar dimensiones físicas útiles de la máquina ($130, $131, $132)
+    const travelX = parseFloat(document.getElementById('cfg-travel-x')?.value) || 300.0;
+    const travelY = parseFloat(document.getElementById('cfg-travel-y')?.value) || 200.0;
+    const travelZ = parseFloat(document.getElementById('cfg-travel-z')?.value) || 60.0;
+
+    localStorage.setItem('cnc_travel_x', travelX);
+    localStorage.setItem('cnc_travel_y', travelY);
+    localStorage.setItem('cnc_travel_z', travelZ);
+
+    if (window.visualizadorCNC) {
+      window.visualizadorCNC.establecerLimitesMaquina(travelX, travelY, travelZ);
+    }
+
+    // Si hay conexión con puente o GRBL, enviar parámetros $130, $131, $132
+    if (window.puenteCNC) {
+      window.puenteCNC.enviarMDI(`$130=${travelX.toFixed(1)}`);
+      window.puenteCNC.enviarMDI(`$131=${travelY.toFixed(1)}`);
+      window.puenteCNC.enviarMDI(`$132=${travelZ.toFixed(1)}`);
+    }
+
     elementos.modalConfiguracion.classList.add('hidden');
-    imprimirEnConsola('c-info', '[CONFIG] Parámetros guardados correctamente.');
+    imprimirEnConsola('c-info', `[CONFIG] Parámetros guardados. Área útil CNC: ${travelX} × ${travelY} × ${travelZ} mm.`);
     if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
   });
 
@@ -1361,6 +1393,58 @@ document.addEventListener('DOMContentLoaded', () => {
     window.visualizadorCNC.cargarTrayectoriaDesdeGCode(estado.lineasPrograma.map(l => l.texto).join('\n'));
   }
 
+  // Monitoreo y sincronización de límites físicos de la máquina
+  configurarMonitoreoLimites();
+
   // Inicializar puente PyQt6
   inicializarPuentePyQt();
 });
+
+// ==========================================
+// MONITOREO Y CONFIGURACIÓN DE LÍMITES CNC
+// ==========================================
+function configurarMonitoreoLimites() {
+  const banner = document.getElementById('banner-limites-maquina');
+  const lblDetalle = document.getElementById('lbl-limites-detalle');
+  const btnCerrar = document.getElementById('btn-cerrar-alerta-limites');
+  const filaLeyendaExceso = document.getElementById('legend-row-exceso');
+
+  if (btnCerrar && banner) {
+    btnCerrar.addEventListener('click', () => {
+      banner.classList.add('hidden');
+    });
+  }
+
+  if (window.visualizadorCNC) {
+    window.visualizadorCNC.alertaLimitesCallback = (estadoLimites) => {
+      if (!banner || !lblDetalle) return;
+
+      if (estadoLimites.hayDesbordamiento) {
+        banner.classList.remove('hidden');
+        const lim = window.visualizadorCNC.limitesMaquina;
+        const minP = estadoLimites.minPieza;
+        const maxP = estadoLimites.maxPieza;
+        lblDetalle.textContent = `Pieza: X[${minP.x.toFixed(1)}..${maxP.x.toFixed(1)}] Y[${minP.y.toFixed(1)}..${maxP.y.toFixed(1)}] mm | Máquina: ${lim.maxX} × ${lim.maxY} mm | ${estadoLimites.mensaje}`;
+        if (filaLeyendaExceso) filaLeyendaExceso.style.display = 'flex';
+        imprimirEnConsola('c-alarm', `[ALERTA DE LÍMITES] ¡El modelo sobrepasa el área física de trabajo de la máquina! ${estadoLimites.mensaje}`);
+      } else {
+        banner.classList.add('hidden');
+        if (filaLeyendaExceso) filaLeyendaExceso.style.display = 'none';
+      }
+    };
+
+    // Cargar límites almacenados previamente o usar los por defecto ($130=300, $131=200, $132=60)
+    const guardadoX = parseFloat(localStorage.getItem('cnc_travel_x')) || 300.0;
+    const guardadoY = parseFloat(localStorage.getItem('cnc_travel_y')) || 200.0;
+    const guardadoZ = parseFloat(localStorage.getItem('cnc_travel_z')) || 60.0;
+
+    const inputX = document.getElementById('cfg-travel-x');
+    const inputY = document.getElementById('cfg-travel-y');
+    const inputZ = document.getElementById('cfg-travel-z');
+    if (inputX) inputX.value = guardadoX.toFixed(3);
+    if (inputY) inputY.value = guardadoY.toFixed(3);
+    if (inputZ) inputZ.value = guardadoZ.toFixed(3);
+
+    window.visualizadorCNC.establecerLimitesMaquina(guardadoX, guardadoY, guardadoZ);
+  }
+}

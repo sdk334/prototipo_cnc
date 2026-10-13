@@ -597,6 +597,110 @@ body {
 
 .legend-symbol.icon-tool { color: var(--gold-tool); font-size: 12px; }
 .legend-symbol.icon-origin { color: var(--cyan-primary); font-size: 10px; }
+.legend-symbol.icon-bed {
+  width: 14px;
+  height: 10px;
+  border: 1.5px solid rgba(0, 229, 255, 0.7);
+  background: rgba(0, 229, 255, 0.15);
+  border-radius: 2px;
+  display: inline-block;
+}
+.legend-line.line-cut-oob {
+  background-color: #ff3b30;
+  box-shadow: 0 0 6px rgba(255, 59, 48, 0.8);
+}
+
+/* Banner de Alerta de Límites de la Máquina */
+.out-of-bounds-banner {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: linear-gradient(135deg, rgba(38, 12, 16, 0.96), rgba(26, 8, 10, 0.98));
+  border: 1.5px solid #ff3b30;
+  border-radius: 8px;
+  padding: 10px 16px;
+  box-shadow: 0 8px 30px rgba(255, 59, 48, 0.35), 0 0 0 1px rgba(255, 59, 48, 0.2);
+  backdrop-filter: blur(8px);
+  animation: pulse-border-oob 2s infinite ease-in-out;
+  max-width: 90%;
+  pointer-events: auto;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.out-of-bounds-banner.hidden {
+  display: none !important;
+}
+
+.oob-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.oob-icon {
+  color: #ff3b30;
+  font-size: 24px;
+  animation: bounce-alert 1s infinite alternate ease-in-out;
+}
+
+.oob-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.oob-title {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  color: #ff453a;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.oob-desc {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #f5c2c7;
+  word-break: break-all;
+}
+
+.oob-close-btn {
+  background: transparent;
+  border: none;
+  color: #ff858d;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.oob-close-btn:hover {
+  color: #ffffff;
+  background-color: rgba(255, 59, 48, 0.3);
+}
+
+@keyframes pulse-border-oob {
+  0%, 100% {
+    box-shadow: 0 6px 20px rgba(255, 59, 48, 0.3), 0 0 0 1px rgba(255, 59, 48, 0.2);
+  }
+  50% {
+    box-shadow: 0 8px 30px rgba(255, 59, 48, 0.55), 0 0 12px rgba(255, 59, 48, 0.4);
+  }
+}
+
+@keyframes bounce-alert {
+  0% { transform: scale(1); }
+  100% { transform: scale(1.15); }
+}
 
 /* Overlays Inferiores de Canvas */
 .overlay-bottom-left, .overlay-bottom-right {

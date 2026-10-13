@@ -197,11 +197,30 @@
             <i class="fa-solid fa-circle-dot legend-symbol icon-origin"></i>
             <span class="legend-text">Origen WCS</span>
           </div>
+          <div class="legend-row">
+            <span class="legend-symbol icon-bed"></span>
+            <span class="legend-text">Mesa Máquina</span>
+          </div>
+          <div class="legend-row" id="legend-row-exceso" style="display: none;">
+            <span class="legend-line line-cut-oob"></span>
+            <span class="legend-text" style="color: #ff3b30; font-weight: bold;">Exceso Límites</span>
+          </div>
         </div>
 
         <!-- HTML5 Interactive Canvas -->
         <div class="canvas-wrapper">
           <canvas id="cnc-canvas"></canvas>
+          <!-- Banner de alerta por desbordamiento de límites de la máquina -->
+          <div class="out-of-bounds-banner hidden" id="banner-limites-maquina">
+            <div class="oob-content">
+              <i class="fa-solid fa-triangle-exclamation oob-icon"></i>
+              <div class="oob-text">
+                <span class="oob-title">¡ALERTA DE LÍMITES CNC! El modelo sobrepasa el área física de trabajo</span>
+                <span class="oob-desc" id="lbl-limites-detalle">Pieza: [0 a 0 mm] | Límite Máquina ($130/$131): 300 × 200 mm</span>
+              </div>
+            </div>
+            <button class="oob-close-btn" id="btn-cerrar-alerta-limites" type="button" title="Ocultar advertencia">&times;</button>
+          </div>
         </div>
 
         <!-- Canvas Bottom-Left Overlay -->
@@ -596,15 +615,15 @@
               </div>
               <div class="form-group">
                 <label>$130 - Recorrido Máx X (mm):</label>
-                <input type="number" class="form-control" value="300.000">
+                <input type="number" class="form-control" id="cfg-travel-x" value="300.000" step="0.1" min="10">
               </div>
               <div class="form-group">
                 <label>$131 - Recorrido Máx Y (mm):</label>
-                <input type="number" class="form-control" value="200.000">
+                <input type="number" class="form-control" id="cfg-travel-y" value="200.000" step="0.1" min="10">
               </div>
               <div class="form-group">
                 <label>$132 - Recorrido Máx Z (mm):</label>
-                <input type="number" class="form-control" value="60.000">
+                <input type="number" class="form-control" id="cfg-travel-z" value="60.000" step="0.1" min="10">
               </div>
             </div>
           </div>

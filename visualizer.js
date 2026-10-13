@@ -41,6 +41,22 @@ class VisualizadorCNC {
     this.limitesMaterial = null;
     this.limitesZ = { minZ: -1.0, maxZ: 5.0 };
     this.mostrarCuadricula = true;
+
+    // Dimensiones físicas del área de trabajo de la máquina ($130, $131, $132)
+    this.limitesMaquina = {
+      maxX: 300.0,
+      maxY: 200.0,
+      maxZ: 60.0
+    };
+    this.estadoLimites = {
+      hayDesbordamiento: false,
+      minPieza: { x: 0, y: 0, z: 0 },
+      maxPieza: { x: 0, y: 0, z: 0 },
+      ejesExcedidos: [],
+      mensaje: ''
+    };
+    this.alertaLimitesCallback = null;
+
     this.cargarTrayectoriaEjemplo();
 
     this.redibujadoPendiente = false;
@@ -725,6 +741,7 @@ class VisualizadorCNC {
     }
 
     this.trayectoria = nuevaTrayectoria;
+    this.evaluarLimitesPieza();
 
     if (minCorteX !== Infinity && maxCorteX !== -Infinity) {
       this.limitesMaterial = {
@@ -755,6 +772,7 @@ class VisualizadorCNC {
   establecerSegmentosTrayectoria(segmentos, envolvente = null) {
     if (Array.isArray(segmentos) && segmentos.length > 0) {
       this.trayectoria = segmentos;
+      this.evaluarLimitesPieza();
       if (envolvente && envolvente.min && envolvente.max) {
         this.limitesMaterial = {
           minX: Math.max(0, envolvente.min.X - 15),
@@ -781,11 +799,13 @@ class VisualizadorCNC {
     ctx.fillStyle = '#0a0c0e';
     ctx.fillRect(0, 0, this.anchoPantalla, this.altoPantalla);
 
+    this.dibujarMesaMaquina(ctx);
     this.dibujarCuadricula(ctx);
     this.dibujarMaterial(ctx);
     this.dibujarTrayectorias(ctx);
     this.dibujarOrigenWCS(ctx);
     this.dibujarRetículaHerramienta(ctx);
+    this.dibujarAlertaLimitesOverlay(ctx);
   }
 
   // Cuadrícula milimétrica y micrométrica adaptativa según nivel de magnificación
@@ -1071,10 +1091,15 @@ class VisualizadorCNC {
       ctx.stroke();
     }
 
-    // 3. Trayectorias de corte G1/G2/G3 (líneas continuas cian con grosor nítido escalado)
-    ctx.strokeStyle = '#00e5ff';
+    // 3. Trayectorias de corte G1/G2/G3
     ctx.lineWidth = Math.min(3.2, Math.max(1.4, 1.8 * Math.pow(this.zoom, 0.12)));
     ctx.setLineDash([]);
+
+    const maxX = this.limitesMaquina.maxX;
+    const maxY = this.limitesMaquina.maxY;
+
+    // 3a. Segmentos DENTRO de los límites de la máquina (Cian de corte normal)
+    ctx.strokeStyle = '#00e5ff';
     if (this.trayectoria.length < 1200 && this.zoom < 10) {
       ctx.shadowColor = 'rgba(0, 229, 255, 0.45)';
       ctx.shadowBlur = 4;
@@ -1083,18 +1108,45 @@ class VisualizadorCNC {
     }
 
     ctx.beginPath();
-    let hayG1 = false;
+    let hayG1Dentro = false;
     for (let i = 0; i < this.trayectoria.length; i++) {
       const seg = this.trayectoria[i];
       if (seg.tipo !== 'G0') {
-        const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
-        const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        hayG1 = true;
+        const esOOB = (seg.x1 < 0 || seg.x1 > maxX || seg.x2 < 0 || seg.x2 > maxX ||
+                       seg.y1 < 0 || seg.y1 > maxY || seg.y2 < 0 || seg.y2 > maxY);
+        if (!esOOB) {
+          const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+          const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          hayG1Dentro = true;
+        }
       }
     }
-    if (hayG1) ctx.stroke();
+    if (hayG1Dentro) ctx.stroke();
+
+    // 3b. Segmentos FUERA de los límites de la máquina (Rojo de advertencia con resplandor)
+    ctx.strokeStyle = '#ff3b30';
+    ctx.shadowColor = 'rgba(255, 59, 48, 0.7)';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    let hayG1OOB = false;
+    for (let i = 0; i < this.trayectoria.length; i++) {
+      const seg = this.trayectoria[i];
+      if (seg.tipo !== 'G0') {
+        const esOOB = (seg.x1 < 0 || seg.x1 > maxX || seg.x2 < 0 || seg.x2 > maxX ||
+                       seg.y1 < 0 || seg.y1 > maxY || seg.y2 < 0 || seg.y2 > maxY);
+        if (esOOB) {
+          const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+          const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          hayG1OOB = true;
+        }
+      }
+    }
+    if (hayG1OOB) ctx.stroke();
+    ctx.shadowBlur = 0;
 
     // 4. Si el usuario hace zoom a fondo (> 1200%), dibujar nodos/vértices G-code con culling ultra-rápido
     if (this.zoom > 12.0 && this.trayectoria.length < 25000) {
@@ -1206,6 +1258,247 @@ class VisualizadorCNC {
     this.solicitarRenderizado();
   }
 
+  // Establece las dimensiones físicas útiles de la máquina CNC ($130, $131, $132)
+  establecerLimitesMaquina(maxX, maxY, maxZ) {
+    this.limitesMaquina = {
+      maxX: Math.max(10, parseFloat(maxX) || 300.0),
+      maxY: Math.max(10, parseFloat(maxY) || 200.0),
+      maxZ: Math.max(5, parseFloat(maxZ) || 60.0)
+    };
+    this.evaluarLimitesPieza();
+    this.solicitarRenderizado();
+  }
+
+  // Comprueba si la pieza o código G excede las dimensiones de la máquina
+  evaluarLimitesPieza() {
+    if (!this.trayectoria || this.trayectoria.length === 0) {
+      this.estadoLimites = {
+        hayDesbordamiento: false,
+        minPieza: { x: 0, y: 0, z: 0 },
+        maxPieza: { x: 0, y: 0, z: 0 },
+        ejesExcedidos: [],
+        mensaje: ''
+      };
+      if (this.alertaLimitesCallback) this.alertaLimitesCallback(this.estadoLimites);
+      return this.estadoLimites;
+    }
+
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
+
+    for (let i = 0; i < this.trayectoria.length; i++) {
+      const s = this.trayectoria[i];
+      minX = Math.min(minX, s.x1, s.x2);
+      maxX = Math.max(maxX, s.x1, s.x2);
+      minY = Math.min(minY, s.y1, s.y2);
+      maxY = Math.max(maxY, s.y1, s.y2);
+      minZ = Math.min(minZ, s.z1, s.z2);
+      maxZ = Math.max(maxZ, s.z1, s.z2);
+    }
+
+    const ejesExcedidos = [];
+    const limX = this.limitesMaquina.maxX;
+    const limY = this.limitesMaquina.maxY;
+    const limZ = this.limitesMaquina.maxZ;
+
+    if (minX < -0.01) {
+      ejesExcedidos.push(`X menor a 0 (${minX.toFixed(2)} mm)`);
+    }
+    if (maxX > limX + 0.01) {
+      ejesExcedidos.push(`X mayor a ${limX} mm (${maxX.toFixed(2)} mm, exceso +${(maxX - limX).toFixed(2)} mm)`);
+    }
+    if (minY < -0.01) {
+      ejesExcedidos.push(`Y menor a 0 (${minY.toFixed(2)} mm)`);
+    }
+    if (maxY > limY + 0.01) {
+      ejesExcedidos.push(`Y mayor a ${limY} mm (${maxY.toFixed(2)} mm, exceso +${(maxY - limY).toFixed(2)} mm)`);
+    }
+    if (minZ < -limZ - 0.01) {
+      ejesExcedidos.push(`Z profundidad excede ${limZ} mm (${minZ.toFixed(2)} mm)`);
+    }
+
+    const hayDesbordamiento = ejesExcedidos.length > 0;
+    this.estadoLimites = {
+      hayDesbordamiento,
+      minPieza: { x: minX, y: minY, z: minZ },
+      maxPieza: { x: maxX, y: maxY, z: maxZ },
+      ejesExcedidos,
+      mensaje: hayDesbordamiento ? ejesExcedidos.join(' · ') : 'Dentro del área física de la máquina'
+    };
+
+    if (this.alertaLimitesCallback) {
+      this.alertaLimitesCallback(this.estadoLimites);
+    }
+
+    return this.estadoLimites;
+  }
+
+  // Dibuja el área de trabajo física predefinida de la máquina CNC ($130, $131, $132)
+  dibujarMesaMaquina(ctx) {
+    const maxX = this.limitesMaquina.maxX;
+    const maxY = this.limitesMaquina.maxY;
+    const maxZ = this.limitesMaquina.maxZ;
+    const hayDesb = this.estadoLimites.hayDesbordamiento;
+
+    ctx.save();
+
+    if (this.modoVista === 'XY') {
+      const p0 = this.convertirAPantalla(0, 0);
+      const pMax = this.convertirAPantalla(maxX, maxY);
+      const ancho = pMax.x - p0.x;
+      const alto = p0.y - pMax.y;
+
+      // 1. Superficie de la mesa física mecanizable
+      ctx.fillStyle = 'rgba(12, 17, 24, 0.75)';
+      ctx.fillRect(p0.x, pMax.y, ancho, alto);
+
+      // 2. Borde perimetral de la mesa
+      ctx.lineWidth = hayDesb ? 2.5 : 1.5;
+      ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.95)' : 'rgba(0, 229, 255, 0.7)';
+      if (hayDesb) {
+        ctx.shadowColor = 'rgba(255, 59, 48, 0.5)';
+        ctx.shadowBlur = 8;
+      } else {
+        ctx.shadowColor = 'rgba(0, 229, 255, 0.25)';
+        ctx.shadowBlur = 4;
+      }
+      ctx.strokeRect(p0.x, pMax.y, ancho, alto);
+      ctx.shadowBlur = 0;
+
+      // 3. Marcas de escuadra técnica en las 4 esquinas de la mesa
+      const tamBracket = Math.min(16, Math.max(6, 12 * Math.sqrt(this.zoom)));
+      ctx.strokeStyle = hayDesb ? '#ff453a' : '#00e5ff';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      // Esquina (0,0)
+      ctx.moveTo(p0.x, p0.y - tamBracket);
+      ctx.lineTo(p0.x, p0.y);
+      ctx.lineTo(p0.x + tamBracket, p0.y);
+      // Esquina (maxX, 0)
+      ctx.moveTo(pMax.x - tamBracket, p0.y);
+      ctx.lineTo(pMax.x, p0.y);
+      ctx.lineTo(pMax.x, p0.y - tamBracket);
+      // Esquina (maxX, maxY)
+      ctx.moveTo(pMax.x, pMax.y + tamBracket);
+      ctx.lineTo(pMax.x, pMax.y);
+      ctx.lineTo(pMax.x - tamBracket, pMax.y);
+      // Esquina (0, maxY)
+      ctx.moveTo(p0.x + tamBracket, pMax.y);
+      ctx.lineTo(p0.x, pMax.y);
+      ctx.lineTo(p0.x, pMax.y + tamBracket);
+      ctx.stroke();
+
+      // 4. Rótulo de la Mesa
+      ctx.font = 'bold 10px "JetBrains Mono", monospace';
+      ctx.fillStyle = hayDesb ? '#ff858d' : '#4dd2ff';
+      ctx.fillText(`MESA CNC [${maxX} × ${maxY} mm]`, p0.x + 6, pMax.y - 6);
+
+    } else if (this.modoVista === 'XZ') {
+      const p0 = this.convertirAPantalla(0, 0, 0);
+      const pMax = this.convertirAPantalla(maxX, 0, -maxZ);
+      const ancho = pMax.x - p0.x;
+      const alto = pMax.y - p0.y;
+
+      ctx.fillStyle = 'rgba(12, 17, 24, 0.65)';
+      ctx.fillRect(p0.x, p0.y, ancho, alto);
+
+      ctx.lineWidth = hayDesb ? 2.5 : 1.5;
+      ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.95)' : 'rgba(0, 229, 255, 0.7)';
+      ctx.strokeRect(p0.x, p0.y, ancho, alto);
+
+      ctx.font = 'bold 10px "JetBrains Mono", monospace';
+      ctx.fillStyle = hayDesb ? '#ff858d' : '#4dd2ff';
+      ctx.fillText(`VOLUMEN XZ [X: ${maxX} mm | Z: ${maxZ} mm]`, p0.x + 6, p0.y - 6);
+
+    } else {
+      // Modo 3D Isométrico
+      const c1 = this.convertirAPantalla(0, 0, 0);
+      const c2 = this.convertirAPantalla(maxX, 0, 0);
+      const c3 = this.convertirAPantalla(maxX, maxY, 0);
+      const c4 = this.convertirAPantalla(0, maxY, 0);
+
+      // Superficie de la mesa física sobre el plano Z = 0
+      ctx.fillStyle = 'rgba(14, 20, 28, 0.75)';
+      ctx.beginPath();
+      ctx.moveTo(c1.x, c1.y);
+      ctx.lineTo(c2.x, c2.y);
+      ctx.lineTo(c3.x, c3.y);
+      ctx.lineTo(c4.x, c4.y);
+      ctx.closePath();
+      ctx.fill();
+
+      // Perímetro de la mesa
+      ctx.lineWidth = hayDesb ? 2.5 : 1.5;
+      ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.95)' : 'rgba(0, 229, 255, 0.75)';
+      if (hayDesb) {
+        ctx.shadowColor = 'rgba(255, 59, 48, 0.6)';
+        ctx.shadowBlur = 8;
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Postes verticales y volumen de recorrido útil en Z
+      const b1 = this.convertirAPantalla(0, 0, -maxZ);
+      const b2 = this.convertirAPantalla(maxX, 0, -maxZ);
+      const b3 = this.convertirAPantalla(maxX, maxY, -maxZ);
+      const b4 = this.convertirAPantalla(0, maxY, -maxZ);
+
+      ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.35)' : 'rgba(0, 229, 255, 0.2)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(c1.x, c1.y); ctx.lineTo(b1.x, b1.y);
+      ctx.moveTo(c2.x, c2.y); ctx.lineTo(b2.x, b2.y);
+      ctx.moveTo(c3.x, c3.y); ctx.lineTo(b3.x, b3.y);
+      ctx.moveTo(c4.x, c4.y); ctx.lineTo(b4.x, b4.y);
+      ctx.moveTo(b1.x, b1.y);
+      ctx.lineTo(b2.x, b2.y);
+      ctx.lineTo(b3.x, b3.y);
+      ctx.lineTo(b4.x, b4.y);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.font = 'bold 10px "JetBrains Mono", monospace';
+      ctx.fillStyle = hayDesb ? '#ff858d' : '#4dd2ff';
+      ctx.fillText(`MESA [${maxX}×${maxY}×${maxZ}mm]`, c1.x + 8, c1.y - 8);
+    }
+
+    ctx.restore();
+  }
+
+  // Superposición visual de alerta sobre el lienzo cuando el modelo desborda
+  dibujarAlertaLimitesOverlay(ctx) {
+    if (!this.estadoLimites.hayDesbordamiento) return;
+
+    ctx.save();
+    const texto = `⚠️ ALERTA: MODELO FUERA DEL ÁREA CNC (${this.limitesMaquina.maxX}×${this.limitesMaquina.maxY}mm)`;
+    ctx.font = 'bold 11px "JetBrains Mono", monospace';
+    const anchoTexto = ctx.measureText(texto).width;
+
+    const x = 12;
+    const y = 48;
+    const w = anchoTexto + 20;
+    const h = 26;
+
+    ctx.fillStyle = 'rgba(38, 12, 16, 0.94)';
+    ctx.strokeStyle = '#ff3b30';
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = 'rgba(255, 59, 48, 0.45)';
+    ctx.shadowBlur = 8;
+
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ff453a';
+    ctx.fillText(texto, x + 10, y + 17);
+    ctx.restore();
+  }
+
   // Métodos puente para compatibilidad
   setToolPosition(x, y, z) { this.establecerPosicionHerramienta(x, y, z); }
   setViewMode(modo) { this.establecerModoVista(modo); }
@@ -1217,6 +1510,8 @@ class VisualizadorCNC {
   render() { this.solicitarRenderizado(); }
   loadGCode(gcode) { this.cargarTrayectoriaDesdeGCode(gcode); }
   cargarGCode(gcode) { this.cargarTrayectoriaDesdeGCode(gcode); }
+  setMachineLimits(x, y, z) { this.establecerLimitesMaquina(x, y, z); }
+  checkLimits() { return this.evaluarLimitesPieza(); }
 }
 
 // Compatibilidad de alias global
