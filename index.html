@@ -330,11 +330,12 @@
     <aside class="workspace-sidebar" id="main-sidebar">
 
       <!-- DRO: POSICIÓN ACTUAL -->
-      <section class="sidebar-block dro-block">
-        <div class="sidebar-header">
+      <section class="sidebar-block dro-block" id="block-dro">
+        <div class="sidebar-header collapsible" title="Clic para colapsar / expandir">
           <span class="title-cyan"><i class="fa-solid fa-crosshairs"></i> DRO</span>
           <span class="header-divider">—</span>
           <span class="title-sub">POSICIÓN ACTUAL</span>
+          <i class="fa-solid fa-chevron-down block-toggle-chevron"></i>
         </div>
 
         <div class="dro-axes-container">
@@ -378,10 +379,11 @@
       </section>
 
       <!-- JOG MANUAL -->
-      <section class="sidebar-block jog-block">
-        <div class="sidebar-header collapsible">
+      <section class="sidebar-block jog-block" id="block-jog">
+        <div class="sidebar-header collapsible" title="Clic para colapsar / expandir">
           <i class="fa-solid fa-gamepad header-icon"></i>
           <span class="title-sub">JOG MANUAL</span>
+          <i class="fa-solid fa-chevron-down block-toggle-chevron"></i>
         </div>
 
         <div class="jog-content">
@@ -430,10 +432,11 @@
       </section>
 
       <!-- SPINDLE (HUSILLO) -->
-      <section class="sidebar-block spindle-block">
-        <div class="sidebar-header collapsible">
+      <section class="sidebar-block spindle-block" id="block-spindle">
+        <div class="sidebar-header collapsible" title="Clic para colapsar / expandir">
           <i class="fa-solid fa-fan header-icon"></i>
           <span class="title-sub">SPINDLE</span>
+          <i class="fa-solid fa-chevron-down block-toggle-chevron"></i>
         </div>
 
         <div class="spindle-content">
@@ -458,10 +461,11 @@
       </section>
 
       <!-- CONTROL DE EJECUCIÓN (DEBAJO DEL SPINDLE) -->
-      <section class="sidebar-block execution-control-block">
-        <div class="sidebar-header">
+      <section class="sidebar-block execution-control-block" id="block-execution">
+        <div class="sidebar-header collapsible" title="Clic para colapsar / expandir">
           <i class="fa-solid fa-gauge-high header-icon text-cyan"></i>
           <span class="title-sub">CONTROL DE EJECUCIÓN</span>
+          <i class="fa-solid fa-chevron-down block-toggle-chevron"></i>
         </div>
 
         <div class="execution-control-body">

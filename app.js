@@ -1660,9 +1660,38 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // ==========================================
+  // COLAPSO Y EXPANSIÓN DE BLOQUES DEL PANEL LATERAL (DRO, JOG, SPINDLE, CONTROL)
+  // ==========================================
+  function inicializarColapsoBloquesSidebar() {
+    document.querySelectorAll('.sidebar-header.collapsible').forEach(header => {
+      const parentBlock = header.closest('.sidebar-block');
+      if (!parentBlock) return;
+
+      const blockId = parentBlock.id;
+      if (blockId) {
+        const guardado = localStorage.getItem('cnc_sidebar_collapsed_' + blockId);
+        if (guardado === 'true') {
+          parentBlock.classList.add('collapsed');
+        }
+      }
+
+      header.addEventListener('click', () => {
+        parentBlock.classList.toggle('collapsed');
+        if (blockId) {
+          localStorage.setItem('cnc_sidebar_collapsed_' + blockId, parentBlock.classList.contains('collapsed') ? 'true' : 'false');
+        }
+      });
+    });
+  }
+
   // Inicializar divisor ajustable del panel lateral
   inicializarRedimensionamientoSidebar();
+
+  // Inicializar colapso de bloques en el panel lateral
+  inicializarColapsoBloquesSidebar();
 
   // Inicializar puente PyQt6
   inicializarPuentePyQt();
 });
+
