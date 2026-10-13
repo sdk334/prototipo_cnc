@@ -48,6 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
     porcentajeVelocidadManual: 100, // Override en porcentaje (100% nominal)
     segundosEstimadosBase: 37, // Duración base estimada a 100%
     velocidadAvanceNominal: 800, // mm/min base
+    indiceLineaActiva: 0,
     lineasPrograma: [
       { texto: "G21 ; Unidades metricas en milimetros" },
       { texto: "G90 ; Posicionamiento absoluto" },
@@ -124,6 +125,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Visor de instrucciones y consola
     visorGcodeViewport: document.getElementById('gcode-list-viewport'),
     contenedorLineasGcode: document.getElementById('gcode-lines-container'),
+    etiquetaLineasGcode: document.getElementById('lbl-gcode-count'),
+    botonLimpiarConsolaRapido: document.getElementById('btn-quick-clean-console'),
     pestañaBotonGcode: document.getElementById('tab-btn-gcode'),
     pestañaBotonConsola: document.getElementById('tab-btn-console'),
     panelGcode: document.getElementById('pane-gcode'),
@@ -649,6 +652,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderizarListaCodigoG() {
     const total = estado.lineasPrograma.length;
+    if (elementos.etiquetaLineasGcode) {
+      elementos.etiquetaLineasGcode.textContent = `${total} líneas`;
+    }
     elementos.contenedorLineasGcode.style.height = (total * ALTURA_LINEA_GCODE) + 'px';
     elementos.contenedorLineasGcode.style.position = 'relative';
 
@@ -851,19 +857,28 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  elementos.pestañaBotonGcode.addEventListener('click', () => {
-    elementos.pestañaBotonGcode.classList.add('active');
-    elementos.pestañaBotonConsola.classList.remove('active');
-    elementos.panelGcode.classList.add('active');
-    elementos.panelConsola.classList.remove('active');
-  });
+  if (elementos.botonLimpiarConsolaRapido && elementos.salidaConsola) {
+    elementos.botonLimpiarConsolaRapido.addEventListener('click', () => {
+      elementos.salidaConsola.innerHTML = '';
+      imprimirEnConsola('c-info', '[CONSOLA] Bitácora serial limpiada.');
+    });
+  }
 
-  elementos.pestañaBotonConsola.addEventListener('click', () => {
-    elementos.pestañaBotonConsola.classList.add('active');
-    elementos.pestañaBotonGcode.classList.remove('active');
-    elementos.panelConsola.classList.add('active');
-    elementos.panelGcode.classList.remove('active');
-  });
+  if (elementos.pestañaBotonGcode && elementos.pestañaBotonConsola) {
+    elementos.pestañaBotonGcode.addEventListener('click', () => {
+      elementos.pestañaBotonGcode.classList.add('active');
+      elementos.pestañaBotonConsola.classList.remove('active');
+      if (elementos.panelGcode) elementos.panelGcode.classList.add('active');
+      if (elementos.panelConsola) elementos.panelConsola.classList.remove('active');
+    });
+
+    elementos.pestañaBotonConsola.addEventListener('click', () => {
+      elementos.pestañaBotonConsola.classList.add('active');
+      elementos.pestañaBotonGcode.classList.remove('active');
+      if (elementos.panelConsola) elementos.panelConsola.classList.add('active');
+      if (elementos.panelGcode) elementos.panelGcode.classList.remove('active');
+    });
+  }
 
   // ==========================================
   // EJECUCIÓN Y STREAMING DE MECANIZADO
@@ -946,13 +961,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function actualizarMetricasTelemetria() {
     const totalLineas = estado.lineasPrograma.length;
-    const lineaActual = estado.indiceLineaActiva + 1;
-    elementos.metricaNumeroLinea.textContent = `${lineaActual} / ${totalLineas}`;
-    elementos.telemetriaBuffer.textContent = `${lineaActual} / ${totalLineas}`;
+    const lineaActual = Number.isFinite(estado.indiceLineaActiva) ? (estado.indiceLineaActiva + 1) : (totalLineas > 0 ? 1 : 0);
+    if (elementos.metricaNumeroLinea) {
+      elementos.metricaNumeroLinea.textContent = totalLineas > 0 ? `${lineaActual} / ${totalLineas}` : '0 / 0';
+    }
+    if (elementos.telemetriaBuffer) {
+      elementos.telemetriaBuffer.textContent = totalLineas > 0 ? `${lineaActual} / ${totalLineas}` : '0 / 0';
+    }
 
-    const porcentajeAvance = Math.round((lineaActual / totalLineas) * 100);
-    elementos.barraProgresoRelleno.style.width = `${porcentajeAvance}%`;
-    elementos.etiquetaPorcentajeProgreso.textContent = `${porcentajeAvance}%`;
+    const porcentajeAvance = totalLineas > 0 ? Math.min(100, Math.round((lineaActual / totalLineas) * 100)) : 0;
+    if (elementos.barraProgresoRelleno) {
+      elementos.barraProgresoRelleno.style.width = `${porcentajeAvance}%`;
+    }
+    if (elementos.etiquetaPorcentajeProgreso) {
+      elementos.etiquetaPorcentajeProgreso.textContent = `${porcentajeAvance}%`;
+    }
   }
 
   function iniciarMecanizado() {

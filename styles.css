@@ -883,11 +883,11 @@ body.resizing-col * {
 .loaded-file-indicator .file-name { color: var(--text-primary); font-weight: 600; }
 
 /* ==========================================================================
-   5. BOTTOM SPLIT PANEL (G-CODE/CONSOLE & EXECUTION)
+   5. BOTTOM SPLIT PANEL (G-CODE & CONSOLA SERIAL SIMULTÁNEOS)
    ========================================================================== */
 .bottom-split-panel {
   display: grid;
-  grid-template-columns: 1.25fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
   height: 250px;
 }
@@ -899,43 +899,67 @@ body.resizing-col * {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-width: 0;
 }
 
-/* Tabs de G-Code / Consola */
-.panel-header-tabs {
+.panel-code-standalone,
+.panel-console-standalone {
   display: flex;
-  background-color: #0f1215;
-  border-bottom: 1px solid var(--border-color);
-  padding: 0 4px;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
 }
 
-.panel-tab {
+.panel-title-bar {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 6px 10px;
+  background-color: #0f1215;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.panel-title-bar .text-cyan {
+  color: var(--cyan-primary);
+  margin-right: 5px;
+}
+
+.panel-badge-info {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-subtle);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border-subtle);
+}
+
+.btn-header-clean {
   background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
+  border: 1px solid var(--border-color);
   color: var(--text-muted);
   font-family: var(--font-display);
-  font-size: 12px;
-  padding: 7px 12px;
+  font-size: 10px;
   cursor: pointer;
-  letter-spacing: 0.5px;
-}
-
-.panel-tab.active {
-  color: var(--cyan-primary);
-  border-bottom-color: var(--cyan-primary);
-  font-weight: 700;
-}
-
-.tab-pane {
-  display: none;
-  flex: 1;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.tab-pane.active {
+  padding: 2px 7px;
+  border-radius: 3px;
   display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.btn-header-clean:hover {
+  color: var(--red-estop);
+  border-color: var(--red-estop);
+  background-color: rgba(255, 51, 75, 0.1);
 }
 
 /* Viewport de G-Code */
@@ -943,6 +967,7 @@ body.resizing-col * {
   flex: 1;
   background-color: var(--bg-input);
   overflow-y: auto;
+  min-height: 0;
   font-family: var(--font-mono);
   font-size: 12px;
   padding: 0;
@@ -1046,6 +1071,7 @@ body.resizing-col * {
   flex: 1;
   background-color: var(--bg-input);
   overflow-y: auto;
+  min-height: 0;
   font-family: var(--font-mono);
   font-size: 11px;
   padding: 8px;
@@ -1061,28 +1087,25 @@ body.resizing-col * {
 .console-line.c-error { color: var(--red-estop); }
 
 /* ==========================================================================
-   6. CONTROL DE EJECUCIÓN (METRICS & START BUTTON)
+   6. CONTROL DE EJECUCIÓN (SIDEBAR BLOCK DEBAJO DE SPINDLE)
    ========================================================================== */
-.panel-execution-control {
-  padding: 10px 14px;
-  justify-content: space-between;
+.execution-control-block {
+  display: flex;
+  flex-direction: column;
 }
 
-.panel-title-bar {
-  font-family: var(--font-display);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border-subtle);
-  padding-bottom: 6px;
+.execution-control-block .execution-control-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0;
 }
 
 .telemetry-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px 16px;
-  margin: 8px 0;
+  gap: 6px 8px;
+  margin: 2px 0 4px 0;
 }
 
 .tele-item {

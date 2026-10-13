@@ -271,104 +271,47 @@
         </div>
       </section>
 
-      <!-- BOTTOM SPLIT: G-CODE/CONSOLE (LEFT) & EXECUTION CONTROL (RIGHT) -->
+      <!-- BOTTOM SPLIT: 1) G-CODE, 2) CONSOLA SERIAL, 3) CONTROL DE EJECUCIÓN (SEPARADOS Y VISIBLES SIMULTÁNEAMENTE) -->
       <section class="bottom-split-panel">
 
-        <!-- G-Code & Serial Console Section -->
-        <div class="panel-box panel-code-console">
-          <div class="panel-header-tabs">
-            <button class="panel-tab active" id="tab-btn-gcode"><i class="fa-solid fa-code"></i> G-CODE</button>
-            <button class="panel-tab" id="tab-btn-console"><i class="fa-solid fa-terminal"></i> CONSOLA SERIAL</button>
+        <!-- 1. Panel Independiente de G-CODE -->
+        <div class="panel-box panel-code-standalone">
+          <div class="panel-title-bar">
+            <span><i class="fa-solid fa-code text-cyan"></i> PROGRAMA G-CODE</span>
+            <span class="panel-badge-info" id="lbl-gcode-count">0 líneas</span>
           </div>
-
-          <!-- G-Code Viewer Tab Content -->
-          <div class="tab-pane active" id="pane-gcode">
-            <div class="gcode-editor-viewport" id="gcode-list-viewport">
-              <ul class="gcode-lines-list" id="gcode-lines-container">
-                <!-- Dynamically generated or seeded G-code lines -->
-              </ul>
-            </div>
-            <!-- MDI Input Command Bar -->
-            <div class="mdi-bar">
-              <span class="mdi-prefix">MDI&gt;</span>
-              <input type="text" class="mdi-input" id="mdi-input-cmd" value="G0 X0 Y0" placeholder="Escriba comando G-code o GRBL ($$, $H, G0...)">
-              <button class="btn-mdi-send" id="btn-mdi-send"><i class="fa-solid fa-paper-plane"></i> ENVIAR</button>
-            </div>
+          <div class="gcode-editor-viewport" id="gcode-list-viewport">
+            <ul class="gcode-lines-list" id="gcode-lines-container">
+              <!-- Líneas G-code cargadas dinámicamente -->
+            </ul>
           </div>
-
-          <!-- Serial Console Tab Content -->
-          <div class="tab-pane" id="pane-console">
-            <div class="console-viewport" id="console-output">
-              <div class="console-line c-system">[CONEXIÓN] Puerto COM3 abierto a 115200 baudios.</div>
-              <div class="console-line c-grbl">Grbl 1.1h ['$' for help]</div>
-              <div class="console-line c-info">[MSG:'$H'|'$X' to unlock]</div>
-              <div class="console-line c-ok">&gt; $G</div>
-              <div class="console-line c-grbl">[GC:G0 G54 G17 G21 G90 G94 M5 M9 T0 F0 S0]</div>
-              <div class="console-line c-ok">ok</div>
-            </div>
-            <div class="console-input-bar">
-              <span class="mdi-prefix">&gt;</span>
-              <input type="text" class="mdi-input" id="console-cmd-input" placeholder="Comando GRBL directo (ej. ? , $$ , $I , G91)">
-              <button class="btn-mdi-send" id="btn-console-send"><i class="fa-solid fa-paper-plane"></i> ENVIAR</button>
-            </div>
+          <!-- Barra de Entrada MDI -->
+          <div class="mdi-bar">
+            <span class="mdi-prefix">MDI&gt;</span>
+            <input type="text" class="mdi-input" id="mdi-input-cmd" value="G0 X0 Y0" placeholder="Comando G-code (G0 X0, G91...)">
+            <button class="btn-mdi-send" id="btn-mdi-send" title="Enviar comando MDI"><i class="fa-solid fa-paper-plane"></i> ENVIAR</button>
           </div>
         </div>
 
-        <!-- Execution Control Panel -->
-        <div class="panel-box panel-execution-control">
+        <!-- 2. Panel Independiente de CONSOLA SERIAL (GRBL) -->
+        <div class="panel-box panel-console-standalone">
           <div class="panel-title-bar">
-            <span><i class="fa-solid fa-gauge-high"></i> CONTROL DE EJECUCIÓN</span>
+            <span><i class="fa-solid fa-terminal text-cyan"></i> CONSOLA SERIAL</span>
+            <button class="btn-header-clean" id="btn-quick-clean-console" title="Limpiar bitácora serial"><i class="fa-solid fa-eraser"></i> Limpiar</button>
           </div>
-
-          <div class="telemetry-grid">
-            <div class="tele-item">
-              <span class="tele-label">LÍNEA</span>
-              <span class="tele-val highlight-cyan" id="metric-line">13 / 13</span>
-            </div>
-            <div class="tele-item">
-              <span class="tele-label">AVANCE</span>
-              <span class="tele-val" id="metric-feed">800 mm/min</span>
-            </div>
-            <div class="tele-item">
-              <span class="tele-label">TIEMPO</span>
-              <span class="tele-val" id="metric-time">00:00:13</span>
-            </div>
-            <div class="tele-item">
-              <span class="tele-label">FEED REAL</span>
-              <span class="tele-val highlight-green" id="metric-feed-pct">100%</span>
-            </div>
-            <div class="tele-item">
-              <span class="tele-label">SPINDLE</span>
-              <span class="tele-val" id="metric-spindle-state">OFF</span>
-            </div>
-            <div class="tele-item">
-              <span class="tele-label">OVERRIDE</span>
-              <span class="tele-val" id="metric-override">100%</span>
-            </div>
+          <div class="console-viewport" id="console-output">
+            <div class="console-line c-system">[CONEXIÓN] Puerto COM3 abierto a 115200 baudios.</div>
+            <div class="console-line c-grbl">Grbl 1.1h ['$' for help]</div>
+            <div class="console-line c-info">[MSG:'$H'|'$X' to unlock]</div>
+            <div class="console-line c-ok">&gt; $G</div>
+            <div class="console-line c-grbl">[GC:G0 G54 G17 G21 G90 G94 M5 M9 T0 F0 S0]</div>
+            <div class="console-line c-ok">ok</div>
           </div>
-
-          <!-- Progress Bar -->
-          <div class="progress-section">
-            <div class="progress-labels">
-              <span class="prog-label">Progreso</span>
-              <span class="prog-pct highlight-cyan" id="lbl-progress-percent">100%</span>
-            </div>
-            <div class="progress-track">
-              <div class="progress-bar-fill" id="progress-bar-fill" style="width: 100%;"></div>
-            </div>
-          </div>
-
-          <!-- Main Start/Execution Action Button -->
-          <div class="execution-actions">
-            <button class="btn-start-execution" id="btn-execution-action">
-              <i class="fa-solid fa-play"></i> START
-            </button>
-            <button class="btn-pause-execution hidden" id="btn-execution-pause">
-              <i class="fa-solid fa-pause"></i> PAUSA
-            </button>
-            <button class="btn-stop-execution hidden" id="btn-execution-stop">
-              <i class="fa-solid fa-stop"></i> DETENER
-            </button>
+          <!-- Barra de Entrada Serial Directa -->
+          <div class="console-input-bar">
+            <span class="mdi-prefix">&gt;</span>
+            <input type="text" class="mdi-input" id="console-cmd-input" placeholder="Comando directo (?, $$, $X...)">
+            <button class="btn-mdi-send" id="btn-console-send" title="Enviar comando a GRBL"><i class="fa-solid fa-paper-plane"></i> ENVIAR</button>
           </div>
         </div>
 
@@ -511,6 +454,67 @@
           </div>
 
           <input type="range" class="spindle-slider" id="slider-spindle-override" min="0" max="150" value="100" title="Override Spindle (0% a 150%)">
+        </div>
+      </section>
+
+      <!-- CONTROL DE EJECUCIÓN (DEBAJO DEL SPINDLE) -->
+      <section class="sidebar-block execution-control-block">
+        <div class="sidebar-header">
+          <i class="fa-solid fa-gauge-high header-icon text-cyan"></i>
+          <span class="title-sub">CONTROL DE EJECUCIÓN</span>
+        </div>
+
+        <div class="execution-control-body">
+          <div class="telemetry-grid">
+            <div class="tele-item">
+              <span class="tele-label">LÍNEA</span>
+              <span class="tele-val highlight-cyan" id="metric-line">1 / 13</span>
+            </div>
+            <div class="tele-item">
+              <span class="tele-label">AVANCE</span>
+              <span class="tele-val" id="metric-feed">800 mm/min</span>
+            </div>
+            <div class="tele-item">
+              <span class="tele-label">TIEMPO</span>
+              <span class="tele-val" id="metric-time">00:00:13</span>
+            </div>
+            <div class="tele-item">
+              <span class="tele-label">FEED REAL</span>
+              <span class="tele-val highlight-green" id="metric-feed-pct">100%</span>
+            </div>
+            <div class="tele-item">
+              <span class="tele-label">SPINDLE</span>
+              <span class="tele-val" id="metric-spindle-state">OFF</span>
+            </div>
+            <div class="tele-item">
+              <span class="tele-label">OVERRIDE</span>
+              <span class="tele-val" id="metric-override">100%</span>
+            </div>
+          </div>
+
+          <!-- Barra de Progreso -->
+          <div class="progress-section">
+            <div class="progress-labels">
+              <span class="prog-label">Progreso</span>
+              <span class="prog-pct highlight-cyan" id="lbl-progress-percent">0%</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-bar-fill" id="progress-bar-fill" style="width: 0%;"></div>
+            </div>
+          </div>
+
+          <!-- Botones de Acción de Mecanizado -->
+          <div class="execution-actions">
+            <button class="btn-start-execution" id="btn-execution-action">
+              <i class="fa-solid fa-play"></i> START
+            </button>
+            <button class="btn-pause-execution hidden" id="btn-execution-pause">
+              <i class="fa-solid fa-pause"></i> PAUSA
+            </button>
+            <button class="btn-stop-execution hidden" id="btn-execution-stop">
+              <i class="fa-solid fa-stop"></i> DETENER
+            </button>
+          </div>
         </div>
       </section>
 
