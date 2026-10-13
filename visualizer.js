@@ -916,15 +916,13 @@ class VisualizadorCNC {
       ctx.setLineDash([]);
     } else {
       if (this.mostrarCuadricula) {
-        // Rejilla 3D adaptativa sobre el plano Z = 0
-        const limites = this.limitesMaterial || { minX: 0, maxX: 300, minY: 0, maxY: 250 };
-        const margen = Math.max(15, 35 / escala);
-        const minX = Math.floor((limites.minX - margen) / principal) * principal;
-        const maxX = Math.ceil((limites.maxX + margen) / principal) * principal;
-        const minY = Math.floor((limites.minY - margen) / principal) * principal;
-        const maxY = Math.ceil((limites.maxY + margen) / principal) * principal;
+        // Rejilla 3D sobre la superficie física de la mesa de la máquina (Z = 0)
+        const minX = 0;
+        const maxX = this.limitesMaquina.maxX;
+        const minY = 0;
+        const maxY = this.limitesMaquina.maxY;
 
-        ctx.strokeStyle = '#141a22';
+        ctx.strokeStyle = '#18222e';
         ctx.beginPath();
         const lineasMaximas = 60;
         const pasoReal = (maxX - minX) / principal > lineasMaximas ? principal * 2 : principal;
@@ -1396,30 +1394,46 @@ class VisualizadorCNC {
 
     } else if (this.modoVista === 'XZ') {
       const p0 = this.convertirAPantalla(0, 0, 0);
-      const pMax = this.convertirAPantalla(maxX, 0, -maxZ);
+      const pMax = this.convertirAPantalla(maxX, 0, maxZ);
       const ancho = pMax.x - p0.x;
-      const alto = pMax.y - p0.y;
+      const alto = p0.y - pMax.y;
 
+      // Volumen útil de la máquina hacia arriba (+Z)
       ctx.fillStyle = 'rgba(12, 17, 24, 0.65)';
-      ctx.fillRect(p0.x, p0.y, ancho, alto);
+      ctx.fillRect(p0.x, pMax.y, ancho, alto);
 
       ctx.lineWidth = hayDesb ? 2.5 : 1.5;
       ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.95)' : 'rgba(0, 229, 255, 0.7)';
-      ctx.strokeRect(p0.x, p0.y, ancho, alto);
+      ctx.strokeRect(p0.x, pMax.y, ancho, alto);
+
+      // Línea sólida de la cama de la máquina en Z = 0
+      ctx.strokeStyle = '#00e5ff';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y);
+      ctx.lineTo(pMax.x, p0.y);
+      ctx.stroke();
 
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
       ctx.fillStyle = hayDesb ? '#ff858d' : '#4dd2ff';
-      ctx.fillText(`VOLUMEN XZ [X: ${maxX} mm | Z: ${maxZ} mm]`, p0.x + 6, p0.y - 6);
+      ctx.fillText(`MESA XZ [X: ${maxX} mm | Recorrido Z: +${maxZ} mm]`, p0.x + 6, pMax.y - 6);
 
     } else {
-      // Modo 3D Isométrico
+      // Modo 3D Isométrico:
+      // 1. Superficie inferior de la mesa de trabajo física (Z = 0)
       const c1 = this.convertirAPantalla(0, 0, 0);
       const c2 = this.convertirAPantalla(maxX, 0, 0);
       const c3 = this.convertirAPantalla(maxX, maxY, 0);
       const c4 = this.convertirAPantalla(0, maxY, 0);
 
-      // Superficie de la mesa física sobre el plano Z = 0
-      ctx.fillStyle = 'rgba(14, 20, 28, 0.75)';
+      // 2. Límite superior de carrera vertical del cabezal Z (+maxZ hacia ARRIBA)
+      const t1 = this.convertirAPantalla(0, 0, maxZ);
+      const t2 = this.convertirAPantalla(maxX, 0, maxZ);
+      const t3 = this.convertirAPantalla(maxX, maxY, maxZ);
+      const t4 = this.convertirAPantalla(0, maxY, maxZ);
+
+      // Superficie física de la mesa sobre el plano Z = 0 (Base donde descansa la pieza)
+      ctx.fillStyle = 'rgba(14, 20, 28, 0.85)';
       ctx.beginPath();
       ctx.moveTo(c1.x, c1.y);
       ctx.lineTo(c2.x, c2.y);
@@ -1428,41 +1442,44 @@ class VisualizadorCNC {
       ctx.closePath();
       ctx.fill();
 
-      // Perímetro de la mesa
-      ctx.lineWidth = hayDesb ? 2.5 : 1.5;
-      ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.95)' : 'rgba(0, 229, 255, 0.75)';
+      // Perímetro sólido de la mesa en Z = 0
+      ctx.lineWidth = hayDesb ? 2.5 : 2.0;
+      ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.95)' : 'rgba(0, 229, 255, 0.85)';
       if (hayDesb) {
         ctx.shadowColor = 'rgba(255, 59, 48, 0.6)';
         ctx.shadowBlur = 8;
+      } else {
+        ctx.shadowColor = 'rgba(0, 229, 255, 0.35)';
+        ctx.shadowBlur = 4;
       }
       ctx.stroke();
       ctx.shadowBlur = 0;
 
-      // Postes verticales y volumen de recorrido útil en Z
-      const b1 = this.convertirAPantalla(0, 0, -maxZ);
-      const b2 = this.convertirAPantalla(maxX, 0, -maxZ);
-      const b3 = this.convertirAPantalla(maxX, maxY, -maxZ);
-      const b4 = this.convertirAPantalla(0, maxY, -maxZ);
-
-      ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.35)' : 'rgba(0, 229, 255, 0.2)';
+      // Columnas guía y volumen de trabajo que asciende hacia ARRIBA (+maxZ)
+      ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.45)' : 'rgba(0, 229, 255, 0.35)';
       ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
+      ctx.setLineDash([4, 4]);
       ctx.beginPath();
-      ctx.moveTo(c1.x, c1.y); ctx.lineTo(b1.x, b1.y);
-      ctx.moveTo(c2.x, c2.y); ctx.lineTo(b2.x, b2.y);
-      ctx.moveTo(c3.x, c3.y); ctx.lineTo(b3.x, b3.y);
-      ctx.moveTo(c4.x, c4.y); ctx.lineTo(b4.x, b4.y);
-      ctx.moveTo(b1.x, b1.y);
-      ctx.lineTo(b2.x, b2.y);
-      ctx.lineTo(b3.x, b3.y);
-      ctx.lineTo(b4.x, b4.y);
+      // Aristas verticales de altura (desde la mesa Z=0 hasta el techo Z=+maxZ)
+      ctx.moveTo(c1.x, c1.y); ctx.lineTo(t1.x, t1.y);
+      ctx.moveTo(c2.x, c2.y); ctx.lineTo(t2.x, t2.y);
+      ctx.moveTo(c3.x, c3.y); ctx.lineTo(t3.x, t3.y);
+      ctx.moveTo(c4.x, c4.y); ctx.lineTo(t4.x, t4.y);
+      // Marco perimetral del techo (+maxZ)
+      ctx.moveTo(t1.x, t1.y);
+      ctx.lineTo(t2.x, t2.y);
+      ctx.lineTo(t3.x, t3.y);
+      ctx.lineTo(t4.x, t4.y);
       ctx.closePath();
       ctx.stroke();
       ctx.setLineDash([]);
 
+      // Rótulos de la mesa base y de la altura máxima Z
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
       ctx.fillStyle = hayDesb ? '#ff858d' : '#4dd2ff';
-      ctx.fillText(`MESA [${maxX}×${maxY}×${maxZ}mm]`, c1.x + 8, c1.y - 8);
+      ctx.fillText(`MESA BASE (Z=0) [${maxX}×${maxY}mm]`, c1.x + 8, c1.y - 8);
+      ctx.fillStyle = 'rgba(0, 229, 255, 0.7)';
+      ctx.fillText(`Z: +${maxZ}mm`, t1.x + 8, t1.y - 8);
     }
 
     ctx.restore();
