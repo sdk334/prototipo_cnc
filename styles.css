@@ -40,6 +40,45 @@
   margin: 0;
   padding: 0;
   user-select: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+/* ==========================================================================
+   BARRAS DE SCROLL MINIMALISTAS (DARK INDUSTRIAL / ELEGANTE Y DISCRETO)
+   ========================================================================== */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+  background-color: transparent;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 229, 255, 0.35);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--cyan-primary);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 html {
@@ -1292,6 +1331,30 @@ body.resizing-col * {
 
 .sidebar-block.collapsed > *:not(.sidebar-header) {
   display: none !important;
+}
+
+/* Modo compacto para Control de Ejecución: Oculta la cuadrícula de telemetría y conserva botones y barra de progreso */
+.sidebar-block.execution-control-block.collapsed {
+  padding-bottom: 10px;
+}
+
+.sidebar-block.execution-control-block.collapsed .sidebar-header {
+  margin-bottom: 8px;
+}
+
+.sidebar-block.execution-control-block.collapsed > .execution-control-body {
+  display: flex !important;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-block.execution-control-block.collapsed .telemetry-grid {
+  display: none !important;
+}
+
+.sidebar-block.execution-control-block.collapsed .progress-section,
+.sidebar-block.execution-control-block.collapsed .execution-actions {
+  display: flex !important;
 }
 
 .collapse-icon {
