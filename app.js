@@ -11,6 +11,18 @@
  * - Modo fallback didáctico automático si se ejecuta en navegador web estándar.
  */
 
+// Fallback global de consola para evitar ReferenceError bajo cualquier circunstancia
+window.imprimirEnConsola = function(claseCss, mensaje) {
+  const el = document.getElementById('console-output');
+  if (el) {
+    const renglon = document.createElement('div');
+    renglon.className = `console-line ${claseCss}`;
+    renglon.textContent = mensaje;
+    el.appendChild(renglon);
+    el.scrollTop = el.scrollHeight;
+  }
+};
+
 document.addEventListener('DOMContentLoaded', () => {
   // Inicialización del motor gráfico en el lienzo principal
   window.visualizadorCNC = new VisualizadorCNC('cnc-canvas');
@@ -23,6 +35,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // ESTADO GLOBAL DE LA MÁQUINA CNC
   // ==========================================
   const estado = {
+    // Incremento de paso para jogging manual (0.1 mm por defecto, coincide con botón activo en UI)
+    incrementoPaso: 0.1,
     // Coordenadas relativas de trabajo (WCS - G54)
     coordenadasTrabajo: { x: 0.000, y: 0.000, z: 0.000 },
     // Coordenadas absolutas de la máquina (MCS)
@@ -227,14 +241,24 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const d = JSON.parse(jsonEstado);
 
-        // Actualizar coordenadas de trabajo (WPos) y de máquina (MPos)
-        estado.coordenadasTrabajo.x = d.wpos[0];
-        estado.coordenadasTrabajo.y = d.wpos[1];
-        estado.coordenadasTrabajo.z = d.wpos[2];
+        // Actualizar coordenadas de trabajo (WPos) y de máquina (MPos) con sanitización
+        if (d.wpos && Array.isArray(d.wpos)) {
+          const wx = Number(d.wpos[0]);
+          const wy = Number(d.wpos[1]);
+          const wz = Number(d.wpos[2]);
+          if (!isNaN(wx)) estado.coordenadasTrabajo.x = wx;
+          if (!isNaN(wy)) estado.coordenadasTrabajo.y = wy;
+          if (!isNaN(wz)) estado.coordenadasTrabajo.z = wz;
+        }
 
-        estado.coordenadasMaquina.x = d.mpos[0];
-        estado.coordenadasMaquina.y = d.mpos[1];
-        estado.coordenadasMaquina.z = d.mpos[2];
+        if (d.mpos && Array.isArray(d.mpos)) {
+          const mx = Number(d.mpos[0]);
+          const my = Number(d.mpos[1]);
+          const mz = Number(d.mpos[2]);
+          if (!isNaN(mx)) estado.coordenadasMaquina.x = mx;
+          if (!isNaN(my)) estado.coordenadasMaquina.y = my;
+          if (!isNaN(mz)) estado.coordenadasMaquina.z = mz;
+        }
 
         actualizarLecturasDRO();
         establecerEstadoOperativo(d.estado);
@@ -369,28 +393,44 @@ document.addEventListener('DOMContentLoaded', () => {
   // SINCRONIZACIÓN DE COORDENADAS Y PANTALLA DRO (Diffing sin repintados)
   // ==========================================
   function actualizarLecturasDRO() {
-    const xStr = estado.coordenadasTrabajo.x.toFixed(3);
-    const yStr = estado.coordenadasTrabajo.y.toFixed(3);
-    const zStr = estado.coordenadasTrabajo.z.toFixed(3);
+    const wx = Number(estado.coordenadasTrabajo.x);
+    const wy = Number(estado.coordenadasTrabajo.y);
+    const wz = Number(estado.coordenadasTrabajo.z);
+    const xVal = isNaN(wx) ? 0.0 : wx;
+    const yVal = isNaN(wy) ? 0.0 : wy;
+    const zVal = isNaN(wz) ? 0.0 : wz;
+    estado.coordenadasTrabajo.x = xVal;
+    estado.coordenadasTrabajo.y = yVal;
+    estado.coordenadasTrabajo.z = zVal;
 
-    if (elementos.droValorX.textContent !== xStr) elementos.droValorX.textContent = xStr;
-    if (elementos.droValorY.textContent !== yStr) elementos.droValorY.textContent = yStr;
-    if (elementos.droValorZ.textContent !== zStr) elementos.droValorZ.textContent = zStr;
+    const mx = Number(estado.coordenadasMaquina.x);
+    const my = Number(estado.coordenadasMaquina.y);
+    const mz = Number(estado.coordenadasMaquina.z);
+    const mxVal = isNaN(mx) ? xVal : mx;
+    const myVal = isNaN(my) ? yVal : my;
+    const mzVal = isNaN(mz) ? zVal : mz;
+    estado.coordenadasMaquina.x = mxVal;
+    estado.coordenadasMaquina.y = myVal;
+    estado.coordenadasMaquina.z = mzVal;
 
-    const mxStr = estado.coordenadasMaquina.x.toFixed(3);
-    const myStr = estado.coordenadasMaquina.y.toFixed(3);
-    const mzStr = estado.coordenadasMaquina.z.toFixed(3);
+    const xStr = xVal.toFixed(3);
+    const yStr = yVal.toFixed(3);
+    const zStr = zVal.toFixed(3);
 
-    if (elementos.droMaquinaX.textContent !== mxStr) elementos.droMaquinaX.textContent = mxStr;
-    if (elementos.droMaquinaY.textContent !== myStr) elementos.droMaquinaY.textContent = myStr;
-    if (elementos.droMaquinaZ.textContent !== mzStr) elementos.droMaquinaZ.textContent = mzStr;
+    if (elementos.droValorX && elementos.droValorX.textContent !== xStr) elementos.droValorX.textContent = xStr;
+    if (elementos.droValorY && elementos.droValorY.textContent !== yStr) elementos.droValorY.textContent = yStr;
+    if (elementos.droValorZ && elementos.droValorZ.textContent !== zStr) elementos.droValorZ.textContent = zStr;
+
+    const mxStr = mxVal.toFixed(3);
+    const myStr = myVal.toFixed(3);
+    const mzStr = mzVal.toFixed(3);
+
+    if (elementos.droMaquinaX && elementos.droMaquinaX.textContent !== mxStr) elementos.droMaquinaX.textContent = mxStr;
+    if (elementos.droMaquinaY && elementos.droMaquinaY.textContent !== myStr) elementos.droMaquinaY.textContent = myStr;
+    if (elementos.droMaquinaZ && elementos.droMaquinaZ.textContent !== mzStr) elementos.droMaquinaZ.textContent = mzStr;
 
     if (window.visualizadorCNC) {
-      window.visualizadorCNC.establecerPosicionHerramienta(
-        estado.coordenadasTrabajo.x,
-        estado.coordenadasTrabajo.y,
-        estado.coordenadasTrabajo.z
-      );
+      window.visualizadorCNC.establecerPosicionHerramienta(xVal, yVal, zVal);
     }
   }
 
@@ -430,7 +470,8 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    const desplazamiento = estado.incrementoPaso * sentido;
+    const paso = Number(estado.incrementoPaso) || 0.1;
+    const desplazamiento = paso * sentido;
     const avanceCalculado = Math.round(estado.velocidadAvanceNominal * (estado.porcentajeVelocidadManual / 100));
 
     if (window.puenteCNC) {
@@ -438,9 +479,9 @@ document.addEventListener('DOMContentLoaded', () => {
       window.puenteCNC.moverJog(eje, desplazamiento, avanceCalculado);
     } else {
       // Modo offline didáctico
-      if (eje === 'X') estado.coordenadasTrabajo.x += desplazamiento;
-      else if (eje === 'Y') estado.coordenadasTrabajo.y += desplazamiento;
-      else if (eje === 'Z') estado.coordenadasTrabajo.z += desplazamiento;
+      if (eje === 'X') estado.coordenadasTrabajo.x = (Number(estado.coordenadasTrabajo.x) || 0) + desplazamiento;
+      else if (eje === 'Y') estado.coordenadasTrabajo.y = (Number(estado.coordenadasTrabajo.y) || 0) + desplazamiento;
+      else if (eje === 'Z') estado.coordenadasTrabajo.z = (Number(estado.coordenadasTrabajo.z) || 0) + desplazamiento;
       estado.coordenadasMaquina = { ...estado.coordenadasTrabajo };
       actualizarLecturasDRO();
       const signo = desplazamiento > 0 ? '+' : '';
@@ -697,25 +738,33 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function seleccionarLineaGcode(indice) {
+    if (indice < 0 || indice >= estado.lineasPrograma.length) return;
     estado.indiceLineaActiva = indice;
     resaltarLineaGcodeActiva();
     actualizarMetricasTelemetria();
 
-    // Mover herramienta a la posición de la línea seleccionada para previsualización didáctica
-    if (!estado.enEjecucion) {
-      const linea = estado.lineasPrograma[indice];
-      if (linea) {
-        const mX = linea.texto.match(/X([-+]?\d*\.?\d+)/i);
-        const mY = linea.texto.match(/Y([-+]?\d*\.?\d+)/i);
-        const mZ = linea.texto.match(/Z([-+]?\d*\.?\d+)/i);
-        let cambio = false;
-        if (mX) { estado.coordenadasTrabajo.x = parseFloat(mX[1]); cambio = true; }
-        if (mY) { estado.coordenadasTrabajo.y = parseFloat(mY[1]); cambio = true; }
-        if (mZ) { estado.coordenadasTrabajo.z = parseFloat(mZ[1]); cambio = true; }
-        if (cambio) {
-          estado.coordenadasMaquina = { ...estado.coordenadasTrabajo };
-          actualizarLecturasDRO();
-        }
+    // Mover herramienta a la posición de la línea seleccionada para previsualización y simulación didáctica
+    const linea = estado.lineasPrograma[indice];
+    if (linea) {
+      const mX = linea.texto.match(/X([-+]?\d*\.?\d+)/i);
+      const mY = linea.texto.match(/Y([-+]?\d*\.?\d+)/i);
+      const mZ = linea.texto.match(/Z([-+]?\d*\.?\d+)/i);
+      let cambio = false;
+      if (mX) {
+        const valX = parseFloat(mX[1]);
+        if (!isNaN(valX)) { estado.coordenadasTrabajo.x = valX; cambio = true; }
+      }
+      if (mY) {
+        const valY = parseFloat(mY[1]);
+        if (!isNaN(valY)) { estado.coordenadasTrabajo.y = valY; cambio = true; }
+      }
+      if (mZ) {
+        const valZ = parseFloat(mZ[1]);
+        if (!isNaN(valZ)) { estado.coordenadasTrabajo.z = valZ; cambio = true; }
+      }
+      if (cambio) {
+        estado.coordenadasMaquina = { ...estado.coordenadasTrabajo };
+        actualizarLecturasDRO();
       }
     }
   }
@@ -754,12 +803,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const renglon = document.createElement('div');
     renglon.className = `console-line ${claseCss}`;
     renglon.textContent = mensaje;
-    elementos.salidaConsola.appendChild(renglon);
-    while (elementos.salidaConsola.children.length > 200) {
-      elementos.salidaConsola.removeChild(elementos.salidaConsola.firstChild);
+    if (elementos.salidaConsola) {
+      elementos.salidaConsola.appendChild(renglon);
+      while (elementos.salidaConsola.children.length > 200) {
+        elementos.salidaConsola.removeChild(elementos.salidaConsola.firstChild);
+      }
+      elementos.salidaConsola.scrollTop = elementos.salidaConsola.scrollHeight;
     }
-    elementos.salidaConsola.scrollTop = elementos.salidaConsola.scrollHeight;
   }
+  window.imprimirEnConsola = imprimirEnConsola;
 
   function procesarComandoMdi(comandoSinFormato) {
     const comando = comandoSinFormato.trim();
@@ -936,13 +988,30 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       // Bucle de simulación offline
       imprimirEnConsola('c-info', '[EJECUCIÓN] Iniciando simulación local...');
+      const totalLineas = estado.lineasPrograma.length;
+      let segTranscurridos = 0;
+      if (estado.temporizadorEjecucion) clearInterval(estado.temporizadorEjecucion);
+
       estado.temporizadorEjecucion = setInterval(() => {
-        if (estado.indiceLineaActiva < estado.lineasPrograma.length - 1) {
-          seleccionarLineaGcode(estado.indiceLineaActiva + 1);
+        if (!estado.enEjecucion || estado.enPausa) return;
+        segTranscurridos++;
+        const minutos = String(Math.floor(segTranscurridos / 60)).padStart(2, '0');
+        const segundos = String(segTranscurridos % 60).padStart(2, '0');
+        const tiempoStr = `${minutos}:${segundos}`;
+        if (elementos.metricaTiempoTranscurrido) elementos.metricaTiempoTranscurrido.textContent = tiempoStr;
+        if (elementos.telemetriaTiempoTranscurrido) elementos.telemetriaTiempoTranscurrido.textContent = tiempoStr;
+
+        if (estado.indiceLineaActiva < totalLineas - 1) {
+          const proxIndice = estado.indiceLineaActiva + 1;
+          seleccionarLineaGcode(proxIndice);
+          const pct = Math.round(((proxIndice + 1) / totalLineas) * 100);
+          if (elementos.metricaNumeroLinea) elementos.metricaNumeroLinea.textContent = `${proxIndice + 1} / ${totalLineas}`;
+          if (elementos.barraProgresoRelleno) elementos.barraProgresoRelleno.style.width = `${pct}%`;
+          if (elementos.etiquetaPorcentajeProgreso) elementos.etiquetaPorcentajeProgreso.textContent = `${pct}%`;
         } else {
           detenerMecanizado();
         }
-      }, 800);
+      }, 400);
     }
   }
 
@@ -1393,58 +1462,58 @@ document.addEventListener('DOMContentLoaded', () => {
     window.visualizadorCNC.cargarTrayectoriaDesdeGCode(estado.lineasPrograma.map(l => l.texto).join('\n'));
   }
 
+  // ==========================================
+  // MONITOREO Y CONFIGURACIÓN DE LÍMITES CNC
+  // ==========================================
+  function configurarMonitoreoLimites() {
+    const banner = document.getElementById('banner-limites-maquina');
+    const lblDetalle = document.getElementById('lbl-limites-detalle');
+    const btnCerrar = document.getElementById('btn-cerrar-alerta-limites');
+    const filaLeyendaExceso = document.getElementById('legend-row-exceso');
+
+    if (btnCerrar && banner) {
+      btnCerrar.addEventListener('click', () => {
+        banner.classList.add('hidden');
+      });
+    }
+
+    if (window.visualizadorCNC) {
+      window.visualizadorCNC.alertaLimitesCallback = (estadoLimites) => {
+        if (!banner || !lblDetalle) return;
+
+        if (estadoLimites && estadoLimites.hayDesbordamiento) {
+          banner.classList.remove('hidden');
+          const lim = window.visualizadorCNC.limitesMaquina;
+          const minP = estadoLimites.minPieza;
+          const maxP = estadoLimites.maxPieza;
+          lblDetalle.textContent = `Pieza: X[${minP.x.toFixed(1)}..${maxP.x.toFixed(1)}] Y[${minP.y.toFixed(1)}..${maxP.y.toFixed(1)}] mm | Máquina: ${lim.maxX} × ${lim.maxY} mm | ${estadoLimites.mensaje}`;
+          if (filaLeyendaExceso) filaLeyendaExceso.style.display = 'flex';
+          imprimirEnConsola('c-alarm', `[ALERTA DE LÍMITES] ¡El modelo sobrepasa el área física de trabajo de la máquina! ${estadoLimites.mensaje}`);
+        } else {
+          banner.classList.add('hidden');
+          if (filaLeyendaExceso) filaLeyendaExceso.style.display = 'none';
+        }
+      };
+
+      // Cargar límites almacenados previamente o usar los por defecto ($130=300, $131=200, $132=60)
+      const guardadoX = parseFloat(localStorage.getItem('cnc_travel_x')) || 300.0;
+      const guardadoY = parseFloat(localStorage.getItem('cnc_travel_y')) || 200.0;
+      const guardadoZ = parseFloat(localStorage.getItem('cnc_travel_z')) || 60.0;
+
+      const inputX = document.getElementById('cfg-travel-x');
+      const inputY = document.getElementById('cfg-travel-y');
+      const inputZ = document.getElementById('cfg-travel-z');
+      if (inputX) inputX.value = guardadoX.toFixed(3);
+      if (inputY) inputY.value = guardadoY.toFixed(3);
+      if (inputZ) inputZ.value = guardadoZ.toFixed(3);
+
+      window.visualizadorCNC.establecerLimitesMaquina(guardadoX, guardadoY, guardadoZ);
+    }
+  }
+
   // Monitoreo y sincronización de límites físicos de la máquina
   configurarMonitoreoLimites();
 
   // Inicializar puente PyQt6
   inicializarPuentePyQt();
 });
-
-// ==========================================
-// MONITOREO Y CONFIGURACIÓN DE LÍMITES CNC
-// ==========================================
-function configurarMonitoreoLimites() {
-  const banner = document.getElementById('banner-limites-maquina');
-  const lblDetalle = document.getElementById('lbl-limites-detalle');
-  const btnCerrar = document.getElementById('btn-cerrar-alerta-limites');
-  const filaLeyendaExceso = document.getElementById('legend-row-exceso');
-
-  if (btnCerrar && banner) {
-    btnCerrar.addEventListener('click', () => {
-      banner.classList.add('hidden');
-    });
-  }
-
-  if (window.visualizadorCNC) {
-    window.visualizadorCNC.alertaLimitesCallback = (estadoLimites) => {
-      if (!banner || !lblDetalle) return;
-
-      if (estadoLimites.hayDesbordamiento) {
-        banner.classList.remove('hidden');
-        const lim = window.visualizadorCNC.limitesMaquina;
-        const minP = estadoLimites.minPieza;
-        const maxP = estadoLimites.maxPieza;
-        lblDetalle.textContent = `Pieza: X[${minP.x.toFixed(1)}..${maxP.x.toFixed(1)}] Y[${minP.y.toFixed(1)}..${maxP.y.toFixed(1)}] mm | Máquina: ${lim.maxX} × ${lim.maxY} mm | ${estadoLimites.mensaje}`;
-        if (filaLeyendaExceso) filaLeyendaExceso.style.display = 'flex';
-        imprimirEnConsola('c-alarm', `[ALERTA DE LÍMITES] ¡El modelo sobrepasa el área física de trabajo de la máquina! ${estadoLimites.mensaje}`);
-      } else {
-        banner.classList.add('hidden');
-        if (filaLeyendaExceso) filaLeyendaExceso.style.display = 'none';
-      }
-    };
-
-    // Cargar límites almacenados previamente o usar los por defecto ($130=300, $131=200, $132=60)
-    const guardadoX = parseFloat(localStorage.getItem('cnc_travel_x')) || 300.0;
-    const guardadoY = parseFloat(localStorage.getItem('cnc_travel_y')) || 200.0;
-    const guardadoZ = parseFloat(localStorage.getItem('cnc_travel_z')) || 60.0;
-
-    const inputX = document.getElementById('cfg-travel-x');
-    const inputY = document.getElementById('cfg-travel-y');
-    const inputZ = document.getElementById('cfg-travel-z');
-    if (inputX) inputX.value = guardadoX.toFixed(3);
-    if (inputY) inputY.value = guardadoY.toFixed(3);
-    if (inputZ) inputZ.value = guardadoZ.toFixed(3);
-
-    window.visualizadorCNC.establecerLimitesMaquina(guardadoX, guardadoY, guardadoZ);
-  }
-}

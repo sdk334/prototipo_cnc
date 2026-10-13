@@ -438,34 +438,44 @@ class VisualizadorCNC {
 
   // Actualiza la posición de la herramienta en pantalla (X, Y, Z)
   establecerPosicionHerramienta(x, y, z) {
-    const dx = Math.abs(this.posicionHerramienta.x - x);
-    const dy = Math.abs(this.posicionHerramienta.y - y);
-    const dz = Math.abs(this.posicionHerramienta.z - z);
+    const numX = Number(x);
+    const numY = Number(y);
+    const numZ = Number(z);
+    if (isNaN(numX) || isNaN(numY) || isNaN(numZ)) {
+      return;
+    }
+
+    const dx = Math.abs(this.posicionHerramienta.x - numX);
+    const dy = Math.abs(this.posicionHerramienta.y - numY);
+    const dz = Math.abs(this.posicionHerramienta.z - numZ);
 
     if (dx < 0.001 && dy < 0.001 && dz < 0.001) {
       return;
     }
 
-    this.posicionHerramienta.x = x;
-    this.posicionHerramienta.y = y;
-    this.posicionHerramienta.z = z;
+    this.posicionHerramienta.x = numX;
+    this.posicionHerramienta.y = numY;
+    this.posicionHerramienta.z = numZ;
 
     const indicadorX = document.getElementById('v-tool-x');
     const indicadorY = document.getElementById('v-tool-y');
     const indicadorZ = document.getElementById('v-tool-z');
-    if (indicadorX) indicadorX.textContent = x.toFixed(1);
-    if (indicadorY) indicadorY.textContent = y.toFixed(1);
-    if (indicadorZ) indicadorZ.textContent = z.toFixed(1);
+    if (indicadorX) indicadorX.textContent = numX.toFixed(1);
+    if (indicadorY) indicadorY.textContent = numY.toFixed(1);
+    if (indicadorZ) indicadorZ.textContent = numZ.toFixed(1);
 
     this.solicitarRenderizado();
   }
 
   // Conversión y proyección espacial 2D y 3D (+Z siempre apunta hacia ARRIBA)
   convertirAPantalla(x, y, z = 0) {
+    const px = Number(x) || 0;
+    const py = Number(y) || 0;
+    const pz = Number(z) || 0;
     const escala = 1.65 * this.zoom;
-    const cx = this.centroPieza ? this.centroPieza.x : 150;
-    const cy = this.centroPieza ? this.centroPieza.y : 150;
-    const cz = this.centroPieza ? this.centroPieza.z : 0;
+    const cx = (this.centroPieza && !isNaN(this.centroPieza.x)) ? this.centroPieza.x : 150;
+    const cy = (this.centroPieza && !isNaN(this.centroPieza.y)) ? this.centroPieza.y : 150;
+    const cz = (this.centroPieza && !isNaN(this.centroPieza.z)) ? this.centroPieza.z : 0;
 
     const centroPantallaX = (this.anchoPantalla / 2) + this.desplazamientoX;
     const centroPantallaY = (this.altoPantalla / 2) + this.desplazamientoY;
@@ -473,30 +483,30 @@ class VisualizadorCNC {
     if (this.modoVista === 'XY') {
       // Plano 2D superior exacto (XY)
       return {
-        x: centroPantallaX + (x - cx) * escala,
-        y: centroPantallaY - (y - cy) * escala,
-        zProf: z
+        x: centroPantallaX + (px - cx) * escala,
+        y: centroPantallaY - (py - cy) * escala,
+        zProf: pz
       };
     } else if (this.modoVista === 'XZ') {
       // Plano 2D frontal (Eje Z vs Eje X, +Z hacia arriba)
       return {
-        x: centroPantallaX + (x - cx) * escala,
-        y: centroPantallaY - ((z - cz) * this.escalaZ * 2.2) * escala,
-        zProf: y
+        x: centroPantallaX + (px - cx) * escala,
+        y: centroPantallaY - ((pz - cz) * this.escalaZ * 2.2) * escala,
+        zProf: py
       };
     } else if (this.modoVista === 'YZ') {
       // Plano 2D lateral (Eje Z vs Eje Y, +Z hacia arriba)
       return {
-        x: centroPantallaX + (y - cy) * escala,
-        y: centroPantallaY - ((z - cz) * this.escalaZ * 2.2) * escala,
-        zProf: x
+        x: centroPantallaX + (py - cy) * escala,
+        y: centroPantallaY - ((pz - cz) * this.escalaZ * 2.2) * escala,
+        zProf: px
       };
     } else {
       // Modo 3D espacial correcto:
       // X = horizontal, Y = fondo, Z = altura (+Z hacia arriba)
-      const dx = (x - cx);
-      const dy = (y - cy);
-      const dz = (z - cz) * this.escalaZ;
+      const dx = (px - cx);
+      const dy = (py - cy);
+      const dz = (pz - cz) * this.escalaZ;
 
       const radAzimut = (this.rotacionAzimut * Math.PI) / 180;
       const radInclinacion = (this.rotacionInclinacion * Math.PI) / 180;
