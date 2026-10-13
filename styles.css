@@ -31,7 +31,7 @@
   --font-display: 'Chakra Petch', var(--font-sans);
 
   /* Dimensiones adaptativas */
-  --sidebar-width: 320px;
+  --sidebar-width: 340px;
 }
 
 /* Reset y caja base */
@@ -371,7 +371,7 @@ body {
 .app-workspace {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 10px var(--sidebar-width, 320px);
+  grid-template-columns: 1fr 10px var(--sidebar-width, 340px);
   gap: 0;
   padding: 8px;
   height: calc(100vh - 76px);
@@ -1209,7 +1209,7 @@ body.resizing-col * {
   overflow-x: hidden;
   padding-left: 4px;
   min-width: 240px;
-  max-width: 650px;
+  max-width: 340px;
 }
 
 .sidebar-block {

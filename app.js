@@ -1525,23 +1525,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const iconToggle = document.getElementById('icon-toggle-sidebar');
     if (!resizer || !workspace || !sidebar) return;
 
-    const ANCHO_MIN = 240; // Límite para que DRO y Jog quepan holgadamente
-    const ANCHO_DEFECTO = 320;
+    const ANCHO_ORIGINAL = 340; // Ancho original estándar de la interfaz
+    const ANCHO_MAX = 340;      // Límite estricto: NO permitir mover el panel más a la izquierda del tamaño original
+    const ANCHO_MIN = 220;      // Límite compacto al ajustar hacia la derecha
 
-    function obtenerAnchoMax() {
-      return Math.min(650, Math.floor(window.innerWidth * 0.55));
-    }
-
-    // Cargar ancho guardado en almacenamiento local
-    let anchoActual = parseFloat(localStorage.getItem('cnc_sidebar_width')) || ANCHO_DEFECTO;
+    // Cargar ancho guardado en almacenamiento local (siempre restringido entre ANCHO_MIN y ANCHO_MAX)
+    let anchoActual = parseFloat(localStorage.getItem('cnc_sidebar_width')) || ANCHO_ORIGINAL;
     if (anchoActual < ANCHO_MIN) anchoActual = ANCHO_MIN;
-    if (anchoActual > obtenerAnchoMax()) anchoActual = obtenerAnchoMax();
+    if (anchoActual > ANCHO_MAX) anchoActual = ANCHO_MAX;
 
     let colapsado = localStorage.getItem('cnc_sidebar_collapsed') === 'true';
 
     function aplicarDimensiones(ancho, guardar = true) {
-      workspace.style.setProperty('--sidebar-width', `${Math.round(ancho)}px`);
-      if (guardar) localStorage.setItem('cnc_sidebar_width', Math.round(ancho));
+      const anchoRestringido = Math.min(ANCHO_MAX, Math.max(ANCHO_MIN, Math.round(ancho)));
+      workspace.style.setProperty('--sidebar-width', `${anchoRestringido}px`);
+      if (guardar) localStorage.setItem('cnc_sidebar_width', anchoRestringido);
       if (window.visualizadorCNC) {
         window.visualizadorCNC.redimensionarLienzo();
       }
@@ -1576,7 +1574,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-    // Arrastre manual para ajustar el tamaño del panel hacia la derecha o izquierda
+    // Arrastre manual: solo permite ajustar hacia la derecha (hacerlo más angosto), nunca más a la izquierda de 340px
     let arrastrando = false;
     let xInicial = 0;
     let anchoInicial = anchoActual;
@@ -1599,13 +1597,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const alMoverMouse = (evento) => {
         if (!arrastrando) return;
-        // Al arrastrar el ratón a la derecha, la cota X aumenta, por lo que el ancho debe disminuir
+        // Al arrastrar a la derecha (evento.clientX > xInicial), delta es negativo -> panel se hace más angosto
+        // Al arrastrar a la izquierda (evento.clientX < xInicial), se detiene rígidamente en 340px (ANCHO_MAX)
         const delta = xInicial - evento.clientX;
         let nuevoAncho = anchoInicial + delta;
 
-        const maximo = obtenerAnchoMax();
         if (nuevoAncho < ANCHO_MIN) nuevoAncho = ANCHO_MIN;
-        if (nuevoAncho > maximo) nuevoAncho = maximo;
+        if (nuevoAncho > ANCHO_MAX) nuevoAncho = ANCHO_MAX;
 
         aplicarDimensiones(nuevoAncho, false);
       };
@@ -1626,7 +1624,7 @@ document.addEventListener('DOMContentLoaded', () => {
       window.addEventListener('mouseup', alSoltarMouse);
     });
 
-    // Doble clic en la barra para alternar rápidamente entre tamaño compacto (250px) y estándar (340px)
+    // Doble clic en la barra para alternar rápidamente entre tamaño compacto (250px) y el estándar original (340px)
     resizer.addEventListener('dblclick', (e) => {
       if (e.target.closest('#btn-toggle-sidebar')) return;
       if (workspace.classList.contains('sidebar-collapsed')) {
@@ -1634,7 +1632,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
       const anchoActualPx = sidebar.getBoundingClientRect().width;
-      const nuevoAncho = (anchoActualPx <= 270) ? 340 : 250;
+      const nuevoAncho = (anchoActualPx <= 270) ? ANCHO_ORIGINAL : 250;
       aplicarDimensiones(nuevoAncho, true);
     });
   }
