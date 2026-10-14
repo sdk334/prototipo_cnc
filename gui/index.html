@@ -52,6 +52,8 @@
       <div class="menu-item" id="menu-herramientas">
         <button class="menu-btn" type="button">Herramientas</button>
         <div class="dropdown-menu">
+          <button class="dropdown-item" id="btn-menu-select-tool"><i class="fa-solid fa-pen-ruler"></i> Tipo de Herramienta (Fresa / Lápiz)...</button>
+          <div class="dropdown-divider"></div>
           <button class="dropdown-item" id="btn-menu-heightmap"><i class="fa-solid fa-layer-group"></i> Mapa de Alturas (Auto-Level)</button>
           <button class="dropdown-item" id="btn-menu-calibration"><i class="fa-solid fa-ruler-combined"></i> Asistente de Calibración Pasos/mm</button>
           <button class="dropdown-item" id="btn-menu-macros"><i class="fa-solid fa-bolt"></i> Comandos Rápidos de Usuario</button>
@@ -140,7 +142,7 @@
       <section class="visualizer-container" id="visualizer-container">
         <!-- Floating Tool Position Badge (Top-Left) -->
         <div class="overlay-floating-badge badge-pos" id="badge-tool-pos">
-          <span class="badge-title">POSICIÓN HERRAMIENTA</span>
+          <span class="badge-title" id="lbl-badge-tool-title">POSICIÓN HERRAMIENTA (FRESA)</span>
           <span class="badge-coords">X:<b id="v-tool-x">0.0</b> Y:<b id="v-tool-y">0.0</b> Z:<b id="v-tool-z">0.0</b></span>
         </div>
 
@@ -190,8 +192,8 @@
             <span class="legend-text">Rápido (G0)</span>
           </div>
           <div class="legend-row">
-            <i class="fa-solid fa-crosshairs legend-symbol icon-tool"></i>
-            <span class="legend-text">Herramienta</span>
+            <i class="fa-solid fa-bore-hole legend-symbol icon-tool" id="legend-icon-tool"></i>
+            <span class="legend-text" id="legend-text-tool">Fresa CNC</span>
           </div>
           <div class="legend-row">
             <i class="fa-solid fa-circle-dot legend-symbol icon-origin"></i>
@@ -259,8 +261,8 @@
           </div>
 
           <div class="viz-tabs">
-            <button class="viz-tab active" id="tab-trayectoria">Trayectoria</button>
-            <button class="viz-tab" id="tab-herramienta">Herramienta</button>
+            <button class="viz-tab active" id="tab-trayectoria"><i class="fa-solid fa-route"></i> Trayectoria</button>
+            <button class="viz-tab" id="tab-herramienta" title="Cambiar tipo de herramienta activa"><i class="fa-solid fa-screwdriver-wrench"></i> Herramienta: <b id="lbl-nombre-herramienta">Fresa CNC</b> <i class="fa-solid fa-caret-down"></i></button>
           </div>
 
           <div class="loaded-file-indicator">
@@ -728,6 +730,13 @@
                 <label><input type="checkbox" checked> Mostrar límites de la cama de trabajo</label>
                 <label><input type="checkbox" checked> Dibujar cono de fresa en modo 3D</label>
               </div>
+              <div class="form-group">
+                <label>Herramienta Activa:</label>
+                <select class="form-control" id="cfg-select-tool-type">
+                  <option value="fresa" selected>Herramienta Actual (Fresa de Corte CNC)</option>
+                  <option value="lapiz">Lápiz de Grafito (Plotter Didáctico)</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -912,6 +921,94 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL ALERTA DE SEGURIDAD (INTERBLOQUEO CNC) ================= -->
+  <div class="modal-backdrop hidden" id="modal-seguridad-backdrop">
+    <div class="modal-dialog modal-seguridad">
+      <div class="modal-header header-seguridad">
+        <div class="modal-title-group">
+          <i class="fa-solid fa-shield-halved modal-icon-seguridad"></i>
+          <h2 class="modal-title" id="lbl-seguridad-titulo">Bloqueo de Seguridad</h2>
+          <span class="modal-subtitle">Protocolo de Interbloqueo CNC (ESCOM - IPN)</span>
+        </div>
+        <button class="btn-modal-close" id="btn-close-seguridad-modal"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body modal-seguridad-body">
+        <div class="seguridad-aviso-box">
+          <i class="fa-solid fa-triangle-exclamation icon-alerta-grande"></i>
+          <div class="seguridad-textos">
+            <h4 id="lbl-seguridad-encabezado">No se puede apagar el husillo durante el mecanizado</h4>
+            <p id="lbl-seguridad-descripcion">
+              El husillo (Spindle) no puede desactivarse mientras el programa de mecanizado está en ejecución.
+              Intentar cortar material con la fresa detenida provocará la fractura inmediata de la herramienta de corte,
+              daños graves a la pieza de trabajo y sobrecarga en los motores de avance.
+            </p>
+          </div>
+        </div>
+        <div class="seguridad-recomendacion">
+          <i class="fa-solid fa-circle-info"></i>
+          <span id="lbl-seguridad-accion"><b>Acción requerida:</b> Si necesita detener el husillo, presione primero <b>PAUSA</b> o <b>DETENER</b> en el panel de control de ejecución.</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-primary-action btn-danger-action" id="btn-entendido-seguridad">Entendido</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL SELECCIÓN DE HERRAMIENTA (FRESA / LÁPIZ) ================= -->
+  <div class="modal-backdrop hidden" id="modal-tool-backdrop">
+    <div class="modal-dialog modal-tool-dialog">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <i class="fa-solid fa-screwdriver-wrench modal-icon"></i>
+          <h2 class="modal-title">Selección de Herramienta CNC</h2>
+          <span class="modal-subtitle">Configuración del elemento de trabajo montado (ESCOM - IPN)</span>
+        </div>
+        <button class="btn-modal-close" id="btn-close-tool-modal"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <p class="tool-modal-instruction">Seleccione la herramienta montada en el cabezal de la máquina CNC:</p>
+        <div class="tool-cards-grid">
+          <!-- Tarjeta 1: Fresa de corte CNC (Herramienta actual) -->
+          <div class="tool-select-card active" id="card-tool-fresa" data-tool="fresa">
+            <div class="tool-select-indicator"><i class="fa-solid fa-circle-check"></i></div>
+            <div class="tool-badge-pill">CORTE &amp; FRESADO</div>
+            <div class="tool-preview-box">
+              <i class="fa-solid fa-bore-hole tool-preview-icon"></i>
+            </div>
+            <h3 class="tool-card-title">Herramienta Actual (Fresa CNC)</h3>
+            <p class="tool-card-desc">Fresa de carburo de tungsteno / V-bit de punta cónica montada en mandril portaherramientas ER11. Diseñada para grabado y corte de PCB, madera y acrílico a altas RPM.</p>
+            <div class="tool-specs-list">
+              <span><i class="fa-solid fa-check text-cyan"></i> Gavilanes helicoidales rotatorios</span>
+              <span><i class="fa-solid fa-check text-cyan"></i> Punta cónica ultra fina para PCB</span>
+              <span><i class="fa-solid fa-check text-cyan"></i> Requiere husillo (Spindle) encendido</span>
+            </div>
+          </div>
+
+          <!-- Tarjeta 2: Lápiz -->
+          <div class="tool-select-card" id="card-tool-lapiz" data-tool="lapiz">
+            <div class="tool-select-indicator"><i class="fa-solid fa-circle-check"></i></div>
+            <div class="tool-badge-pill tool-badge-pencil">DIBUJO DIDÁCTICO</div>
+            <div class="tool-preview-box tool-preview-pencil">
+              <i class="fa-solid fa-pencil tool-preview-icon"></i>
+            </div>
+            <h3 class="tool-card-title">Lápiz (Plotter Didáctico)</h3>
+            <p class="tool-card-desc">Lápiz de grafito escolar montado mediante adaptador elástico en el cabezal Z. Ideal para prácticas de laboratorio seguras sobre papel sin desgaste de fresas ni roturas mecánicas.</p>
+            <div class="tool-specs-list">
+              <span><i class="fa-solid fa-check text-gold"></i> Cuerpo hexagonal amarillo tradicional</span>
+              <span><i class="fa-solid fa-check text-gold"></i> Cuello de madera afilada y grafito #2</span>
+              <span><i class="fa-solid fa-check text-gold"></i> Virola metálica y borrador en cabezal</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary-action" id="btn-cancel-tool">Cerrar</button>
+        <button class="btn-primary-action" id="btn-apply-tool">Aplicar Herramienta</button>
       </div>
     </div>
   </div>

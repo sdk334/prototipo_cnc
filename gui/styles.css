@@ -1643,6 +1643,19 @@ body.resizing-col * {
   color: var(--gold-tool);
 }
 
+.btn-spindle-toggle.modo-lapiz {
+  background-color: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.btn-spindle-toggle.modo-lapiz .spindle-indicator {
+  background-color: #484f58;
+  box-shadow: none;
+}
+
 .spindle-indicator {
   width: 8px;
   height: 8px;
@@ -2009,6 +2022,244 @@ body.resizing-col * {
 .dict-table code {
   font-family: var(--font-mono);
   color: var(--cyan-primary);
+}
+
+/* Modal de Alerta de Seguridad e Interbloqueo */
+.modal-seguridad {
+  max-width: 520px;
+  border: 1.5px solid #ff3b30;
+  box-shadow: 0 16px 48px rgba(255, 59, 48, 0.4), 0 0 0 1px rgba(255, 59, 48, 0.25);
+  animation: modal-appear 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.header-seguridad {
+  border-bottom: 1px solid rgba(255, 59, 48, 0.35);
+  background: linear-gradient(90deg, rgba(255, 59, 48, 0.16), transparent);
+}
+
+.modal-icon-seguridad {
+  font-size: 20px;
+  color: #ff3b30;
+  animation: pulse-icon 1.5s infinite ease-in-out;
+}
+
+@keyframes pulse-icon {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.15); opacity: 0.85; }
+}
+
+.modal-seguridad-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px;
+}
+
+.seguridad-aviso-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  background: rgba(255, 59, 48, 0.08);
+  border: 1px solid rgba(255, 59, 48, 0.28);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.icon-alerta-grande {
+  font-size: 28px;
+  color: #ff453a;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.seguridad-textos h4 {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  color: #ff453a;
+  margin-bottom: 6px;
+}
+
+.seguridad-textos p {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #e6edf3;
+  margin: 0;
+}
+
+.seguridad-recomendacion {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(56, 139, 253, 0.1);
+  border: 1px solid rgba(56, 139, 253, 0.25);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #79c0ff;
+}
+
+.seguridad-recomendacion i {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.btn-danger-action {
+  background: linear-gradient(135deg, #d32f2f, #b71c1c);
+  color: #ffffff !important;
+  border: 1px solid #ff3b30;
+  padding: 8px 24px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-danger-action:hover {
+  background: linear-gradient(135deg, #f44336, #d32f2f);
+  box-shadow: 0 0 14px rgba(255, 59, 48, 0.5);
+}
+
+/* Efecto de rechazo / bloqueo en el botón de Husillo */
+.btn-spindle-toggle.btn-spindle-denied {
+  animation: shake-deny 0.5s cubic-bezier(.36,.07,.19,.97) both !important;
+  border-color: #ff3b30 !important;
+  color: #ff3b30 !important;
+  box-shadow: 0 0 14px rgba(255, 59, 48, 0.7) !important;
+}
+
+@keyframes shake-deny {
+  10%, 90% { transform: translate3d(-1px, 0, 0); }
+  20%, 80% { transform: translate3d(2px, 0, 0); }
+  30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+  40%, 60% { transform: translate3d(4px, 0, 0); }
+}
+
+/* Modal de Selección de Herramienta */
+.modal-tool-dialog {
+  max-width: 680px;
+}
+
+.tool-modal-instruction {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+.tool-cards-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.tool-select-card {
+  position: relative;
+  background-color: var(--bg-card);
+  border: 1.5px solid var(--border-color);
+  border-radius: 8px;
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.tool-select-card:hover {
+  border-color: var(--cyan-primary);
+  background-color: #141b24;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.tool-select-card.active {
+  border-color: var(--cyan-primary);
+  background: linear-gradient(145deg, rgba(0, 229, 255, 0.08), rgba(18, 52, 64, 0.25));
+  box-shadow: 0 0 0 1px var(--cyan-primary), 0 8px 24px rgba(0, 229, 255, 0.18);
+}
+
+.tool-select-indicator {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  font-size: 18px;
+  color: #484f58;
+  transition: color 0.2s ease;
+}
+
+.tool-select-card.active .tool-select-indicator {
+  color: var(--cyan-primary);
+}
+
+.tool-badge-pill {
+  align-self: flex-start;
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: rgba(0, 229, 255, 0.12);
+  color: var(--cyan-primary);
+  border: 1px solid rgba(0, 229, 255, 0.3);
+}
+
+.tool-badge-pill.tool-badge-pencil {
+  background: rgba(255, 183, 3, 0.12);
+  color: #ffb703;
+  border-color: rgba(255, 183, 3, 0.3);
+}
+
+.tool-preview-box {
+  height: 68px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border-color);
+}
+
+.tool-preview-icon {
+  font-size: 32px;
+  color: var(--cyan-primary);
+}
+
+.tool-preview-pencil .tool-preview-icon {
+  color: #ffb703;
+}
+
+.tool-card-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0;
+}
+
+.tool-card-desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.tool-specs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-primary);
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tool-specs-list span i {
+  margin-right: 4px;
 }
 
 /* ==========================================================================

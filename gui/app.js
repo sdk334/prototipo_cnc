@@ -64,7 +64,9 @@ document.addEventListener('DOMContentLoaded', () => {
       { texto: "G0 Z5.0" },
       { texto: "M5 ; Spindle OFF" }
     ],
-    temporizadorEjecucion: null
+    temporizadorEjecucion: null,
+    // Tipo de herramienta seleccionada ('fresa' | 'lapiz')
+    tipoHerramienta: localStorage.getItem('cnc_tipo_herramienta') || 'fresa'
   };
 
   // ==========================================
@@ -162,6 +164,29 @@ document.addEventListener('DOMContentLoaded', () => {
     botonCerrarDiccionario: document.getElementById('btn-close-dict-modal'),
     campoBusquedaDiccionario: document.getElementById('dict-search'),
     cuerpoTablaDiccionario: document.getElementById('dict-table-body'),
+    // Modal de Alerta de Seguridad
+    modalSeguridad: document.getElementById('modal-seguridad-backdrop'),
+    botonCerrarSeguridad: document.getElementById('btn-close-seguridad-modal'),
+    botonEntendidoSeguridad: document.getElementById('btn-entendido-seguridad'),
+    tituloSeguridad: document.getElementById('lbl-seguridad-titulo'),
+    encabezadoSeguridad: document.getElementById('lbl-seguridad-encabezado'),
+    descripcionSeguridad: document.getElementById('lbl-seguridad-descripcion'),
+    accionSeguridad: document.getElementById('lbl-seguridad-accion'),
+    // Pestañas y Selección de Herramienta
+    botonTabTrayectoria: document.getElementById('tab-trayectoria'),
+    botonTabHerramienta: document.getElementById('tab-herramienta'),
+    etiquetaNombreHerramienta: document.getElementById('lbl-nombre-herramienta'),
+    modalSeleccionHerramienta: document.getElementById('modal-tool-backdrop'),
+    botonCerrarModalHerramienta: document.getElementById('btn-close-tool-modal'),
+    botonCancelarModalHerramienta: document.getElementById('btn-cancel-tool'),
+    botonAplicarModalHerramienta: document.getElementById('btn-apply-tool'),
+    tarjetaToolFresa: document.getElementById('card-tool-fresa'),
+    tarjetaToolLapiz: document.getElementById('card-tool-lapiz'),
+    selectorConfigHerramienta: document.getElementById('cfg-select-tool-type'),
+    botonMenuSeleccionarHerramienta: document.getElementById('btn-menu-select-tool'),
+    etiquetaBadgeHerramienta: document.getElementById('lbl-badge-tool-title'),
+    iconoLegendHerramienta: document.getElementById('legend-icon-tool'),
+    textoLegendHerramienta: document.getElementById('legend-text-tool'),
     selectorArchivoGcode: document.getElementById('file-input-gcode'),
     botonCargarDemo: document.getElementById('btn-menu-load-sample'),
     botonAbrirArchivoMenu: document.getElementById('btn-menu-open-file'),
@@ -186,6 +211,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Solicitar escaneo inmediato de puertos serie reales
         window.puenteCNC.escanearPuertos();
+
+        // Sincronizar herramienta guardada con el controlador Python
+        if (typeof window.puenteCNC.establecerTipoHerramienta === 'function') {
+          window.puenteCNC.establecerTipoHerramienta(estado.tipoHerramienta);
+        }
       });
     } else {
       imprimirEnConsola('c-info', '[MODO NAVEGADOR] Ejecutando en modo didáctico offline.');
@@ -239,70 +269,105 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    // 2. Recepción de telemetría en tiempo real desde el ciclo de 200 ms de Python (con diffing DOM)
+    // 2. Recepción de telemetría en tiempo real desde Python (coalescida a 60 FPS con RAF)
+    let datosEstadoPendiente = null;
+    let animFrameEstado = null;
+
     puente.senial_estado.connect((jsonEstado) => {
       try {
-        const d = JSON.parse(jsonEstado);
+        datosEstadoPendiente = JSON.parse(jsonEstado);
 
-        // Actualizar coordenadas de trabajo (WPos) y de máquina (MPos) con sanitización
-        if (d.wpos && Array.isArray(d.wpos)) {
-          const wx = Number(d.wpos[0]);
-          const wy = Number(d.wpos[1]);
-          const wz = Number(d.wpos[2]);
+        // La posición espacial se transmite directamente al visualizador para interpolación LERP instantánea
+        if (datosEstadoPendiente.wpos && Array.isArray(datosEstadoPendiente.wpos)) {
+          const wx = Number(datosEstadoPendiente.wpos[0]);
+          const wy = Number(datosEstadoPendiente.wpos[1]);
+          const wz = Number(datosEstadoPendiente.wpos[2]);
           if (!isNaN(wx)) estado.coordenadasTrabajo.x = wx;
           if (!isNaN(wy)) estado.coordenadasTrabajo.y = wy;
           if (!isNaN(wz)) estado.coordenadasTrabajo.z = wz;
+          if (window.visualizadorCNC) {
+            window.visualizadorCNC.establecerPosicionHerramienta(wx, wy, wz);
+          }
         }
 
-        if (d.mpos && Array.isArray(d.mpos)) {
-          const mx = Number(d.mpos[0]);
-          const my = Number(d.mpos[1]);
-          const mz = Number(d.mpos[2]);
+        if (datosEstadoPendiente.mpos && Array.isArray(datosEstadoPendiente.mpos)) {
+          const mx = Number(datosEstadoPendiente.mpos[0]);
+          const my = Number(datosEstadoPendiente.mpos[1]);
+          const mz = Number(datosEstadoPendiente.mpos[2]);
           if (!isNaN(mx)) estado.coordenadasMaquina.x = mx;
           if (!isNaN(my)) estado.coordenadasMaquina.y = my;
           if (!isNaN(mz)) estado.coordenadasMaquina.z = mz;
         }
 
-        actualizarLecturasDRO();
-        establecerEstadoOperativo(d.estado);
+        // Actualización de métricas del DOM sincronizada con el refresco del monitor (elimina layout thrashing)
+        if (!animFrameEstado) {
+          animFrameEstado = requestAnimationFrame(() => {
+            animFrameEstado = null;
+            if (!datosEstadoPendiente) return;
+            const d = datosEstadoPendiente;
 
-        // Telemetría de avance y husillo (solo actualizar texto si cambió)
-        const txtFeed = `${Math.round(d.feed_real)} mm/min`;
-        if (elementos.metricaVelocidadAvance.textContent !== txtFeed) {
-          elementos.metricaVelocidadAvance.textContent = txtFeed;
-        }
+            actualizarLecturasDRO();
+            establecerEstadoOperativo(d.estado);
 
-        const txtRpm = `${Math.round(d.spindle_real)} RPM`;
-        if (elementos.etiquetaRpmEnVivo.textContent !== txtRpm) {
-          elementos.etiquetaRpmEnVivo.textContent = txtRpm;
-        }
+            // Telemetría de avance y husillo (solo actualizar texto si cambió)
+            const txtFeed = `${Math.round(d.feed_real)} mm/min`;
+            if (elementos.metricaVelocidadAvance.textContent !== txtFeed) {
+              elementos.metricaVelocidadAvance.textContent = txtFeed;
+            }
 
-        if (estado.husilloActivo !== d.spindle_encendido) {
-          estado.husilloActivo = d.spindle_encendido;
-          if (estado.husilloActivo) {
-            elementos.botonAlternarHusillo.classList.add('active');
-            elementos.textoBotonHusillo.textContent = 'Spindle ON';
-            elementos.metricaEstadoHusillo.textContent = 'ON';
-            elementos.metricaEstadoHusillo.classList.add('highlight-cyan');
-          } else {
-            elementos.botonAlternarHusillo.classList.remove('active');
-            elementos.textoBotonHusillo.textContent = 'Spindle OFF';
-            elementos.metricaEstadoHusillo.textContent = 'OFF';
-            elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
-          }
-        }
+            if (estado.tipoHerramienta === 'lapiz') {
+              estado.husilloActivo = false;
+              if (elementos.etiquetaRpmEnVivo && elementos.etiquetaRpmEnVivo.textContent !== '0 RPM') {
+                elementos.etiquetaRpmEnVivo.textContent = '0 RPM';
+              }
+              if (elementos.metricaEstadoHusillo && elementos.metricaEstadoHusillo.textContent !== 'OFF (LÁPIZ)') {
+                elementos.metricaEstadoHusillo.textContent = 'OFF (LÁPIZ)';
+                elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
+              }
+              if (elementos.textoBotonHusillo && elementos.textoBotonHusillo.textContent !== 'Spindle Inactivo (Lápiz)') {
+                elementos.textoBotonHusillo.textContent = 'Spindle Inactivo (Lápiz)';
+                elementos.botonAlternarHusillo.classList.remove('active');
+                elementos.botonAlternarHusillo.classList.add('modo-lapiz');
+              }
+              if (elementos.iconoVentiladorHusillo) {
+                elementos.iconoVentiladorHusillo.classList.remove('fa-spin');
+              }
+            } else {
+              const txtRpm = `${Math.round(d.spindle_real)} RPM`;
+              if (elementos.etiquetaRpmEnVivo.textContent !== txtRpm) {
+                elementos.etiquetaRpmEnVivo.textContent = txtRpm;
+              }
 
-        // Búfer del planificador
-        const txtBuffer = `${d.buffer_planificador} / ${d.buffer_rx_libre}`;
-        if (elementos.telemetriaBuffer.textContent !== txtBuffer) {
-          elementos.telemetriaBuffer.textContent = txtBuffer;
-        }
+              if (estado.husilloActivo !== d.spindle_encendido) {
+                estado.husilloActivo = d.spindle_encendido;
+                if (estado.husilloActivo) {
+                  elementos.botonAlternarHusillo.classList.add('active');
+                  elementos.textoBotonHusillo.textContent = 'Spindle ON';
+                  elementos.metricaEstadoHusillo.textContent = 'ON';
+                  elementos.metricaEstadoHusillo.classList.add('highlight-cyan');
+                } else {
+                  elementos.botonAlternarHusillo.classList.remove('active');
+                  elementos.textoBotonHusillo.textContent = 'Spindle OFF';
+                  elementos.metricaEstadoHusillo.textContent = 'OFF';
+                  elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
+                }
+              }
+            }
+            actualizarEstadoGiroVisualizador();
 
-        // Pines de fin de carrera y sondas activas
-        const txtLimites = d.pines_limite ? `Límites: [${d.pines_limite}]` : 'Límites: OFF';
-        if (elementos.etiquetaEstadoLimites.textContent !== txtLimites) {
-          elementos.etiquetaEstadoLimites.textContent = txtLimites;
-          elementos.puntoIndicadorLimites.className = d.pines_limite ? 'indicator-dot dot-connected' : 'indicator-dot dot-off';
+            // Búfer del planificador
+            const txtBuffer = `${d.buffer_planificador} / ${d.buffer_rx_libre}`;
+            if (elementos.telemetriaBuffer.textContent !== txtBuffer) {
+              elementos.telemetriaBuffer.textContent = txtBuffer;
+            }
+
+            // Pines de fin de carrera y sondas activas
+            const txtLimites = d.pines_limite ? `Límites: [${d.pines_limite}]` : 'Límites: OFF';
+            if (elementos.etiquetaEstadoLimites.textContent !== txtLimites) {
+              elementos.etiquetaEstadoLimites.textContent = txtLimites;
+              elementos.puntoIndicadorLimites.className = d.pines_limite ? 'indicator-dot dot-connected' : 'indicator-dot dot-off';
+            }
+          });
         }
       } catch (e) {
         console.error('Error al procesar estado de telemetría:', e);
@@ -314,23 +379,36 @@ document.addEventListener('DOMContentLoaded', () => {
       imprimirEnConsola(tipo, mensaje);
     });
 
-    // 4. Progreso de transmisión de G-Code en hardware real
+    // 4. Progreso de transmisión de G-Code en hardware real (sincronizado a 60 FPS)
+    let datosProgresoPendiente = null;
+    let animFrameProgreso = null;
+
     puente.senial_progreso.connect((lineaActual, totalLineas, porcentaje, tiempo) => {
+      datosProgresoPendiente = { lineaActual, totalLineas, porcentaje, tiempo };
       estado.indiceLineaActiva = Math.max(0, lineaActual - 1);
-      elementos.metricaNumeroLinea.textContent = `${lineaActual} / ${totalLineas}`;
-      elementos.barraProgresoRelleno.style.width = `${porcentaje}%`;
-      elementos.etiquetaPorcentajeProgreso.textContent = `${porcentaje}%`;
-      elementos.metricaTiempoTranscurrido.textContent = tiempo;
-      elementos.telemetriaTiempoTranscurrido.textContent = tiempo;
 
-      resaltarLineaGcodeActiva();
+      if (!animFrameProgreso) {
+        animFrameProgreso = requestAnimationFrame(() => {
+          animFrameProgreso = null;
+          if (!datosProgresoPendiente) return;
+          const { lineaActual: act, totalLineas: tot, porcentaje: pct, tiempo: t } = datosProgresoPendiente;
 
-      if (lineaActual >= totalLineas) {
-        estado.enEjecucion = false;
-        estado.enPausa = false;
-        elementos.botonIniciarMecanizado.classList.remove('hidden');
-        elementos.botonPausarMecanizado.classList.add('hidden');
-        elementos.botonDetenerMecanizado.classList.add('hidden');
+          elementos.metricaNumeroLinea.textContent = `${act} / ${tot}`;
+          elementos.barraProgresoRelleno.style.width = `${pct}%`;
+          elementos.etiquetaPorcentajeProgreso.textContent = `${pct}%`;
+          elementos.metricaTiempoTranscurrido.textContent = t;
+          elementos.telemetriaTiempoTranscurrido.textContent = t;
+
+          resaltarLineaGcodeActiva();
+
+          if (act >= tot) {
+            estado.enEjecucion = false;
+            estado.enPausa = false;
+            elementos.botonIniciarMecanizado.classList.remove('hidden');
+            elementos.botonPausarMecanizado.classList.add('hidden');
+            elementos.botonDetenerMecanizado.classList.add('hidden');
+          }
+        });
       }
     });
 
@@ -362,6 +440,13 @@ document.addEventListener('DOMContentLoaded', () => {
         console.error('Error al procesar error didáctico:', e);
       }
     });
+
+    // 7. Alertas de seguridad e interbloqueos de la máquina
+    if (puente.senial_alerta_seguridad) {
+      puente.senial_alerta_seguridad.connect((titulo, encabezado, descripcion) => {
+        mostrarAlertaSeguridadHusillo(titulo, encabezado, descripcion);
+      });
+    }
   }
 
   function conectarPuertoSeleccionado() {
@@ -461,6 +546,28 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         elementos.puntoIndicadorEstado.classList.add('dot-off');
       }
+    }
+    actualizarEstadoGiroVisualizador();
+  }
+
+  // Sincronización de giro de herramienta entre estado CNC, UI y visualizador gráfico
+  function actualizarEstadoGiroVisualizador() {
+    const esLapiz = (estado.tipoHerramienta === 'lapiz');
+    const debeGirar = !esLapiz && (
+                      (estado.enEjecucion && !estado.enPausa && estado.husilloActivo) ||
+                      (estado.estadoOperativo === 'RUN' && estado.husilloActivo) ||
+                      estado.husilloActivo);
+
+    if (elementos.iconoVentiladorHusillo) {
+      if (debeGirar) {
+        elementos.iconoVentiladorHusillo.classList.add('fa-spin');
+      } else {
+        elementos.iconoVentiladorHusillo.classList.remove('fa-spin');
+      }
+    }
+
+    if (window.visualizadorCNC && typeof window.visualizadorCNC.establecerGiroHerramienta === 'function') {
+      window.visualizadorCNC.establecerGiroHerramienta(debeGirar);
     }
   }
 
@@ -578,6 +685,45 @@ document.addEventListener('DOMContentLoaded', () => {
   // CONTROL DEL HUSILLO DE FRESADO
   // ==========================================
   function alternarHusillo() {
+    // Si la herramienta activa es el lápiz, el husillo no debe encenderse
+    if (estado.tipoHerramienta === 'lapiz') {
+      imprimirEnConsola('c-warn', '[MODO LÁPIZ] El husillo no puede encenderse porque la herramienta activa es un lápiz.');
+      mostrarAlertaSeguridadHusillo(
+        'HERRAMIENTA TIPO LÁPIZ ACTIVA',
+        'El husillo no puede encenderse en modo Lápiz',
+        'Está utilizando un lápiz didáctico para dibujo/trazado. El motor del husillo (Spindle) permanece apagado en esta modalidad para proteger el accesorio y evitar accidentes.\n\nPara usar el husillo, cambie la herramienta a Fresa CNC en el selector de herramienta.'
+      );
+      if (elementos.botonAlternarHusillo) {
+        elementos.botonAlternarHusillo.classList.add('btn-spindle-denied');
+        setTimeout(() => {
+          elementos.botonAlternarHusillo.classList.remove('btn-spindle-denied');
+        }, 700);
+      }
+      return;
+    }
+
+    const estaMecanizando = estado.enEjecucion || 
+                            estado.estadoOperativo === 'RUN' || 
+                            (estado.estadoOperativo === 'HOLD' && estado.enEjecucion);
+
+    // INTERBLOQUEO DE SEGURIDAD CNC: Prohibido apagar el husillo mientras se mecaniza
+    if (estado.husilloActivo && estaMecanizando) {
+      mostrarAlertaSeguridadHusillo(
+        'BLOQUEO DE SEGURIDAD DEL HUSILLO',
+        'No es posible apagar el husillo mientras la máquina está mecanizando',
+        'Apagar el husillo (Spindle) durante el mecanizado provocaría la rotura inmediata de la herramienta de corte, daños a la pieza de trabajo o sobrecarga en los motores paso a paso.\n\nPara apagar el husillo de forma segura, pause o detenga primero el mecanizado desde el panel de control.'
+      );
+      imprimirEnConsola('c-alarm', '[SEGURIDAD] Intento de apagado de husillo denegado durante el mecanizado.');
+
+      if (elementos.botonAlternarHusillo) {
+        elementos.botonAlternarHusillo.classList.add('btn-spindle-denied');
+        setTimeout(() => {
+          elementos.botonAlternarHusillo.classList.remove('btn-spindle-denied');
+        }, 700);
+      }
+      return;
+    }
+
     const nuevoEstado = !estado.husilloActivo;
     if (window.puenteCNC) {
       window.puenteCNC.controlarSpindle(nuevoEstado, estado.revolucionesPorMinuto);
@@ -597,12 +743,30 @@ document.addEventListener('DOMContentLoaded', () => {
         imprimirEnConsola('c-grbl', '> M5');
       }
     }
+    actualizarEstadoGiroVisualizador();
   }
 
   elementos.botonAlternarHusillo.addEventListener('click', alternarHusillo);
 
   elementos.entradaRpmHusillo.addEventListener('change', (evento) => {
-    estado.revolucionesPorMinuto = parseInt(evento.target.value, 10) || 0;
+    let nuevaRpm = parseInt(evento.target.value, 10) || 0;
+    const estaMecanizando = estado.enEjecucion || 
+                            estado.estadoOperativo === 'RUN' || 
+                            (estado.estadoOperativo === 'HOLD' && estado.enEjecucion);
+
+    if (estaMecanizando && nuevaRpm <= 0) {
+      nuevaRpm = Math.max(1000, estado.revolucionesPorMinuto || 12000);
+      evento.target.value = nuevaRpm;
+      mostrarAlertaSeguridadHusillo(
+        'VELOCIDAD NO PERMITIDA',
+        'No se puede reducir la velocidad del husillo a 0 RPM durante el mecanizado',
+        'Detener las revoluciones del husillo mientras la fresa avanza causará la rotura inmediata de la herramienta de corte.'
+      );
+      imprimirEnConsola('c-alarm', '[SEGURIDAD] No se puede fijar velocidad de husillo en 0 RPM durante el mecanizado.');
+      return;
+    }
+
+    estado.revolucionesPorMinuto = nuevaRpm;
     elementos.etiquetaRpmEnVivo.textContent = `${estado.revolucionesPorMinuto} RPM`;
     if (estado.husilloActivo && window.puenteCNC) {
       window.puenteCNC.controlarSpindle(true, estado.revolucionesPorMinuto);
@@ -610,7 +774,13 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   elementos.deslizadorModificadorHusillo.addEventListener('input', (evento) => {
-    estado.modificadorHusillo = parseInt(evento.target.value, 10);
+    let modVal = parseInt(evento.target.value, 10);
+    const estaMecanizando = estado.enEjecucion || estado.estadoOperativo === 'RUN';
+    if (estaMecanizando && modVal < 10) {
+      modVal = 10;
+      evento.target.value = 10;
+    }
+    estado.modificadorHusillo = modVal;
     const rpmAjustadas = Math.round(estado.revolucionesPorMinuto * (estado.modificadorHusillo / 100));
     elementos.etiquetaRpmEnVivo.textContent = `${rpmAjustadas} RPM`;
   });
@@ -775,15 +945,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  let ultimoIndiceResaltado = -1;
+
   function resaltarLineaGcodeActiva() {
     const idx = estado.indiceLineaActiva;
+    if (idx === ultimoIndiceResaltado) return;
+    ultimoIndiceResaltado = idx;
+
     const viewport = elementos.visorGcodeViewport || document.getElementById('gcode-list-viewport');
     if (viewport) {
       const posTop = idx * ALTURA_LINEA_GCODE;
       const viewTop = viewport.scrollTop;
       const viewBottom = viewTop + viewport.clientHeight;
 
-      if (posTop < viewTop + 20 || posTop > viewBottom - 40) {
+      if (posTop < viewTop + 10 || posTop > viewBottom - 30) {
         viewport.scrollTop = Math.max(0, posTop - (viewport.clientHeight / 2));
       }
     }
@@ -822,6 +997,21 @@ document.addEventListener('DOMContentLoaded', () => {
   function procesarComandoMdi(comandoSinFormato) {
     const comando = comandoSinFormato.trim();
     if (!comando) return;
+
+    const estaMecanizando = estado.enEjecucion || 
+                            estado.estadoOperativo === 'RUN' || 
+                            (estado.estadoOperativo === 'HOLD' && estado.enEjecucion);
+
+    // Interbloqueo de comando M5 manual durante mecanizado
+    if (estaMecanizando && /\bM0?5\b/i.test(comando)) {
+      imprimirEnConsola('c-alarm', '[SEGURIDAD] Comando M5 bloqueado: No se puede apagar el husillo durante el mecanizado.');
+      mostrarAlertaSeguridadHusillo(
+        'COMANDO M5 BLOQUEADO',
+        'Apagado manual de husillo no permitido',
+        'El comando M5 fue rechazado porque el mecanizado está en curso. Para apagar el husillo de forma segura, pause o detenga el programa primero.'
+      );
+      return;
+    }
 
     if (window.puenteCNC) {
       window.puenteCNC.enviarMDI(comando);
@@ -999,12 +1189,23 @@ document.addEventListener('DOMContentLoaded', () => {
     estado.enEjecucion = true;
     estado.enPausa = false;
     establecerEstadoOperativo('RUN');
+    actualizarEstadoGiroVisualizador();
 
     elementos.botonIniciarMecanizado.classList.add('hidden');
     elementos.botonPausarMecanizado.classList.remove('hidden');
     elementos.botonDetenerMecanizado.classList.remove('hidden');
 
     const textoCompleto = estado.lineasPrograma.map(l => l.texto).join('\n');
+
+    if (estado.tipoHerramienta === 'lapiz') {
+      const tieneM3 = estado.lineasPrograma.some(l => /\bM0?[34]\b/i.test(l.texto || ''));
+      if (tieneM3) {
+        imprimirEnConsola(
+          'c-warn',
+          '[MODO LÁPIZ] El código G contiene códigos de encendido de motor (M3/M4), pero el husillo no se encenderá por estar en modo lápiz.'
+        );
+      }
+    }
 
     if (window.puenteCNC) {
       window.puenteCNC.iniciarPrograma(textoCompleto);
@@ -1017,6 +1218,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
       estado.temporizadorEjecucion = setInterval(() => {
         if (!estado.enEjecucion || estado.enPausa) return;
+
+        // Comprobación de corte con husillo apagado en modo didáctico (solo para fresa)
+        const lineaActualObj = estado.lineasPrograma[estado.indiceLineaActiva];
+        if (lineaActualObj && lineaActualObj.texto) {
+          const tLimpio = lineaActualObj.texto.trim().toUpperCase();
+          const esCorte = /\bG0?[123]\b/.test(tLimpio);
+          if (esCorte && !estado.husilloActivo && estado.tipoHerramienta !== 'lapiz') {
+            pausarMecanizado();
+            mostrarAlertaSeguridadHusillo(
+              '¡CORTE CON HUSILLO APAGADO!',
+              'Mecanizado pausado automáticamente por seguridad',
+              `Se detectó comando de corte (${tLimpio}) con el husillo detenido. El mecanizado ha sido pausado para evitar la rotura de la fresa.`
+            );
+            imprimirEnConsola('c-alarm', `[SEGURIDAD CRÍTICA] Corte detectado sin husillo encendido (${tLimpio}). Mecanizado pausado.`);
+            return;
+          }
+        }
+
         segTranscurridos++;
         const minutos = String(Math.floor(segTranscurridos / 60)).padStart(2, '0');
         const segundos = String(segTranscurridos % 60).padStart(2, '0');
@@ -1049,6 +1268,7 @@ document.addEventListener('DOMContentLoaded', () => {
       elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-pause"></i> PAUSA';
       establecerEstadoOperativo('RUN');
     }
+    actualizarEstadoGiroVisualizador();
   }
 
   function detenerMecanizado() {
@@ -1063,6 +1283,7 @@ document.addEventListener('DOMContentLoaded', () => {
     elementos.botonDetenerMecanizado.classList.add('hidden');
     elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-pause"></i> PAUSA';
     establecerEstadoOperativo('IDLE');
+    actualizarEstadoGiroVisualizador();
   }
 
   elementos.botonIniciarMecanizado.addEventListener('click', iniciarMecanizado);
@@ -1172,6 +1393,12 @@ document.addEventListener('DOMContentLoaded', () => {
       window.puenteCNC.enviarMDI(`$132=${travelZ.toFixed(1)}`);
     }
 
+    // Guardar tipo de herramienta si se seleccionó en configuración
+    const selHerramienta = document.getElementById('cfg-select-tool-type');
+    if (selHerramienta && selHerramienta.value) {
+      actualizarUIPorTipoHerramienta(selHerramienta.value);
+    }
+
     elementos.modalConfiguracion.classList.add('hidden');
     imprimirEnConsola('c-info', `[CONFIG] Parámetros guardados. Área útil CNC: ${travelX} × ${travelY} × ${travelZ} mm.`);
     if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
@@ -1201,6 +1428,215 @@ document.addEventListener('DOMContentLoaded', () => {
     elementos.modalDiccionario.classList.add('hidden');
     if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
   });
+
+  // Modal de Alerta de Seguridad (Interbloqueos de la Máquina)
+  function mostrarAlertaSeguridadHusillo(titulo, encabezado, descripcion, accion) {
+    if (elementos.tituloSeguridad && titulo) elementos.tituloSeguridad.textContent = titulo;
+    if (elementos.encabezadoSeguridad && encabezado) elementos.encabezadoSeguridad.textContent = encabezado;
+    if (elementos.descripcionSeguridad && descripcion) elementos.descripcionSeguridad.textContent = descripcion;
+    if (elementos.accionSeguridad && accion) elementos.accionSeguridad.innerHTML = accion;
+    if (elementos.modalSeguridad) elementos.modalSeguridad.classList.remove('hidden');
+    if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+  }
+  window.mostrarAlertaSeguridadHusillo = mostrarAlertaSeguridadHusillo;
+
+  if (elementos.botonCerrarSeguridad) {
+    elementos.botonCerrarSeguridad.addEventListener('click', () => {
+      elementos.modalSeguridad.classList.add('hidden');
+      if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+    });
+  }
+
+  if (elementos.botonEntendidoSeguridad) {
+    elementos.botonEntendidoSeguridad.addEventListener('click', () => {
+      elementos.modalSeguridad.classList.add('hidden');
+      if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+    });
+  }
+
+  if (elementos.modalSeguridad) {
+    elementos.modalSeguridad.addEventListener('click', (evento) => {
+      if (evento.target === elementos.modalSeguridad) {
+        elementos.modalSeguridad.classList.add('hidden');
+        if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+      }
+    });
+  }
+
+  // ==========================================
+  // GESTIÓN DE SELECCIÓN DE HERRAMIENTA (FRESA / LÁPIZ)
+  // ==========================================
+  let tipoHerramientaSeleccionada = estado.tipoHerramienta;
+
+  function actualizarUIPorTipoHerramienta(tipo) {
+    estado.tipoHerramienta = (tipo === 'lapiz') ? 'lapiz' : 'fresa';
+    tipoHerramientaSeleccionada = estado.tipoHerramienta;
+    localStorage.setItem('cnc_tipo_herramienta', estado.tipoHerramienta);
+
+    if (window.visualizadorCNC) {
+      window.visualizadorCNC.establecerTipoHerramienta(estado.tipoHerramienta);
+    }
+
+    if (window.puenteCNC && typeof window.puenteCNC.establecerTipoHerramienta === 'function') {
+      window.puenteCNC.establecerTipoHerramienta(estado.tipoHerramienta);
+    }
+
+    const esLapiz = (estado.tipoHerramienta === 'lapiz');
+
+    if (esLapiz) {
+      estado.husilloActivo = false;
+      if (elementos.botonAlternarHusillo) {
+        elementos.botonAlternarHusillo.classList.remove('active');
+        elementos.botonAlternarHusillo.classList.add('modo-lapiz');
+      }
+      if (elementos.textoBotonHusillo) {
+        elementos.textoBotonHusillo.textContent = 'Spindle Inactivo (Lápiz)';
+      }
+      if (elementos.metricaEstadoHusillo) {
+        elementos.metricaEstadoHusillo.textContent = 'OFF (LÁPIZ)';
+        elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
+      }
+      if (elementos.etiquetaRpmEnVivo) {
+        elementos.etiquetaRpmEnVivo.textContent = '0 RPM';
+      }
+      if (elementos.iconoVentiladorHusillo) {
+        elementos.iconoVentiladorHusillo.classList.remove('fa-spin');
+      }
+    } else {
+      if (elementos.botonAlternarHusillo) {
+        elementos.botonAlternarHusillo.classList.remove('modo-lapiz');
+        if (estado.husilloActivo) {
+          elementos.botonAlternarHusillo.classList.add('active');
+          elementos.textoBotonHusillo.textContent = 'Spindle ON';
+          elementos.metricaEstadoHusillo.textContent = 'ON';
+          elementos.metricaEstadoHusillo.classList.add('highlight-cyan');
+        } else {
+          elementos.botonAlternarHusillo.classList.remove('active');
+          elementos.textoBotonHusillo.textContent = 'Spindle OFF';
+          elementos.metricaEstadoHusillo.textContent = 'OFF';
+          elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
+        }
+      }
+    }
+    actualizarEstadoGiroVisualizador();
+
+    if (elementos.etiquetaNombreHerramienta) {
+      elementos.etiquetaNombreHerramienta.textContent = esLapiz ? 'Lápiz' : 'Fresa CNC';
+    }
+    if (elementos.etiquetaBadgeHerramienta) {
+      elementos.etiquetaBadgeHerramienta.textContent = esLapiz ? 'POSICIÓN HERRAMIENTA (LÁPIZ)' : 'POSICIÓN HERRAMIENTA (FRESA)';
+    }
+    if (elementos.textoLegendHerramienta) {
+      elementos.textoLegendHerramienta.textContent = esLapiz ? 'Lápiz Didáctico' : 'Fresa CNC';
+    }
+    if (elementos.iconoLegendHerramienta) {
+      elementos.iconoLegendHerramienta.className = esLapiz ? 'fa-solid fa-pencil legend-symbol icon-tool' : 'fa-solid fa-bore-hole legend-symbol icon-tool';
+    }
+    if (elementos.selectorConfigHerramienta) {
+      elementos.selectorConfigHerramienta.value = estado.tipoHerramienta;
+    }
+
+    if (elementos.tarjetaToolFresa && elementos.tarjetaToolLapiz) {
+      if (esLapiz) {
+        elementos.tarjetaToolLapiz.classList.add('active');
+        elementos.tarjetaToolFresa.classList.remove('active');
+      } else {
+        elementos.tarjetaToolFresa.classList.add('active');
+        elementos.tarjetaToolLapiz.classList.remove('active');
+      }
+    }
+  }
+  window.actualizarUIPorTipoHerramienta = actualizarUIPorTipoHerramienta;
+
+  function abrirModalSeleccionHerramienta() {
+    tipoHerramientaSeleccionada = estado.tipoHerramienta;
+    if (elementos.tarjetaToolFresa && elementos.tarjetaToolLapiz) {
+      if (tipoHerramientaSeleccionada === 'lapiz') {
+        elementos.tarjetaToolLapiz.classList.add('active');
+        elementos.tarjetaToolFresa.classList.remove('active');
+      } else {
+        elementos.tarjetaToolFresa.classList.add('active');
+        elementos.tarjetaToolLapiz.classList.remove('active');
+      }
+    }
+    if (elementos.modalSeleccionHerramienta) {
+      elementos.modalSeleccionHerramienta.classList.remove('hidden');
+    }
+    if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+  }
+
+  if (elementos.botonTabHerramienta) {
+    elementos.botonTabHerramienta.addEventListener('click', () => {
+      abrirModalSeleccionHerramienta();
+    });
+  }
+
+  if (elementos.botonTabTrayectoria) {
+    elementos.botonTabTrayectoria.addEventListener('click', () => {
+      elementos.botonTabTrayectoria.classList.add('active');
+      if (elementos.botonTabHerramienta) elementos.botonTabHerramienta.classList.remove('active');
+      if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+    });
+  }
+
+  if (elementos.botonMenuSeleccionarHerramienta) {
+    elementos.botonMenuSeleccionarHerramienta.addEventListener('click', () => {
+      abrirModalSeleccionHerramienta();
+    });
+  }
+
+  if (elementos.tarjetaToolFresa) {
+    elementos.tarjetaToolFresa.addEventListener('click', () => {
+      tipoHerramientaSeleccionada = 'fresa';
+      elementos.tarjetaToolFresa.classList.add('active');
+      elementos.tarjetaToolLapiz.classList.remove('active');
+    });
+  }
+
+  if (elementos.tarjetaToolLapiz) {
+    elementos.tarjetaToolLapiz.addEventListener('click', () => {
+      tipoHerramientaSeleccionada = 'lapiz';
+      elementos.tarjetaToolLapiz.classList.add('active');
+      elementos.tarjetaToolFresa.classList.remove('active');
+    });
+  }
+
+  if (elementos.botonAplicarModalHerramienta) {
+    elementos.botonAplicarModalHerramienta.addEventListener('click', () => {
+      actualizarUIPorTipoHerramienta(tipoHerramientaSeleccionada);
+      if (elementos.modalSeleccionHerramienta) {
+        elementos.modalSeleccionHerramienta.classList.add('hidden');
+      }
+      imprimirEnConsola('c-info', `[HERRAMIENTA] Herramienta activa cambiada a: ${estado.tipoHerramienta === 'lapiz' ? 'Lápiz de Grafito (Plotter Didáctico)' : 'Fresa de Corte CNC (Herramienta Actual)'}.`);
+      if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+    });
+  }
+
+  if (elementos.botonCerrarModalHerramienta) {
+    elementos.botonCerrarModalHerramienta.addEventListener('click', () => {
+      if (elementos.modalSeleccionHerramienta) elementos.modalSeleccionHerramienta.classList.add('hidden');
+    });
+  }
+
+  if (elementos.botonCancelarModalHerramienta) {
+    elementos.botonCancelarModalHerramienta.addEventListener('click', () => {
+      if (elementos.modalSeleccionHerramienta) elementos.modalSeleccionHerramienta.classList.add('hidden');
+    });
+  }
+
+  if (elementos.modalSeleccionHerramienta) {
+    elementos.modalSeleccionHerramienta.addEventListener('click', (evento) => {
+      if (evento.target === elementos.modalSeleccionHerramienta) {
+        elementos.modalSeleccionHerramienta.classList.add('hidden');
+      }
+    });
+  }
+
+  if (elementos.selectorConfigHerramienta) {
+    elementos.selectorConfigHerramienta.addEventListener('change', (e) => {
+      actualizarUIPorTipoHerramienta(e.target.value);
+    });
+  }
 
   elementos.campoBusquedaDiccionario.addEventListener('input', (evento) => {
     const consulta = evento.target.value.toLowerCase();
@@ -1690,6 +2126,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Inicializar colapso de bloques en el panel lateral
   inicializarColapsoBloquesSidebar();
+
+  // Sincronizar herramienta activa al inicio
+  actualizarUIPorTipoHerramienta(estado.tipoHerramienta);
 
   // Inicializar puente PyQt6
   inicializarPuentePyQt();

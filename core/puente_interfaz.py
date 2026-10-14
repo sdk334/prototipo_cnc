@@ -12,8 +12,12 @@ Responsabilidad:
 
 import json
 from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QTimer
-from controlador_grbl import ControladorGRBL
-from procesador_gcode import ProcesadorGCode
+try:
+    from .controlador_grbl import ControladorGRBL
+    from .procesador_gcode import ProcesadorGCode
+except ImportError:
+    from controlador_grbl import ControladorGRBL
+    from procesador_gcode import ProcesadorGCode
 
 
 class PuenteCNC(QObject):
@@ -26,6 +30,7 @@ class PuenteCNC(QObject):
     senial_puertos = pyqtSignal(str)             # JSON con lista de puertos COM disponibles
     senial_error_didactico = pyqtSignal(str)     # JSON con error traducido didácticamente
     senial_analisis_gcode = pyqtSignal(str)      # JSON con dimensiones y tiempo estimado
+    senial_alerta_seguridad = pyqtSignal(str, str, str)  # (titulo, encabezado, descripcion)
 
     def __init__(self, controlador: ControladorGRBL, procesador: ProcesadorGCode):
         super().__init__()
@@ -38,6 +43,7 @@ class PuenteCNC(QObject):
         self.controlador.cb_progreso = self._al_actualizar_progreso
         self.controlador.cb_evento_error = self._al_ocurrir_error
         self.controlador.cb_evento_alarma = self._al_ocurrir_alarma
+        self.controlador.cb_alerta_seguridad = self._al_ocurrir_alerta_seguridad
 
         # Monitoreo continuo de conexión/desconexión USB (Hot-Plug cada 1000 ms)
         self._nombres_puertos_previos = []
@@ -48,38 +54,74 @@ class PuenteCNC(QObject):
         # Callback nativo para alternar pantalla completa
         self.cb_alternar_pantalla_completa = None
 
+    def _emitir_seguro(self, senial, *args):
+        """Emite una señal Qt de forma segura evitando excepciones cuando el objeto C++ se destruye."""
+        try:
+            if getattr(self, '_destruido', False):
+                return
+            senial.emit(*args)
+        except (RuntimeError, AttributeError):
+            self._destruido = True
+
+    def destruir(self):
+        """Desconecta callbacks y temporizadores para un apagado limpio sin excepciones de Qt."""
+        self._destruido = True
+        try:
+            if hasattr(self, 'temporizador_hotplug') and self.temporizador_hotplug:
+                self.temporizador_hotplug.stop()
+        except Exception:
+            pass
+        if hasattr(self, 'controlador') and self.controlador:
+            self.controlador.cb_estado = None
+            self.controlador.cb_estado_actualizado = None
+            self.controlador.cb_linea_consola = None
+            self.controlador.cb_progreso = None
+            self.controlador.cb_evento_error = None
+            self.controlador.cb_evento_alarma = None
+            try:
+                self.controlador.detener_programa()
+                self.controlador.desconectar()
+            except Exception:
+                pass
+
     # =========================================================================
     # DISPATCHERS DE CALLBACKS DE PYTHON A SEÑALES QT
     # =========================================================================
 
     def _al_actualizar_estado(self, dict_estado: dict):
         """Convierte el estado de máquina a JSON y lo emite a la GUI web."""
-        self.senial_estado.emit(json.dumps(dict_estado))
+        self._emitir_seguro(self.senial_estado, json.dumps(dict_estado))
 
     def _al_recibir_linea_consola(self, tipo: str, mensaje: str):
         """Emite una línea a la consola serial del frontend."""
-        self.senial_consola.emit(tipo, mensaje)
+        self._emitir_seguro(self.senial_consola, tipo, mensaje)
 
     def _al_actualizar_progreso(self, actual: int, total: int, pct: float, tiempo: str):
         """Emite el avance del streaming de G-code."""
-        self.senial_progreso.emit(actual, total, pct, tiempo)
+        self._emitir_seguro(self.senial_progreso, actual, total, pct, tiempo)
 
     def _al_ocurrir_error(self, codigo: int, linea_cruda: str):
         """Traduce el error con el procesador semántico y lo emite al frontend."""
         info = self.procesador.traducir_error_grbl(codigo)
         info["codigo"] = codigo
         info["linea_cruda"] = linea_cruda
-        self.senial_error_didactico.emit(json.dumps(info))
+        self._emitir_seguro(self.senial_error_didactico, json.dumps(info))
 
     def _al_ocurrir_alarma(self, codigo: int, linea_cruda: str):
         """Traduce la alarma de seguridad y la emite didácticamente al frontend."""
         info = self.procesador.traducir_alarma_grbl(codigo)
         info["codigo"] = f"A{codigo}"
         info["linea_cruda"] = linea_cruda
-        self.senial_error_didactico.emit(json.dumps(info))
+        self._emitir_seguro(self.senial_error_didactico, json.dumps(info))
+
+    def _al_ocurrir_alerta_seguridad(self, titulo: str, encabezado: str, descripcion: str):
+        """Emite una alerta de seguridad de interbloqueo hacia la interfaz web."""
+        self._emitir_seguro(self.senial_alerta_seguridad, titulo, encabezado, descripcion)
 
     def _verificar_cambios_hotplug(self):
         """Detecta automáticamente si se conecta o desconecta un cable USB CNC."""
+        if getattr(self, '_destruido', False):
+            return
         puertos = self.controlador.escanear_puertos()
         nombres = [p["puerto"] for p in puertos if p["puerto"] != "SIMULADOR_VIRTUAL"]
 
@@ -89,18 +131,18 @@ class PuenteCNC(QObject):
             self._nombres_puertos_previos = list(nombres)
 
             # Notificar al frontend con la lista actualizada
-            self.senial_puertos.emit(json.dumps(puertos))
+            self._emitir_seguro(self.senial_puertos, json.dumps(puertos))
 
             for n in nuevos:
                 info = next((p for p in puertos if p["puerto"] == n), None)
                 if info:
-                    self.senial_consola.emit("c-system", f"[HOT-PLUG] Dispositivo detectado: {info['etiqueta']}.")
+                    self._emitir_seguro(self.senial_consola, "c-system", f"[HOT-PLUG] Dispositivo detectado: {info['etiqueta']}.")
                     # Conectar automáticamente si es un dispositivo USB CNC y no estamos en hardware real
                     if info.get("tipo") == "USB_CNC" and (not self.controlador.esta_conectado or self.controlador.modo_virtual):
                         self.conectar(info["puerto"], 115200)
 
             for r in removidos:
-                self.senial_consola.emit("c-alarm", f"[HOT-PLUG] Dispositivo en {r} desconectado físicamente del equipo.")
+                self._emitir_seguro(self.senial_consola, "c-alarm", f"[HOT-PLUG] Dispositivo en {r} desconectado físicamente del equipo.")
                 if self.controlador.nombre_puerto == r:
                     self.controlador.desconectar()
 
@@ -143,7 +185,10 @@ class PuenteCNC(QObject):
     @pyqtSlot(float)
     def establecerFeedOverride(self, porcentaje: float):
         """Ajusta el porcentaje de velocidad de avance (Feed Override) entre 10% y 200%."""
-        self.controlador.establecer_feed_override(porcentaje)
+        try:
+            self.controlador.establecer_feed_override(porcentaje)
+        except Exception as e:
+            self._emitir_seguro(self.senial_consola, "c-alarm", f"[ERROR FEED OVERRIDE] {str(e)}")
 
     @pyqtSlot()
     def paradaEmergencia(self):
@@ -179,6 +224,14 @@ class PuenteCNC(QObject):
     def ponerCeroTodos(self):
         """Pone a cero los tres ejes X, Y, Z."""
         self.controlador.poner_cero_todos()
+
+    @pyqtSlot(str)
+    def establecerTipoHerramienta(self, tipo: str):
+        """Configura el modo de herramienta en el controlador ('fresa' o 'lapiz')."""
+        try:
+            self.controlador.establecer_tipo_herramienta(tipo)
+        except Exception as e:
+            self._emitir_seguro(self.senial_consola, "c-alarm", f"[ERROR HERRAMIENTA] {str(e)}")
 
     @pyqtSlot(bool, int)
     def controlarSpindle(self, encendido: bool, rpm: int):

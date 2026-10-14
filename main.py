@@ -16,9 +16,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
 from PyQt6.QtWebChannel import QWebChannel
 
-from controlador_grbl import ControladorGRBL
-from procesador_gcode import ProcesadorGCode
-from puente_interfaz import PuenteCNC
+from core import ControladorGRBL, ProcesadorGCode, PuenteCNC
 
 
 class VentanaPrincipalCNC(QMainWindow):
@@ -56,9 +54,9 @@ class VentanaPrincipalCNC(QMainWindow):
         layout.addWidget(self.vista_web)
         self.setCentralWidget(contenedor)
 
-        # 5. Cargar archivo index.html local
+        # 5. Cargar archivo index.html local desde el módulo gui/
         ruta_directorio = os.path.dirname(os.path.abspath(__file__))
-        ruta_html = os.path.join(ruta_directorio, "index.html")
+        ruta_html = os.path.join(ruta_directorio, "gui", "index.html")
         self.vista_web.load(QUrl.fromLocalFile(ruta_html))
 
     def configurar_motor_web(self):
@@ -98,7 +96,10 @@ class VentanaPrincipalCNC(QMainWindow):
     def closeEvent(self, evento):
         """Asegura el cierre limpio de la comunicación serial al cerrar la ventana."""
         try:
-            self.controlador.desconectar()
+            if hasattr(self, 'puente') and self.puente:
+                self.puente.destruir()
+            if hasattr(self, 'controlador') and self.controlador:
+                self.controlador.desconectar()
         except Exception:
             pass
         evento.accept()

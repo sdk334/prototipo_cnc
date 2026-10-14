@@ -14,5 +14,7 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
-assets/
 *.bak
+
+# Documentación local (no subir a GitHub)
+docs/

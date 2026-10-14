@@ -11,6 +11,12 @@ class VisualizadorCNC {
     if (!this.lienzo) return;
     this.contexto = this.lienzo.getContext('2d');
 
+    // Búfer gráfico de aceleración para la escena estática (mesa, cuadrícula, trayectorias)
+    // Garantiza 60 FPS fijos sin caídas de fotogramas durante la animación o corte de la herramienta
+    this.lienzoEstatico = document.createElement('canvas');
+    this.contextoEstatico = this.lienzoEstatico.getContext('2d');
+    this.necesitaRedibujarEstatico = true;
+
     // Parámetros de la cámara y proyección
     this.modoVista = 'XY'; // Opciones: 'XY', 'XZ', 'YZ', '3D'
     this.zoom = 1.0;
@@ -29,6 +35,16 @@ class VisualizadorCNC {
 
     // Posición espacial actual de la herramienta (en milímetros)
     this.posicionHerramienta = { x: 0.000, y: 0.000, z: 0.000 };
+    this.posicionObjetivo = { x: 0.000, y: 0.000, z: 0.000 };
+
+    // Estado y animación de rotación de la herramienta (simulación / corte activo)
+    this.herramientaGirando = false;
+    this.anguloGiroHerramienta = 0;
+    this.animacionGiroId = null;
+    this.velocidadGiroHerramienta = 22; // Grados por fotograma (~1320°/s a 60 fps)
+
+    // Tipo de herramienta visualizada: 'fresa' (Herramienta actual de corte) o 'lapiz' (Lápiz escolar didáctico)
+    this.tipoHerramienta = localStorage.getItem('cnc_tipo_herramienta') || 'fresa';
 
     // Control de interacción con ratón
     this.estaArrastrando = false;
@@ -71,6 +87,10 @@ class VisualizadorCNC {
     if (document.querySelector('.modal-backdrop:not(.hidden)')) {
       return;
     }
+    // Si la animación continua de giro ya está activa a 60 FPS, evitar encolar RAF redundante
+    if (this.herramientaGirando) {
+      return;
+    }
     if (this.redibujadoPendiente) return;
     this.redibujadoPendiente = true;
     requestAnimationFrame(() => {
@@ -79,17 +99,34 @@ class VisualizadorCNC {
     });
   }
 
+  marcarEstaticoSucio() {
+    this.necesitaRedibujarEstatico = true;
+    this.actualizarMatrizProyeccion();
+  }
+
   // Ajusta el lienzo a la resolución del dispositivo para máxima nitidez
   redimensionarLienzo() {
     const rectangulo = this.lienzo.parentElement.getBoundingClientRect();
     const proporcionPixeles = window.devicePixelRatio || 1;
 
-    this.lienzo.width = rectangulo.width * proporcionPixeles;
-    this.lienzo.height = rectangulo.height * proporcionPixeles;
+    const anchoDevice = Math.max(1, Math.round(rectangulo.width * proporcionPixeles));
+    const altoDevice = Math.max(1, Math.round(rectangulo.height * proporcionPixeles));
+
+    this.lienzo.width = anchoDevice;
+    this.lienzo.height = altoDevice;
     this.contexto.setTransform(proporcionPixeles, 0, 0, proporcionPixeles, 0, 0);
+
+    if (!this.lienzoEstatico) {
+      this.lienzoEstatico = document.createElement('canvas');
+      this.contextoEstatico = this.lienzoEstatico.getContext('2d');
+    }
+    this.lienzoEstatico.width = anchoDevice;
+    this.lienzoEstatico.height = altoDevice;
+    this.contextoEstatico.setTransform(proporcionPixeles, 0, 0, proporcionPixeles, 0, 0);
 
     this.anchoPantalla = rectangulo.width;
     this.altoPantalla = rectangulo.height;
+    this.marcarEstaticoSucio();
     this.solicitarRenderizado();
   }
 
@@ -129,13 +166,13 @@ class VisualizadorCNC {
         // Rotación 3D natural en los 3 ejes
         this.rotacionAzimut = (this.rotacionAzimut + deltaX * 0.45) % 360;
         this.rotacionInclinacion = Math.max(5, Math.min(88, this.rotacionInclinacion - deltaY * 0.45));
-        this.actualizarCuboOrientacion();
-        this.actualizarSuperposicionZoom();
+        this.marcarEstaticoSucio();
         this.solicitarRenderizado();
       } else {
         // Paneo: desplazamiento de la escena
         this.desplazamientoX += deltaX;
         this.desplazamientoY += deltaY;
+        this.marcarEstaticoSucio();
         this.solicitarRenderizado();
       }
     });
@@ -177,6 +214,7 @@ class VisualizadorCNC {
 
     this.zoom = nuevoZoom;
     this.actualizarSuperposicionZoom();
+    this.marcarEstaticoSucio();
     this.solicitarRenderizado();
   }
 
@@ -225,6 +263,7 @@ class VisualizadorCNC {
 
       this.actualizarCuboOrientacion();
       this.actualizarSuperposicionZoom();
+      this.marcarEstaticoSucio();
       this.solicitarRenderizado();
     });
 
@@ -252,18 +291,21 @@ class VisualizadorCNC {
           this.rotacionInclinacion = 0;
           this.rotacionAzimut = 180;
           this.actualizarCuboOrientacion();
+          this.marcarEstaticoSucio();
           this.solicitarRenderizado();
         } else if (tipo === 'left') {
           this.modoVista = '3D';
           this.rotacionInclinacion = 0;
           this.rotacionAzimut = -90;
           this.actualizarCuboOrientacion();
+          this.marcarEstaticoSucio();
           this.solicitarRenderizado();
         } else if (tipo === 'bottom') {
           this.modoVista = '3D';
           this.rotacionInclinacion = 5;
           this.rotacionAzimut = 0;
           this.actualizarCuboOrientacion();
+          this.marcarEstaticoSucio();
           this.solicitarRenderizado();
         }
       });
@@ -314,6 +356,7 @@ class VisualizadorCNC {
     const lblBottom = document.getElementById('lbl-view-zscale');
     if (lblBottom) lblBottom.textContent = `${this.escalaZ.toFixed(1)}x`;
 
+    this.marcarEstaticoSucio();
     this.solicitarRenderizado();
   }
 
@@ -362,6 +405,7 @@ class VisualizadorCNC {
       this.rotacionAzimut = -35;
       this.actualizarSuperposicionZoom();
       this.actualizarCuboOrientacion();
+      this.marcarEstaticoSucio();
       this.solicitarRenderizado();
     }
   }
@@ -390,6 +434,7 @@ class VisualizadorCNC {
 
     this.actualizarSuperposicionZoom();
     this.actualizarCuboOrientacion();
+    this.marcarEstaticoSucio();
     this.solicitarRenderizado();
   }
 
@@ -423,6 +468,7 @@ class VisualizadorCNC {
 
     this.actualizarCuboOrientacion();
     this.actualizarSuperposicionZoom();
+    this.marcarEstaticoSucio();
     this.solicitarRenderizado();
   }
 
@@ -436,7 +482,7 @@ class VisualizadorCNC {
     if (etiquetaZ) etiquetaZ.textContent = `${this.escalaZ.toFixed(1)}x`;
   }
 
-  // Actualiza la posición de la herramienta en pantalla (X, Y, Z)
+  // Actualiza la posición de la herramienta en pantalla (X, Y, Z) con objetivo desacoplado para 60 FPS
   establecerPosicionHerramienta(x, y, z) {
     const numX = Number(x);
     const numY = Number(y);
@@ -445,33 +491,46 @@ class VisualizadorCNC {
       return;
     }
 
-    const dx = Math.abs(this.posicionHerramienta.x - numX);
-    const dy = Math.abs(this.posicionHerramienta.y - numY);
-    const dz = Math.abs(this.posicionHerramienta.z - numZ);
+    this.posicionObjetivo.x = numX;
+    this.posicionObjetivo.y = numY;
+    this.posicionObjetivo.z = numZ;
 
-    if (dx < 0.001 && dy < 0.001 && dz < 0.001) {
-      return;
+    // Si la herramienta no está animada (máquina detenida o movimiento manual paso a paso),
+    // aplicamos la posición de inmediato y solicitamos renderizado estático
+    if (!this.herramientaGirando) {
+      const dx = Math.abs(this.posicionHerramienta.x - numX);
+      const dy = Math.abs(this.posicionHerramienta.y - numY);
+      const dz = Math.abs(this.posicionHerramienta.z - numZ);
+
+      if (dx < 0.0005 && dy < 0.0005 && dz < 0.0005) {
+        return;
+      }
+
+      this.posicionHerramienta.x = numX;
+      this.posicionHerramienta.y = numY;
+      this.posicionHerramienta.z = numZ;
+      this.actualizarIndicadoresPosicionTexto(numX, numY, numZ);
+      this.solicitarRenderizado();
     }
-
-    this.posicionHerramienta.x = numX;
-    this.posicionHerramienta.y = numY;
-    this.posicionHerramienta.z = numZ;
-
-    const indicadorX = document.getElementById('v-tool-x');
-    const indicadorY = document.getElementById('v-tool-y');
-    const indicadorZ = document.getElementById('v-tool-z');
-    if (indicadorX) indicadorX.textContent = numX.toFixed(1);
-    if (indicadorY) indicadorY.textContent = numY.toFixed(1);
-    if (indicadorZ) indicadorZ.textContent = numZ.toFixed(1);
-
-    this.solicitarRenderizado();
   }
 
-  // Conversión y proyección espacial 2D y 3D (+Z siempre apunta hacia ARRIBA)
-  convertirAPantalla(x, y, z = 0) {
-    const px = Number(x) || 0;
-    const py = Number(y) || 0;
-    const pz = Number(z) || 0;
+  // Actualiza las etiquetas DRO del visor con diffing de texto evitando reflows
+  actualizarIndicadoresPosicionTexto(x, y, z) {
+    if (!this.elemToolX) this.elemToolX = document.getElementById('v-tool-x');
+    if (!this.elemToolY) this.elemToolY = document.getElementById('v-tool-y');
+    if (!this.elemToolZ) this.elemToolZ = document.getElementById('v-tool-z');
+    const sx = x.toFixed(1);
+    const sy = y.toFixed(1);
+    const sz = z.toFixed(1);
+    if (this.elemToolX && this.elemToolX.textContent !== sx) this.elemToolX.textContent = sx;
+    if (this.elemToolY && this.elemToolY.textContent !== sy) this.elemToolY.textContent = sy;
+    if (this.elemToolZ && this.elemToolZ.textContent !== sz) this.elemToolZ.textContent = sz;
+  }
+
+  // Precalcula la matriz y razones trigonométricas 3D una sola vez por cuadro para máxima fluidez a 60 FPS
+  actualizarMatrizProyeccion() {
+    const radAzimut = (this.rotacionAzimut * Math.PI) / 180;
+    const radInclinacion = (this.rotacionInclinacion * Math.PI) / 180;
     const escala = 1.65 * this.zoom;
     const cx = (this.centroPieza && !isNaN(this.centroPieza.x)) ? this.centroPieza.x : 150;
     const cy = (this.centroPieza && !isNaN(this.centroPieza.y)) ? this.centroPieza.y : 150;
@@ -480,58 +539,67 @@ class VisualizadorCNC {
     const centroPantallaX = (this.anchoPantalla / 2) + this.desplazamientoX;
     const centroPantallaY = (this.altoPantalla / 2) + this.desplazamientoY;
 
+    this.cache3D = {
+      escala,
+      cx, cy, cz,
+      centroPantallaX, centroPantallaY,
+      cosA: Math.cos(radAzimut),
+      sinA: Math.sin(radAzimut),
+      cosI: Math.cos(radInclinacion),
+      sinI: Math.sin(radInclinacion),
+      escalaZ: this.escalaZ
+    };
+  }
+
+  // Conversión y proyección espacial 2D y 3D (+Z siempre apunta hacia ARRIBA) ultra-optimizada
+  convertirAPantalla(x, y, z = 0) {
+    const px = Number(x) || 0;
+    const py = Number(y) || 0;
+    const pz = Number(z) || 0;
+
+    if (!this.cache3D) {
+      this.actualizarMatrizProyeccion();
+    }
+    const c = this.cache3D;
+
     if (this.modoVista === 'XY') {
       // Plano 2D superior exacto (XY)
       return {
-        x: centroPantallaX + (px - cx) * escala,
-        y: centroPantallaY - (py - cy) * escala,
+        x: c.centroPantallaX + (px - c.cx) * c.escala,
+        y: c.centroPantallaY - (py - c.cy) * c.escala,
         zProf: pz
       };
     } else if (this.modoVista === 'XZ') {
       // Plano 2D frontal (Eje Z vs Eje X, +Z hacia arriba)
       return {
-        x: centroPantallaX + (px - cx) * escala,
-        y: centroPantallaY - ((pz - cz) * this.escalaZ * 2.2) * escala,
+        x: c.centroPantallaX + (px - c.cx) * c.escala,
+        y: c.centroPantallaY - ((pz - c.cz) * c.escalaZ * 2.2) * c.escala,
         zProf: py
       };
     } else if (this.modoVista === 'YZ') {
       // Plano 2D lateral (Eje Z vs Eje Y, +Z hacia arriba)
       return {
-        x: centroPantallaX + (py - cy) * escala,
-        y: centroPantallaY - ((pz - cz) * this.escalaZ * 2.2) * escala,
+        x: c.centroPantallaX + (py - c.cy) * c.escala,
+        y: c.centroPantallaY - ((pz - c.cz) * c.escalaZ * 2.2) * c.escala,
         zProf: px
       };
     } else {
-      // Modo 3D espacial correcto:
-      // X = horizontal, Y = fondo, Z = altura (+Z hacia arriba)
-      const dx = (px - cx);
-      const dy = (py - cy);
-      const dz = (pz - cz) * this.escalaZ;
+      // Modo 3D espacial hiper-optimizado (sin Math.sin/cos repetitivos)
+      const dx = px - c.cx;
+      const dy = py - c.cy;
+      const dz = (pz - c.cz) * c.escalaZ;
 
-      const radAzimut = (this.rotacionAzimut * Math.PI) / 180;
-      const radInclinacion = (this.rotacionInclinacion * Math.PI) / 180;
-
-      // 1. Rotación horizontal alrededor del eje vertical Z (Azimut / Yaw)
-      const cosA = Math.cos(radAzimut);
-      const sinA = Math.sin(radAzimut);
-      const xr = dx * cosA - dy * sinA;
-      const yr = dx * sinA + dy * cosA;
+      const xr = dx * c.cosA - dy * c.sinA;
+      const yr = dx * c.sinA + dy * c.cosA;
       const zr = dz;
 
-      // 2. Inclinación de la cámara sobre el plano de la mesa (0° = horizontal, 90° = vertical)
-      const sinI = Math.sin(radInclinacion);
-      const cosI = Math.cos(radInclinacion);
-
-      // Eje horizontal de pantalla (X hacia la derecha)
       const xPantalla = xr;
-      // Eje vertical en pantalla: +Z sube físicamente hacia arriba (+zr * cosI)
-      // y la profundidad +yr se proyecta hacia el fondo superior (+yr * sinI)
-      const yPantalla = yr * sinI + zr * cosI;
-      const zProfundidad = yr * cosI - zr * sinI;
+      const yPantalla = yr * c.sinI + zr * c.cosI;
+      const zProfundidad = yr * c.cosI - zr * c.sinI;
 
       return {
-        x: centroPantallaX + xPantalla * escala,
-        y: centroPantallaY - yPantalla * escala,
+        x: c.centroPantallaX + xPantalla * c.escala,
+        y: c.centroPantallaY - yPantalla * c.escala,
         zProf: zProfundidad
       };
     }
@@ -775,6 +843,7 @@ class VisualizadorCNC {
       maxZ: maxCorteZ !== -Infinity ? maxCorteZ : 5.0
     };
 
+    this.marcarEstaticoSucio();
     this.solicitarRenderizado();
   }
 
@@ -796,14 +865,16 @@ class VisualizadorCNC {
           z: 0
         };
       }
+      this.marcarEstaticoSucio();
       this.solicitarRenderizado();
     }
   }
 
-  // Dibujado principal de la escena
-  renderizar() {
-    if (!this.contexto || !this.anchoPantalla) return;
-    const ctx = this.contexto;
+  // Dibuja la escena de fondo estática (mesa, cuadrícula, material stock, trayectorias vectoriales y origen)
+  // en un búfer offscreen acelerado para evitar recalcular miles de segmentos en cada fotograma
+  renderizarEscenaEstatica() {
+    if (!this.contextoEstatico || !this.anchoPantalla) return;
+    const ctx = this.contextoEstatico;
 
     // Fondo aeroespacial oscuro
     ctx.fillStyle = '#0a0c0e';
@@ -814,6 +885,44 @@ class VisualizadorCNC {
     this.dibujarMaterial(ctx);
     this.dibujarTrayectorias(ctx);
     this.dibujarOrigenWCS(ctx);
+  }
+
+  // Dibujado principal ultra-optimizado a 60 FPS estables
+  renderizar() {
+    if (!this.contexto || !this.anchoPantalla) return;
+    const ctx = this.contexto;
+
+    // Medición y actualización en tiempo real de FPS reales
+    const ahoraFps = performance.now();
+    if (!this._ultimoCalculoFps) this._ultimoCalculoFps = ahoraFps;
+    if (!this._contadorCuadros) this._contadorCuadros = 0;
+    this._contadorCuadros++;
+    if (ahoraFps - this._ultimoCalculoFps >= 500) {
+      const fpsReal = Math.round((this._contadorCuadros * 1000) / (ahoraFps - this._ultimoCalculoFps));
+      this._ultimoCalculoFps = ahoraFps;
+      this._contadorCuadros = 0;
+      if (!this._elemTeleFps) this._elemTeleFps = document.getElementById('tele-fps');
+      if (this._elemTeleFps && this._elemTeleFps.textContent !== String(fpsReal)) {
+        this._elemTeleFps.textContent = String(fpsReal);
+      }
+    }
+
+    // 1. Si la escena estática cambió (cámara, zoom, nuevo archivo), se actualiza el búfer
+    if (this.necesitaRedibujarEstatico) {
+      this.actualizarMatrizProyeccion();
+      this.actualizarCuboOrientacion();
+      this.actualizarSuperposicionZoom();
+      this.renderizarEscenaEstatica();
+      this.necesitaRedibujarEstatico = false;
+    }
+
+    // 2. Transferencia ultra-rápida por hardware (bitblt instantáneo ~0.05ms)
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(this.lienzoEstatico, 0, 0);
+    ctx.restore();
+
+    // 3. Renderizado de capas dinámicas (herramienta girando con punta fina y alertas)
     this.dibujarRetículaHerramienta(ctx);
     this.dibujarAlertaLimitesOverlay(ctx);
   }
@@ -1063,31 +1172,44 @@ class VisualizadorCNC {
     if (!this.trayectoria || this.trayectoria.length === 0) return;
     ctx.save();
 
-    // 1. Trazado rápido G0 (líneas discontinuas grises elevadas) en un único batch
+    const n = this.trayectoria.length;
+    const maxX = this.limitesMaquina.maxX;
+    const maxY = this.limitesMaquina.maxY;
+    const es3D = (this.modoVista === '3D');
+
+    // 1. Trazado rápido G0 (líneas discontinuas grises elevadas) en un único batch continuo
     ctx.strokeStyle = '#738090';
     ctx.lineWidth = Math.min(2.5, Math.max(1.0, 1.2 * Math.pow(this.zoom, 0.1)));
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
     let hayG0 = false;
-    for (let i = 0; i < this.trayectoria.length; i++) {
+    let prevG0X = null, prevG0Y = null, prevG0Z = null;
+
+    for (let i = 0; i < n; i++) {
       const seg = this.trayectoria[i];
       if (seg.tipo === 'G0') {
-        const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+        const esContinuo = (prevG0X === seg.x1 && prevG0Y === seg.y1 && prevG0Z === seg.z1);
+        if (!esContinuo) {
+          const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+          ctx.moveTo(p1.x, p1.y);
+        }
         const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
-        ctx.moveTo(p1.x, p1.y);
         ctx.lineTo(p2.x, p2.y);
+        prevG0X = seg.x2; prevG0Y = seg.y2; prevG0Z = seg.z2;
         hayG0 = true;
+      } else {
+        prevG0X = null;
       }
     }
     if (hayG0) ctx.stroke();
 
     // 2. Líneas verticales indicadoras de descenso de fresa (plunges) en 3D
-    if (this.modoVista === '3D' && this.trayectoria.length < 3000) {
+    if (es3D && n < 3000) {
       ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
       ctx.lineWidth = 1;
       ctx.setLineDash([2, 2]);
       ctx.beginPath();
-      for (let i = 0; i < this.trayectoria.length; i++) {
+      for (let i = 0; i < n; i++) {
         const seg = this.trayectoria[i];
         if (seg.tipo !== 'G0' && Math.abs(seg.z2 - seg.z1) > 0.05 && seg.z2 < 0) {
           const pTop = this.convertirAPantalla(seg.x2, seg.y2, 0);
@@ -1099,69 +1221,76 @@ class VisualizadorCNC {
       ctx.stroke();
     }
 
-    // 3. Trayectorias de corte G1/G2/G3
+    // 3. Trayectorias de corte G1/G2/G3 agrupadas con reutilización de vértices
     ctx.lineWidth = Math.min(3.2, Math.max(1.4, 1.8 * Math.pow(this.zoom, 0.12)));
     ctx.setLineDash([]);
 
-    const maxX = this.limitesMaquina.maxX;
-    const maxY = this.limitesMaquina.maxY;
-
-    // 3a. Segmentos DENTRO de los límites de la máquina (Cian de corte normal)
+    // 3a. Segmentos DENTRO de los límites (Cian normal de mecanizado)
     ctx.strokeStyle = '#00e5ff';
-    if (this.trayectoria.length < 1200 && this.zoom < 10) {
-      ctx.shadowColor = 'rgba(0, 229, 255, 0.45)';
-      ctx.shadowBlur = 4;
-    } else {
-      ctx.shadowBlur = 0;
-    }
-
     ctx.beginPath();
-    let hayG1Dentro = false;
-    for (let i = 0; i < this.trayectoria.length; i++) {
+    let hayG1 = false;
+    let prevG1X = null, prevG1Y = null, prevG1Z = null;
+
+    for (let i = 0; i < n; i++) {
       const seg = this.trayectoria[i];
       if (seg.tipo !== 'G0') {
         const esOOB = (seg.x1 < 0 || seg.x1 > maxX || seg.x2 < 0 || seg.x2 > maxX ||
                        seg.y1 < 0 || seg.y1 > maxY || seg.y2 < 0 || seg.y2 > maxY);
         if (!esOOB) {
-          const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+          const esContinuo = (prevG1X === seg.x1 && prevG1Y === seg.y1 && prevG1Z === seg.z1);
+          if (!esContinuo) {
+            const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+            ctx.moveTo(p1.x, p1.y);
+          }
           const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
-          ctx.moveTo(p1.x, p1.y);
           ctx.lineTo(p2.x, p2.y);
-          hayG1Dentro = true;
+          prevG1X = seg.x2; prevG1Y = seg.y2; prevG1Z = seg.z2;
+          hayG1 = true;
+        } else {
+          prevG1X = null;
         }
+      } else {
+        prevG1X = null;
       }
     }
-    if (hayG1Dentro) ctx.stroke();
+    if (hayG1) ctx.stroke();
 
-    // 3b. Segmentos FUERA de los límites de la máquina (Rojo de advertencia con resplandor)
+    // 3b. Segmentos FUERA de los límites (Rojo de alerta)
     ctx.strokeStyle = '#ff3b30';
-    ctx.shadowColor = 'rgba(255, 59, 48, 0.7)';
-    ctx.shadowBlur = 6;
     ctx.beginPath();
     let hayG1OOB = false;
-    for (let i = 0; i < this.trayectoria.length; i++) {
+    let prevOOBX = null, prevOOBY = null, prevOOBZ = null;
+
+    for (let i = 0; i < n; i++) {
       const seg = this.trayectoria[i];
       if (seg.tipo !== 'G0') {
         const esOOB = (seg.x1 < 0 || seg.x1 > maxX || seg.x2 < 0 || seg.x2 > maxX ||
                        seg.y1 < 0 || seg.y1 > maxY || seg.y2 < 0 || seg.y2 > maxY);
         if (esOOB) {
-          const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+          const esContinuo = (prevOOBX === seg.x1 && prevOOBY === seg.y1 && prevOOBZ === seg.z1);
+          if (!esContinuo) {
+            const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+            ctx.moveTo(p1.x, p1.y);
+          }
           const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
-          ctx.moveTo(p1.x, p1.y);
           ctx.lineTo(p2.x, p2.y);
+          prevOOBX = seg.x2; prevOOBY = seg.y2; prevOOBZ = seg.z2;
           hayG1OOB = true;
+        } else {
+          prevOOBX = null;
         }
+      } else {
+        prevOOBX = null;
       }
     }
     if (hayG1OOB) ctx.stroke();
-    ctx.shadowBlur = 0;
 
     // 4. Si el usuario hace zoom a fondo (> 1200%), dibujar nodos/vértices G-code con culling ultra-rápido
-    if (this.zoom > 12.0 && this.trayectoria.length < 25000) {
+    if (this.zoom > 12.0 && n < 25000) {
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
       const radioNodo = Math.min(3.0, Math.max(1.2, Math.sqrt(this.zoom / 14)));
-      for (let i = 0; i < this.trayectoria.length; i++) {
+      for (let i = 0; i < n; i++) {
         const seg = this.trayectoria[i];
         if (seg.tipo !== 'G0') {
           const p = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
@@ -1196,65 +1325,630 @@ class VisualizadorCNC {
     ctx.restore();
   }
 
-  // Retícula indicadora y silueta cilíndrica de fresa en 3D proporcionada en zoom profundo
+  // Control de giro y rotación de la herramienta (animación durante simulación o corte real)
+  establecerGiroHerramienta(girando, velocidad = 22) {
+    this.velocidadGiroHerramienta = velocidad;
+    const nuevoEstado = Boolean(girando);
+    if (this.herramientaGirando === nuevoEstado) return;
+    this.herramientaGirando = nuevoEstado;
+
+    if (this.herramientaGirando) {
+      this.iniciarAnimacionGiro();
+    } else {
+      if (this.animacionGiroId) {
+        cancelAnimationFrame(this.animacionGiroId);
+        this.animacionGiroId = null;
+      }
+      this.solicitarRenderizado();
+    }
+  }
+
+  iniciarAnimacionGiro() {
+    if (this.animacionGiroId) return;
+    let tiempoPrevio = performance.now();
+
+    const pasoAnimacion = (tiempoActual) => {
+      if (!this.herramientaGirando) {
+        this.animacionGiroId = null;
+        this.renderizar();
+        return;
+      }
+
+      // Si la ventana o pestaña está en segundo plano, evitar consumo innecesario
+      if (document.hidden) {
+        this.animacionGiroId = requestAnimationFrame(pasoAnimacion);
+        return;
+      }
+
+      const dt = Math.min(50, tiempoActual - tiempoPrevio);
+      tiempoPrevio = tiempoActual;
+
+      const factorFrame = dt / 16.67;
+      this.anguloGiroHerramienta = (this.anguloGiroHerramienta + this.velocidadGiroHerramienta * factorFrame) % 360;
+
+      // Interpolación ultra-suave (LERP) de la posición física de la fresa a 60 FPS
+      // Elimina por completo los micro-tirones y saltos producidos por temporizadores asíncronos
+      const dx = this.posicionObjetivo.x - this.posicionHerramienta.x;
+      const dy = this.posicionObjetivo.y - this.posicionHerramienta.y;
+      const dz = this.posicionObjetivo.z - this.posicionHerramienta.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+
+      if (distSq > 0.000001) {
+        const factorLerp = Math.min(1.0, Math.max(0.20, dt * 0.024));
+        this.posicionHerramienta.x += dx * factorLerp;
+        this.posicionHerramienta.y += dy * factorLerp;
+        this.posicionHerramienta.z += dz * factorLerp;
+        this.actualizarIndicadoresPosicionTexto(this.posicionHerramienta.x, this.posicionHerramienta.y, this.posicionHerramienta.z);
+      }
+
+      this.renderizar();
+      this.animacionGiroId = requestAnimationFrame(pasoAnimacion);
+    };
+
+    this.animacionGiroId = requestAnimationFrame(pasoAnimacion);
+  }
+
+  // Retícula indicadora de alta precisión y herramienta de corte (fresa/V-bit) con punta ultra fina y animación de giro
+  // Retícula indicadora de alta precisión y herramienta de corte (fresa/V-bit) con punta visible adaptable al zoom
   dibujarRetículaHerramienta(ctx) {
     const pos = this.convertirAPantalla(this.posicionHerramienta.x, this.posicionHerramienta.y, this.posicionHerramienta.z);
+    if (!pos || isNaN(pos.x) || isNaN(pos.y)) return;
+
     ctx.save();
 
-    ctx.strokeStyle = '#ffb703';
-    ctx.lineWidth = 1.6;
-    ctx.shadowColor = '#ffb703';
-    ctx.shadowBlur = 6;
+    // Factor de escala visual adaptativo según el nivel de magnificación/zoom:
+    // Al hacer zoom sobre las pistas del PCB, la herramienta escala armónicamente
+    // con el corte para que la punta y el cuerpo mantengan proporción realista y nunca se hagan chicos.
+    const factorEscalaZoom = Math.max(1.0, Math.min(6.5, Math.pow(this.zoom, 0.40)));
 
-    const tamCruz = 12;
-    ctx.beginPath();
-    ctx.moveTo(pos.x - tamCruz, pos.y);
-    ctx.lineTo(pos.x + tamCruz, pos.y);
-    ctx.moveTo(pos.x, pos.y - tamCruz);
-    ctx.lineTo(pos.x, pos.y + tamCruz);
-    ctx.stroke();
+    // Comprobamos si la vista tiene componente vertical para proyectar el vástago 3D (3D, XZ, YZ)
+    const posArribaReal = this.convertirAPantalla(
+      this.posicionHerramienta.x,
+      this.posicionHerramienta.y,
+      this.posicionHerramienta.z + 25
+    );
 
-    ctx.beginPath();
-    ctx.arc(pos.x, pos.y, 6, 0, Math.PI * 2);
-    ctx.stroke();
+    const dx = posArribaReal.x - pos.x;
+    const dy = posArribaReal.y - pos.y;
+    const distEje = Math.hypot(dx, dy);
 
-    // Silueta 3D de la fresa cilíndrica extendiéndose hacia ARRIBA (+Z)
-    if (this.modoVista === '3D') {
-      const posArribaReal = this.convertirAPantalla(this.posicionHerramienta.x, this.posicionHerramienta.y, this.posicionHerramienta.z + 20);
-      const distPx = Math.abs(pos.y - posArribaReal.y);
-      const distPxLimitada = Math.min(80, Math.max(25, distPx));
-      const posArriba = {
-        x: posArribaReal.x,
-        y: pos.y - distPxLimitada
-      };
+    const esVistaProyectada3D = distEje >= 4;
 
-      ctx.strokeStyle = '#ffb703';
-      ctx.fillStyle = 'rgba(255, 183, 3, 0.35)';
-      ctx.lineWidth = 2;
+    // Si la herramienta seleccionada es el Lápiz didáctico escolar:
+    if (this.tipoHerramienta === 'lapiz') {
+      if (esVistaProyectada3D) {
+        this.dibujarLapiz3D(ctx, pos, factorEscalaZoom, dx, dy, distEje);
+      } else {
+        this.dibujarLapiz2D(ctx, pos, factorEscalaZoom);
+      }
+      ctx.restore();
+      return;
+    }
 
-      // Vástago de la herramienta desde la punta hacia arriba
+    if (esVistaProyectada3D) {
+      // -------------------------------------------------------------
+      // VISTA 3D / ELEVACIÓN: Fresa de grabado/corte cónica con punta visible
+      // -------------------------------------------------------------
+      const ux = dx / distEje;
+      const uy = dy / distEje;
+      const nx = -uy;
+      const ny = ux;
+
+      // Longitud y radios visuales adaptativos según el nivel de zoom
+      const rCuerpo = 4.2 * factorEscalaZoom;
+      const rVastago = rCuerpo * 1.15;
+      const rPinza = rCuerpo * 1.95;
+
+
+      const distPx = Math.max(48 * factorEscalaZoom, distEje * 1.6);
+      const distPxLimitada = Math.min(260, distPx);
+      const hPunta = Math.max(16.0 * factorEscalaZoom, distPxLimitada * 0.28);
+      const hGav = hPunta * 2.1;
+      const hVastago = distPxLimitada;
+      const hPinza = distPxLimitada + 15 * factorEscalaZoom;
+
+      // Coordenadas clave
+      const ptBaseConoL = { x: pos.x + ux * hPunta - nx * rCuerpo, y: pos.y + uy * hPunta - ny * rCuerpo };
+      const ptBaseConoR = { x: pos.x + ux * hPunta + nx * rCuerpo, y: pos.y + uy * hPunta + ny * rCuerpo };
+
+      const ptGavL = { x: pos.x + ux * hGav - nx * rCuerpo, y: pos.y + uy * hGav - ny * rCuerpo };
+      const ptGavR = { x: pos.x + ux * hGav + nx * rCuerpo, y: pos.y + uy * hGav + ny * rCuerpo };
+
+      const ptVastagoL = { x: pos.x + ux * hVastago - nx * rVastago, y: pos.y + uy * hVastago - ny * rVastago };
+      const ptVastagoR = { x: pos.x + ux * hVastago + nx * rVastago, y: pos.y + uy * hVastago + ny * rVastago };
+
+      const ptPinzaL = { x: pos.x + ux * hPinza - nx * rPinza, y: pos.y + uy * hPinza - ny * rPinza };
+      const ptPinzaR = { x: pos.x + ux * hPinza + nx * rPinza, y: pos.y + uy * hPinza + ny * rPinza };
+
+      // 1. PINZA / MANDRIL PORTAHERRAMIENTAS (Collet Chuck ER)
+      const gradPinza = ctx.createLinearGradient(ptVastagoL.x, ptVastagoL.y, ptVastagoR.x, ptVastagoR.y);
+      gradPinza.addColorStop(0, '#1a1f26');
+      gradPinza.addColorStop(0.3, '#3a4452');
+      gradPinza.addColorStop(0.7, '#242a33');
+      gradPinza.addColorStop(1, '#111418');
+
+      ctx.fillStyle = gradPinza;
+      ctx.strokeStyle = 'rgba(255, 215, 0, 0.3)';
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(pos.x - 4, pos.y);
-      ctx.lineTo(posArriba.x - 4, posArriba.y);
-      ctx.lineTo(posArriba.x + 4, posArriba.y);
-      ctx.lineTo(pos.x + 4, pos.y);
+      ctx.moveTo(ptVastagoL.x - nx * 3, ptVastagoL.y - ny * 3);
+      ctx.lineTo(ptPinzaL.x, ptPinzaL.y);
+      ctx.lineTo(ptPinzaR.x, ptPinzaR.y);
+      ctx.lineTo(ptVastagoR.x + nx * 3, ptVastagoR.y + ny * 3);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
 
-      // Cuello portaherramientas (pinza)
-      ctx.fillStyle = 'rgba(200, 210, 225, 0.7)';
+      // Banda de tuerca metálica
+      ctx.strokeStyle = '#6e7d91';
+      ctx.lineWidth = 1.2;
       ctx.beginPath();
-      ctx.rect(posArriba.x - 7, posArriba.y - 8, 14, 8);
+      ctx.moveTo(ptPinzaL.x + ux * 4, ptPinzaL.y + uy * 4);
+      ctx.lineTo(ptPinzaR.x + ux * 4, ptPinzaR.y + uy * 4);
+      ctx.stroke();
+
+      // 2. VÁSTAGO DE CARBURO (Shank)
+      const gradVastago = ctx.createLinearGradient(ptGavL.x, ptGavL.y, ptGavR.x, ptGavR.y);
+      gradVastago.addColorStop(0, '#4a535e');
+      gradVastago.addColorStop(0.35, '#8c98a6');
+      gradVastago.addColorStop(0.7, '#5d6773');
+      gradVastago.addColorStop(1, '#2c323a');
+
+      ctx.fillStyle = gradVastago;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(ptGavL.x, ptGavL.y);
+      ctx.lineTo(ptVastagoL.x, ptVastagoL.y);
+      ctx.lineTo(ptVastagoR.x, ptVastagoR.y);
+      ctx.lineTo(ptGavR.x, ptGavR.y);
+      ctx.closePath();
       ctx.fill();
+      ctx.stroke();
+
+      // 3. CUERPO DE CORTE CILÍNDRICO (Flute section)
+      const gradCuerpo = ctx.createLinearGradient(ptBaseConoL.x, ptBaseConoL.y, ptBaseConoR.x, ptBaseConoR.y);
+      gradCuerpo.addColorStop(0, '#785b05');
+      gradCuerpo.addColorStop(0.4, '#ffd166');
+      gradCuerpo.addColorStop(0.75, '#e09f00');
+      gradCuerpo.addColorStop(1, '#4a3600');
+
+      ctx.fillStyle = gradCuerpo;
+      ctx.beginPath();
+      ctx.moveTo(ptBaseConoL.x, ptBaseConoL.y);
+      ctx.lineTo(ptGavL.x, ptGavL.y);
+      ctx.lineTo(ptGavR.x, ptGavR.y);
+      ctx.lineTo(ptBaseConoR.x, ptBaseConoR.y);
+      ctx.closePath();
+      ctx.fill();
+
+      // 4. PUNTA CÓNICA ULTRA AFILADA DE PRECISIÓN (V-Bit Sharp Tip)
+      // Converge directamente al punto de corte milimétrico en (pos.x, pos.y) totalmente despejado
+      const gradPunta = ctx.createLinearGradient(ptBaseConoL.x, ptBaseConoL.y, ptBaseConoR.x, ptBaseConoR.y);
+      gradPunta.addColorStop(0, '#594000');
+      gradPunta.addColorStop(0.3, '#ffc107');
+      gradPunta.addColorStop(0.5, '#fff9c4');
+      gradPunta.addColorStop(0.7, '#ffb300');
+      gradPunta.addColorStop(1, '#4a3600');
+
+      ctx.fillStyle = gradPunta;
+      ctx.strokeStyle = '#ffd54f';
+      ctx.lineWidth = Math.max(1.0, 1.2 * Math.pow(factorEscalaZoom, 0.3));
+      ctx.beginPath();
+      ctx.moveTo(pos.x, pos.y);
+      ctx.lineTo(ptBaseConoL.x, ptBaseConoL.y);
+      ctx.lineTo(ptBaseConoR.x, ptBaseConoR.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Arista central de corte hacia el vértice exacto (pos.x, pos.y)
+      const ptBaseConoCentro = { x: pos.x + ux * hPunta, y: pos.y + uy * hPunta };
+      ctx.strokeStyle = 'rgba(255, 249, 196, 0.9)';
+      ctx.lineWidth = Math.max(1.0, 1.1 * Math.pow(factorEscalaZoom, 0.25));
+      ctx.beginPath();
+      ctx.moveTo(pos.x, pos.y);
+      ctx.lineTo(ptBaseConoCentro.x, ptBaseConoCentro.y);
+      ctx.stroke();
+
+      // Micro-punto afilado visible en el punto exacto de corte (sin cruces ni aros azules)
+      ctx.fillStyle = '#fff9c4';
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, Math.max(1.0, Math.min(2.0, 1.0 * Math.pow(factorEscalaZoom, 0.2))), 0, Math.PI * 2);
+      ctx.fill();
+
+      // 5. GAVILANES HELICOIDALES EN ROTACIÓN (Animación 3D)
+      const angRad = (this.anguloGiroHerramienta * Math.PI) / 180;
+      const numFlutes = 2;
+
+      ctx.save();
+      for (let f = 0; f < numFlutes; f++) {
+        const baseFluteAng = angRad + (f * Math.PI);
+        ctx.beginPath();
+
+        let comenzo = false;
+        const pasosH = 14;
+        for (let i = 0; i <= pasosH; i++) {
+          const frac = i / pasosH;
+          const h = 2 + frac * (hGav - 2);
+
+          // Radio en este punto de altura (cono en parte baja, cilindro arriba)
+          const rH = (h < hPunta)
+            ? (rCuerpo * (h / hPunta))
+            : rCuerpo;
+
+          const twist = (h / hGav) * Math.PI * 1.6;
+          const flutePhase = baseFluteAng + twist;
+          const cosPhase = Math.cos(flutePhase);
+
+          // Solo dibujamos cuando el gavilán pasa por el frente visible
+          if (cosPhase > -0.15) {
+            const sinPhase = Math.sin(flutePhase);
+            const xPos = pos.x + ux * h + nx * (sinPhase * rH);
+            const yPos = pos.y + uy * h + ny * (sinPhase * rH);
+
+            if (!comenzo) {
+              ctx.moveTo(xPos, yPos);
+              comenzo = true;
+            } else {
+              ctx.lineTo(xPos, yPos);
+            }
+          } else {
+            comenzo = false;
+          }
+        }
+
+        ctx.strokeStyle = this.herramientaGirando
+          ? '#ffe082'
+          : '#ffb703';
+        ctx.lineWidth = this.herramientaGirando ? (1.5 * Math.pow(factorEscalaZoom, 0.3)) : (1.2 * Math.pow(factorEscalaZoom, 0.3));
+        ctx.stroke();
+      }
+      ctx.restore();
+
+    } else {
+      // -------------------------------------------------------------
+      // VISTA 2D SUPERIOR (PLANO XY): Mira óptica micrométrica limpia y nítida
+      // -------------------------------------------------------------
+      const angRad = (this.anguloGiroHerramienta * Math.PI) / 180;
+
+      // 1. Diámetro exterior adaptativo de la herramienta
+      const rHerramienta = Math.max(6.0, Math.min(45.0, 5.5 * factorEscalaZoom));
+      ctx.strokeStyle = this.herramientaGirando ? 'rgba(255, 209, 102, 0.95)' : 'rgba(255, 183, 3, 0.85)';
+      ctx.lineWidth = Math.max(1.2, 1.4 * Math.pow(factorEscalaZoom, 0.25));
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, rHerramienta, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 2. Si está girando: FILOS DE CORTE EN ROTACIÓN Y ANILLO ORBITAL
+      if (this.herramientaGirando) {
+        ctx.save();
+        ctx.strokeStyle = '#ffd166';
+        ctx.lineWidth = Math.max(1.2, 1.4 * Math.pow(factorEscalaZoom, 0.25));
+
+        // Anillo orbital punteado giratorio indicando dirección de rotación
+        ctx.setLineDash([3, 4]);
+        ctx.lineDashOffset = -(this.anguloGiroHerramienta * 0.2);
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, rHerramienta + 4, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 2 filos de corte espirales rotatorios dentro de la herramienta
+        const rIn = Math.max(2.0, 2.0 * Math.pow(factorEscalaZoom, 0.3));
+        const rOut = rHerramienta - 0.6;
+        for (let b = 0; b < 2; b++) {
+          const a = angRad + (b * Math.PI);
+          ctx.beginPath();
+          ctx.moveTo(pos.x + Math.cos(a) * rIn, pos.y + Math.sin(a) * rIn);
+          ctx.quadraticCurveTo(
+            pos.x + Math.cos(a + 0.4) * (rIn + rOut) * 0.5,
+            pos.y + Math.sin(a + 0.4) * (rIn + rOut) * 0.5,
+            pos.x + Math.cos(a + 0.8) * rOut,
+            pos.y + Math.sin(a + 0.8) * rOut
+          );
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // 3. INDICADOR CENTRAL DE PRECISIÓN LIMPIO (Sin cruces ni retículas que tapen la pista)
+      ctx.save();
+      const colorRet = this.herramientaGirando ? '#ffe082' : '#ffd166';
+      ctx.strokeStyle = colorRet;
+      ctx.lineWidth = Math.max(1.0, 1.2 * Math.pow(factorEscalaZoom, 0.25));
+
+      const radioAnillo2D = Math.max(3.0, Math.min(10.0, 3.0 * Math.pow(factorEscalaZoom, 0.35)));
+      const radioLaser2D = Math.max(1.4, Math.min(3.2, 1.4 * Math.pow(factorEscalaZoom, 0.3)));
+
+      // Micro-anillo concéntrico fino
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, radioAnillo2D, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Punto central micrométrico en el punto exacto de corte
+      ctx.fillStyle = colorRet;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, radioLaser2D, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  // Define el tipo de herramienta activa ('fresa' o 'lapiz') y refresca el lienzo
+  establecerTipoHerramienta(tipo) {
+    this.tipoHerramienta = (tipo === 'lapiz') ? 'lapiz' : 'fresa';
+    localStorage.setItem('cnc_tipo_herramienta', this.tipoHerramienta);
+    this.solicitarRenderizado();
+  }
+
+  // Renderizado fotorrealista 3D de un Lápiz de grafito escolar montado en la CNC
+  dibujarLapiz3D(ctx, pos, factorEscalaZoom, dx, dy, distEje) {
+    const ux = dx / distEje;
+    const uy = dy / distEje;
+    const nx = -uy;
+    const ny = ux;
+
+    const rLapiz = 4.2 * factorEscalaZoom;
+    const distPx = Math.max(54 * factorEscalaZoom, distEje * 1.7);
+    const distPxLimitada = Math.min(270, distPx);
+
+    // Alturas proyectadas a lo largo del eje del lápiz desde la punta de contacto pos (h = 0)
+    const hPuntaGrafito = Math.max(5.5 * factorEscalaZoom, distPxLimitada * 0.09);
+    const hMadera = Math.max(16.0 * factorEscalaZoom, distPxLimitada * 0.28);
+    const hCuerpo = distPxLimitada;
+    const hVirola = distPxLimitada + 10 * factorEscalaZoom;
+    const hGoma = hVirola + 8 * factorEscalaZoom;
+
+    // 1. ADAPTADOR / BRACKET DE MONTAJE CNC (Collarín porta-lápiz en eje Z)
+    const hSujetador = hCuerpo * 0.72;
+    const anchoSujetador = rLapiz * 1.85;
+    const pSujL = { x: pos.x + ux * hSujetador - nx * anchoSujetador, y: pos.y + uy * hSujetador - ny * anchoSujetador };
+    const pSujR = { x: pos.x + ux * hSujetador + nx * anchoSujetador, y: pos.y + uy * hSujetador + ny * anchoSujetador };
+    const pSujTopL = { x: pSujL.x + ux * (13 * factorEscalaZoom), y: pSujL.y + uy * (13 * factorEscalaZoom) };
+    const pSujTopR = { x: pSujR.x + ux * (13 * factorEscalaZoom), y: pSujR.y + uy * (13 * factorEscalaZoom) };
+
+    ctx.fillStyle = '#1e293b';
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pSujL.x, pSujL.y);
+    ctx.lineTo(pSujTopL.x, pSujTopL.y);
+    ctx.lineTo(pSujTopR.x, pSujTopR.y);
+    ctx.lineTo(pSujR.x, pSujR.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Tornillo de fijación micrométrico
+    const pTornillo = { x: (pSujL.x + pSujTopL.x) * 0.5 - nx * 2, y: (pSujL.y + pSujTopL.y) * 0.5 - ny * 2 };
+    ctx.fillStyle = '#cbd5e1';
+    ctx.beginPath();
+    ctx.arc(pTornillo.x, pTornillo.y, 2.3 * factorEscalaZoom, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. GOMA DE BORRAR TRASERA (Color rosa tradicional)
+    const ptGomaL = { x: pos.x + ux * hVirola - nx * (rLapiz * 0.88), y: pos.y + uy * hVirola - ny * (rLapiz * 0.88) };
+    const ptGomaR = { x: pos.x + ux * hVirola + nx * (rLapiz * 0.88), y: pos.y + uy * hVirola + ny * (rLapiz * 0.88) };
+    const ptGomaTopL = { x: pos.x + ux * hGoma - nx * (rLapiz * 0.8), y: pos.y + uy * hGoma - ny * (rLapiz * 0.8) };
+    const ptGomaTopR = { x: pos.x + ux * hGoma + nx * (rLapiz * 0.8), y: pos.y + uy * hGoma + ny * (rLapiz * 0.8) };
+    const ptGomaCap = { x: pos.x + ux * (hGoma + 2.5 * factorEscalaZoom), y: pos.y + uy * (hGoma + 2.5 * factorEscalaZoom) };
+
+    const gradGoma = ctx.createLinearGradient(ptGomaL.x, ptGomaL.y, ptGomaR.x, ptGomaR.y);
+    gradGoma.addColorStop(0, '#be185d');
+    gradGoma.addColorStop(0.35, '#fb7185');
+    gradGoma.addColorStop(0.7, '#f43f5e');
+    gradGoma.addColorStop(1, '#9d174d');
+
+    ctx.fillStyle = gradGoma;
+    ctx.beginPath();
+    ctx.moveTo(ptGomaL.x, ptGomaL.y);
+    ctx.lineTo(ptGomaTopL.x, ptGomaTopL.y);
+    ctx.quadraticCurveTo(ptGomaCap.x, ptGomaCap.y, ptGomaTopR.x, ptGomaTopR.y);
+    ctx.lineTo(ptGomaR.x, ptGomaR.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // 3. VIROLA METÁLICA (Aluminio de ensamble de goma)
+    const ptVirolaL = { x: pos.x + ux * hCuerpo - nx * (rLapiz * 0.95), y: pos.y + uy * hCuerpo - ny * (rLapiz * 0.95) };
+    const ptVirolaR = { x: pos.x + ux * hCuerpo + nx * (rLapiz * 0.95), y: pos.y + uy * hCuerpo + ny * (rLapiz * 0.95) };
+
+    const gradVirola = ctx.createLinearGradient(ptVirolaL.x, ptVirolaL.y, ptVirolaR.x, ptVirolaR.y);
+    gradVirola.addColorStop(0, '#475569');
+    gradVirola.addColorStop(0.3, '#f1f5f9');
+    gradVirola.addColorStop(0.65, '#cbd5e1');
+    gradVirola.addColorStop(1, '#334155');
+
+    ctx.fillStyle = gradVirola;
+    ctx.beginPath();
+    ctx.moveTo(ptVirolaL.x, ptVirolaL.y);
+    ctx.lineTo(ptGomaL.x, ptGomaL.y);
+    ctx.lineTo(ptGomaR.x, ptGomaR.y);
+    ctx.lineTo(ptVirolaR.x, ptVirolaR.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Bandas grabadas de la virola metálica
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 1;
+    for (let r = 0.3; r <= 0.7; r += 0.3) {
+      const hBand = hCuerpo + (hVirola - hCuerpo) * r;
+      ctx.beginPath();
+      ctx.moveTo(pos.x + ux * hBand - nx * (rLapiz * 0.95), pos.y + uy * hBand - ny * (rLapiz * 0.95));
+      ctx.lineTo(pos.x + ux * hBand + nx * (rLapiz * 0.95), pos.y + uy * hBand + ny * (rLapiz * 0.95));
+      ctx.stroke();
     }
 
-    ctx.restore();
+    // 4. CUERPO HEXAGONAL AMARILLO (3 facetas visibles con iluminación y bisel)
+    const f1 = 0.32;
+    const ptCpoL_bot = { x: pos.x + ux * hMadera - nx * rLapiz, y: pos.y + uy * hMadera - ny * rLapiz };
+    const ptCpoL_top = { x: pos.x + ux * hCuerpo - nx * rLapiz, y: pos.y + uy * hCuerpo - ny * rLapiz };
+
+    const ptCpoM1_bot = { x: pos.x + ux * hMadera - nx * (rLapiz * f1), y: pos.y + uy * hMadera - ny * (rLapiz * f1) };
+    const ptCpoM1_top = { x: pos.x + ux * hCuerpo - nx * (rLapiz * f1), y: pos.y + uy * hCuerpo - ny * (rLapiz * f1) };
+
+    const ptCpoM2_bot = { x: pos.x + ux * hMadera + nx * (rLapiz * f1), y: pos.y + uy * hMadera + ny * (rLapiz * f1) };
+    const ptCpoM2_top = { x: pos.x + ux * hCuerpo + nx * (rLapiz * f1), y: pos.y + uy * hCuerpo + ny * (rLapiz * f1) };
+
+    const ptCpoR_bot = { x: pos.x + ux * hMadera + nx * rLapiz, y: pos.y + uy * hMadera + ny * rLapiz };
+    const ptCpoR_top = { x: pos.x + ux * hCuerpo + nx * rLapiz, y: pos.y + uy * hCuerpo + ny * rLapiz };
+
+    // Faceta Izquierda (Sombra)
+    ctx.fillStyle = '#b45309';
+    ctx.beginPath();
+    ctx.moveTo(ptCpoL_bot.x, ptCpoL_bot.y);
+    ctx.lineTo(ptCpoL_top.x, ptCpoL_top.y);
+    ctx.lineTo(ptCpoM1_top.x, ptCpoM1_top.y);
+    ctx.lineTo(ptCpoM1_bot.x, ptCpoM1_bot.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Faceta Central (Luz directa - Amarillo oro)
+    ctx.fillStyle = '#fbbf24';
+    ctx.beginPath();
+    ctx.moveTo(ptCpoM1_bot.x, ptCpoM1_bot.y);
+    ctx.lineTo(ptCpoM1_top.x, ptCpoM1_top.y);
+    ctx.lineTo(ptCpoM2_top.x, ptCpoM2_top.y);
+    ctx.lineTo(ptCpoM2_bot.x, ptCpoM2_bot.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Faceta Derecha (Semisombra)
+    ctx.fillStyle = '#d97706';
+    ctx.beginPath();
+    ctx.moveTo(ptCpoM2_bot.x, ptCpoM2_bot.y);
+    ctx.lineTo(ptCpoM2_top.x, ptCpoM2_top.y);
+    ctx.lineTo(ptCpoR_top.x, ptCpoR_top.y);
+    ctx.lineTo(ptCpoR_bot.x, ptCpoR_bot.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Aristas brillantes longitudinales del hexágono
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(ptCpoM1_bot.x, ptCpoM1_bot.y);
+    ctx.lineTo(ptCpoM1_top.x, ptCpoM1_top.y);
+    ctx.moveTo(ptCpoM2_bot.x, ptCpoM2_bot.y);
+    ctx.lineTo(ptCpoM2_top.x, ptCpoM2_top.y);
+    ctx.stroke();
+
+    // 5. CUELLO DE MADERA AFILADA (Madera de cedro natural tallada)
+    const ptMadL = ptCpoL_bot;
+    const ptMadR = ptCpoR_bot;
+    const rGrafito = rLapiz * 0.38;
+    const ptGrafL = { x: pos.x + ux * hPuntaGrafito - nx * rGrafito, y: pos.y + uy * hPuntaGrafito - ny * rGrafito };
+    const ptGrafR = { x: pos.x + ux * hPuntaGrafito + nx * rGrafito, y: pos.y + uy * hPuntaGrafito + ny * rGrafito };
+
+    const gradMadera = ctx.createLinearGradient(ptMadL.x, ptMadL.y, ptMadR.x, ptMadR.y);
+    gradMadera.addColorStop(0, '#d97706');
+    gradMadera.addColorStop(0.25, '#fde68a');
+    gradMadera.addColorStop(0.5, '#fef3c7');
+    gradMadera.addColorStop(0.75, '#fde68a');
+    gradMadera.addColorStop(1, '#b45309');
+
+    ctx.fillStyle = gradMadera;
+    ctx.beginPath();
+    ctx.moveTo(ptGrafL.x, ptGrafL.y);
+    ctx.lineTo(ptMadL.x, ptMadL.y);
+    // Ondulaciones mecánicas del afilado
+    ctx.lineTo(ptCpoM1_bot.x + ux * 2, ptCpoM1_bot.y + uy * 2);
+    ctx.lineTo(ptCpoM2_bot.x + ux * 2, ptCpoM2_bot.y + uy * 2);
+    ctx.lineTo(ptMadR.x, ptMadR.y);
+    ctx.lineTo(ptGrafR.x, ptGrafR.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Veta longitudinal de madera
+    ctx.strokeStyle = 'rgba(180, 83, 9, 0.4)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(ptGrafL.x * 0.5 + ptGrafR.x * 0.5, ptGrafL.y * 0.5 + ptGrafR.y * 0.5);
+    ctx.lineTo(pos.x + ux * hMadera, pos.y + uy * hMadera);
+    ctx.stroke();
+
+    // 6. MINA DE GRAFITO AFILADA (Punta de contacto en pos.x, pos.y)
+    const gradGrafito = ctx.createLinearGradient(ptGrafL.x, ptGrafL.y, ptGrafR.x, ptGrafR.y);
+    gradGrafito.addColorStop(0, '#0f172a');
+    gradGrafito.addColorStop(0.4, '#475569');
+    gradGrafito.addColorStop(0.7, '#1e293b');
+    gradGrafito.addColorStop(1, '#020617');
+
+    ctx.fillStyle = gradGrafito;
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y);
+    ctx.lineTo(ptGrafL.x, ptGrafL.y);
+    ctx.lineTo(ptGrafR.x, ptGrafR.y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Micro-punto de grafito en el vértice exacto de dibujo
+    ctx.fillStyle = '#020617';
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, Math.max(1.2, 1.4 * Math.pow(factorEscalaZoom, 0.25)), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Renderizado en planta superior 2D (Plano XY) del Lápiz didáctico
+  dibujarLapiz2D(ctx, pos, factorEscalaZoom) {
+    const rHex = Math.max(7.0, Math.min(38.0, 6.5 * factorEscalaZoom));
+    const rMad = rHex * 0.65;
+    const rGraf = rHex * 0.28;
+
+    // 1. Perfil hexagonal exterior amarillo
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const ang = (i * Math.PI) / 3;
+      const hx = pos.x + Math.cos(ang) * rHex;
+      const hy = pos.y + Math.sin(ang) * rHex;
+      if (i === 0) ctx.moveTo(hx, hy);
+      else ctx.lineTo(hx, hy);
+    }
+    ctx.closePath();
+    ctx.fillStyle = '#fbbf24';
+    ctx.fill();
+    ctx.strokeStyle = '#d97706';
+    ctx.lineWidth = Math.max(1.2, 1.5 * Math.pow(factorEscalaZoom, 0.25));
+    ctx.stroke();
+
+    // 2. Cono concéntrico de madera clara tallada
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, rMad, 0, Math.PI * 2);
+    ctx.fillStyle = '#fef3c7';
+    ctx.fill();
+    ctx.strokeStyle = '#fde68a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // 3. Mina central de grafito oscuro
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, rGraf, 0, Math.PI * 2);
+    ctx.fillStyle = '#1e293b';
+    ctx.fill();
+    ctx.strokeStyle = '#0f172a';
+    ctx.stroke();
+
+    // 4. Retícula óptica fina de trazador
+    ctx.strokeStyle = 'rgba(0, 229, 255, 0.75)';
+    ctx.lineWidth = 1;
+    const lCruz = rHex + 4;
+    ctx.beginPath();
+    ctx.moveTo(pos.x - lCruz, pos.y);
+    ctx.lineTo(pos.x - rGraf - 1, pos.y);
+    ctx.moveTo(pos.x + rGraf + 1, pos.y);
+    ctx.lineTo(pos.x + lCruz, pos.y);
+    ctx.moveTo(pos.x, pos.y - lCruz);
+    ctx.lineTo(pos.x, pos.y - rGraf - 1);
+    ctx.moveTo(pos.x, pos.y + rGraf + 1);
+    ctx.lineTo(pos.x, pos.y + lCruz);
+    ctx.stroke();
   }
 
   // Alternar visibilidad de la cuadrícula milimétrica / 3D
   alternarCuadricula() {
     this.mostrarCuadricula = !this.mostrarCuadricula;
+    this.marcarEstaticoSucio();
     this.solicitarRenderizado();
     return this.mostrarCuadricula;
   }
@@ -1263,6 +1957,7 @@ class VisualizadorCNC {
   limpiarTrayectoria() {
     this.trayectoria = [];
     this.envolventePieza = null;
+    this.marcarEstaticoSucio();
     this.solicitarRenderizado();
   }
 
@@ -1274,6 +1969,7 @@ class VisualizadorCNC {
       maxZ: Math.max(5, parseFloat(maxZ) || 60.0)
     };
     this.evaluarLimitesPieza();
+    this.marcarEstaticoSucio();
     this.solicitarRenderizado();
   }
 
@@ -1364,15 +2060,7 @@ class VisualizadorCNC {
       // 2. Borde perimetral de la mesa
       ctx.lineWidth = hayDesb ? 2.5 : 1.5;
       ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.95)' : 'rgba(0, 229, 255, 0.7)';
-      if (hayDesb) {
-        ctx.shadowColor = 'rgba(255, 59, 48, 0.5)';
-        ctx.shadowBlur = 8;
-      } else {
-        ctx.shadowColor = 'rgba(0, 229, 255, 0.25)';
-        ctx.shadowBlur = 4;
-      }
       ctx.strokeRect(p0.x, pMax.y, ancho, alto);
-      ctx.shadowBlur = 0;
 
       // 3. Marcas de escuadra técnica en las 4 esquinas de la mesa
       const tamBracket = Math.min(16, Math.max(6, 12 * Math.sqrt(this.zoom)));
@@ -1455,15 +2143,7 @@ class VisualizadorCNC {
       // Perímetro sólido de la mesa en Z = 0
       ctx.lineWidth = hayDesb ? 2.5 : 2.0;
       ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.95)' : 'rgba(0, 229, 255, 0.85)';
-      if (hayDesb) {
-        ctx.shadowColor = 'rgba(255, 59, 48, 0.6)';
-        ctx.shadowBlur = 8;
-      } else {
-        ctx.shadowColor = 'rgba(0, 229, 255, 0.35)';
-        ctx.shadowBlur = 4;
-      }
       ctx.stroke();
-      ctx.shadowBlur = 0;
 
       // Columnas guía y volumen de trabajo que asciende hacia ARRIBA (+maxZ)
       ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.45)' : 'rgba(0, 229, 255, 0.35)';
@@ -1495,33 +2175,33 @@ class VisualizadorCNC {
     ctx.restore();
   }
 
-  // Superposición visual de alerta sobre el lienzo cuando el modelo desborda
+  // Superposición visual de alerta sobre el lienzo cuando el modelo desborda (ultra-rápido sin shadowBlur)
   dibujarAlertaLimitesOverlay(ctx) {
-    if (!this.estadoLimites.hayDesbordamiento) return;
+    if (!this.estadoLimites || !this.estadoLimites.hayDesbordamiento) return;
 
     ctx.save();
     const texto = `⚠️ ALERTA: MODELO FUERA DEL ÁREA CNC (${this.limitesMaquina.maxX}×${this.limitesMaquina.maxY}mm)`;
     ctx.font = 'bold 11px "JetBrains Mono", monospace';
-    const anchoTexto = ctx.measureText(texto).width;
+    if (!this.anchoTextoAlerta) {
+      this.anchoTextoAlerta = ctx.measureText(texto).width;
+    }
+    const anchoTexto = this.anchoTextoAlerta;
 
     const x = 12;
     const y = 48;
     const w = anchoTexto + 20;
     const h = 26;
 
-    ctx.fillStyle = 'rgba(38, 12, 16, 0.94)';
+    ctx.fillStyle = 'rgba(40, 10, 14, 0.95)';
     ctx.strokeStyle = '#ff3b30';
     ctx.lineWidth = 1.5;
-    ctx.shadowColor = 'rgba(255, 59, 48, 0.45)';
-    ctx.shadowBlur = 8;
 
     ctx.beginPath();
     ctx.rect(x, y, w, h);
     ctx.fill();
     ctx.stroke();
 
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#ff453a';
+    ctx.fillStyle = '#ff6b6b';
     ctx.fillText(texto, x + 10, y + 17);
     ctx.restore();
   }
