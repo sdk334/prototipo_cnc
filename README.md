@@ -10,7 +10,7 @@
 
 ---
 
-## 📖 Descripción del Proyecto
+##  Descripción del Proyecto
 
 **CNC Basic v1.0** es una estación de control numérico computarizado (CNC) de grado industrial y pedagógico desarrollada para máquinas de fresado, grabado y trazado controladas por firmware **GRBL v1.1** (Arduino Uno, Nano, ATmega328P o microcontroladores compatibles).
 
@@ -20,14 +20,14 @@ Cuenta con una arquitectura modular desacoplada en cuatro capas, permitiendo tan
 
 ---
 
-## 🌟 Resumen de Características y Mejoras Implementadas
+##  Resumen de Características y Mejoras Implementadas
 
 ### 1. 🛡️ Interbloqueo y Seguridad Crítica del Husillo (Spindle Safety Interlock)
 - **Protección de herramienta durante mecanizado**: Se impide terminantemente el apagado accidental del husillo (Spindle) mientras la máquina se encuentra cortando o en pausa activa (`RUN` o `HOLD`), tanto desde la interfaz gráfica como desde comandos manuales MDI (`M5`).
 - **Alerta de seguridad industrial**: Modales visuales y sonoros con rechazo explícito y animación de bloqueo (`btn-spindle-denied`) informando al operador sobre el riesgo de rotura de fresa y desgarre de material.
 - **Protección automática de corte sin giro**: En modo fresa, si el archivo G-Code o el operador intentan ejecutar avances de corte (`G1`, `G2`, `G3`) con el husillo detenido, el sistema detiene inmediatamente el movimiento, pasa a estado `HOLD` y despliega la advertencia correspondiente.
 
-### 2. ✏️ Soporte de Doble Herramienta: Fresa CNC vs Lápiz Didáctico
+### 2.  Soporte de Doble Herramienta: Fresa CNC vs Lápiz Didáctico
 - **Modal de Selección de Herramienta**: Permite conmutar con un solo clic entre:
   - **Fresa CNC (Herramienta de Corte)**: Para operaciones de maquinado convencional sobre madera, acrílico, aluminio o placas de circuito impreso (PCB).
   - **Lápiz Didáctico (Plotter de Trazado)**: Diseñado para prácticas seguras de laboratorio sobre papel, cartulina o plantillas sin riesgo de accidentes mecánicos ni desgaste de fresas.
@@ -41,27 +41,27 @@ Cuenta con una arquitectura modular desacoplada en cuatro capas, permitiendo tan
   - Al transmitir a una máquina física real, los comandos `M3`/`M4` se sustituyen por comentarios inocuos para evitar que el relé/PWM del spindle se active físicamente.
   - El interbloqueo de corte sin husillo se desactiva de forma inteligente en modo lápiz, permitiendo trazar libremente sin interrupciones.
 
-### 3. ⏱️ Modificador de Velocidad en Tiempo Real (Feed Override)
+### 3.  Modificador de Velocidad en Tiempo Real (Feed Override)
 - Implementación del protocolo de comandos en tiempo real de GRBL v1.1 mediante inyección directa de bytes (`0x90` para 100%, incrementos dinámicos de 10% a 250%).
 - Deslizador interactivo en la interfaz con actualización instantánea de las lecturas de telemetría y recálculo adaptativo de tiempos de ciclo estimados.
 
-### 4. 📐 Visualizador Gráfico Canvas 2D/3D Multivista
+### 4.  Visualizador Gráfico Canvas 2D/3D Multivista
 - **Vistas ortogonales e isométricas**: Proyección XY (superior), XZ (frontal), YZ (lateral) y 3D interactivo con rotación orbital, paneo y zoom con la rueda del ratón.
 - **Detección de límites suaves (Soft Limits)**: Comprobación automática de las dimensiones del programa G-Code contra los recorridos máximos configurados en el firmware (`$130`, `$131`, `$132`) antes de comenzar la corrida.
 - **Renderizado cromático de trayectorias**: Movimientos rápidos (`G0`) en líneas discontinuas y movimientos de corte o trazado (`G1/G2/G3`) en cian brillante continuo con marcador de progreso en tiempo real.
 
-### 5. 🎛️ Consola Serial y Terminal MDI Educativo
+### 5.  Consola Serial y Terminal MDI Educativo
 - Terminal serial interactivo con filtrado de comandos, atajos rápidos (`$H`, `$X`, `$$`, `$G`) y traducción pedagógica de errores y alarmas de GRBL.
 - Diccionario de Código G integrado con buscador en tiempo real para consulta de directivas estándar (`G00`, `G01`, `G02`, `G03`, `G17`, `G21`, `G90`, `M03`, `M05`, etc.).
 
-### 6. 🖥️ Experiencia de Usuario Nativa y Pantalla Completa
+### 6.  Experiencia de Usuario Nativa y Pantalla Completa
 - Integración nativa de Windows mediante **PyQt6 WebEngine** acelerado por hardware con WebGL y soporte completo para pantallas táctiles de alta densidad (HiDPI).
 - Modo de pantalla completa inmersiva accesible mediante la tecla `F11` o desde el menú de vista de la aplicación.
 - Barra lateral flexible con paneles colapsables (DRO, Jogging, Husillo, Progreso) y divisor arrastrable con memoria de tamaño.
 
 ---
 
-## 📁 Estructura del Proyecto
+##  Estructura del Proyecto
 
 El proyecto está organizado de manera modular en carpetas temáticas para facilitar su mantenimiento y escalabilidad:
 
@@ -99,7 +99,7 @@ proyecto tt2/
 
 ---
 
-## 🚀 Instalación y Puesta en Marcha
+##  Instalación y Puesta en Marcha
 
 ### 1. Requisitos del Sistema
 - **Sistema Operativo:** Windows 10 u 11 (64 bits).
@@ -129,7 +129,7 @@ python main.py
 
 ---
 
-## ⌨️ Atajos de Teclado del Sistema
+##  Atajos de Teclado del Sistema
 
 | Tecla / Combinación | Acción Realizada |
 | :--- | :--- |

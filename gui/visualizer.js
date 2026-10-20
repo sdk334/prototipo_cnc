@@ -1068,13 +1068,13 @@ class VisualizadorCNC {
       const pZ = this.convertirAPantalla(0, 0, (longitudEje * 0.8) / (escala * this.escalaZ));
 
       // Eje X (Rojo hacia la derecha)
-      ctx.strokeStyle = '#ff3b30';
+      ctx.strokeStyle = '#ef4444';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(origen.x, origen.y);
       ctx.lineTo(pX.x, pX.y);
       ctx.stroke();
-      ctx.fillStyle = '#ff3b30';
+      ctx.fillStyle = '#ef4444';
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
       ctx.fillText('+X', pX.x + 4, pX.y + 4);
 
@@ -1256,7 +1256,7 @@ class VisualizadorCNC {
     if (hayG1) ctx.stroke();
 
     // 3b. Segmentos FUERA de los límites (Rojo de alerta)
-    ctx.strokeStyle = '#ff3b30';
+    ctx.strokeStyle = '#dc2626';
     ctx.beginPath();
     let hayG1OOB = false;
     let prevOOBX = null, prevOOBY = null, prevOOBZ = null;
@@ -2059,12 +2059,12 @@ class VisualizadorCNC {
 
       // 2. Borde perimetral de la mesa
       ctx.lineWidth = hayDesb ? 2.5 : 1.5;
-      ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.95)' : 'rgba(0, 229, 255, 0.7)';
+      ctx.strokeStyle = hayDesb ? 'rgba(220, 38, 38, 0.95)' : 'rgba(0, 229, 255, 0.7)';
       ctx.strokeRect(p0.x, pMax.y, ancho, alto);
 
       // 3. Marcas de escuadra técnica en las 4 esquinas de la mesa
       const tamBracket = Math.min(16, Math.max(6, 12 * Math.sqrt(this.zoom)));
-      ctx.strokeStyle = hayDesb ? '#ff453a' : '#00e5ff';
+      ctx.strokeStyle = hayDesb ? '#dc2626' : '#00e5ff';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       // Esquina (0,0)
@@ -2087,7 +2087,7 @@ class VisualizadorCNC {
 
       // 4. Rótulo de la Mesa
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
-      ctx.fillStyle = hayDesb ? '#ff858d' : '#4dd2ff';
+      ctx.fillStyle = hayDesb ? '#fbbf24' : '#4dd2ff';
       ctx.fillText(`MESA CNC [${maxX} × ${maxY} mm]`, p0.x + 6, pMax.y - 6);
 
     } else if (this.modoVista === 'XZ') {
@@ -2101,7 +2101,7 @@ class VisualizadorCNC {
       ctx.fillRect(p0.x, pMax.y, ancho, alto);
 
       ctx.lineWidth = hayDesb ? 2.5 : 1.5;
-      ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.95)' : 'rgba(0, 229, 255, 0.7)';
+      ctx.strokeStyle = hayDesb ? 'rgba(220, 38, 38, 0.95)' : 'rgba(0, 229, 255, 0.7)';
       ctx.strokeRect(p0.x, pMax.y, ancho, alto);
 
       // Línea sólida de la cama de la máquina en Z = 0
@@ -2113,7 +2113,7 @@ class VisualizadorCNC {
       ctx.stroke();
 
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
-      ctx.fillStyle = hayDesb ? '#ff858d' : '#4dd2ff';
+      ctx.fillStyle = hayDesb ? '#fbbf24' : '#4dd2ff';
       ctx.fillText(`MESA XZ [X: ${maxX} mm | Recorrido Z: +${maxZ} mm]`, p0.x + 6, pMax.y - 6);
 
     } else {
@@ -2142,11 +2142,11 @@ class VisualizadorCNC {
 
       // Perímetro sólido de la mesa en Z = 0
       ctx.lineWidth = hayDesb ? 2.5 : 2.0;
-      ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.95)' : 'rgba(0, 229, 255, 0.85)';
+      ctx.strokeStyle = hayDesb ? 'rgba(220, 38, 38, 0.95)' : 'rgba(0, 229, 255, 0.85)';
       ctx.stroke();
 
       // Columnas guía y volumen de trabajo que asciende hacia ARRIBA (+maxZ)
-      ctx.strokeStyle = hayDesb ? 'rgba(255, 59, 48, 0.45)' : 'rgba(0, 229, 255, 0.35)';
+      ctx.strokeStyle = hayDesb ? 'rgba(220, 38, 38, 0.45)' : 'rgba(0, 229, 255, 0.35)';
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
@@ -2166,7 +2166,7 @@ class VisualizadorCNC {
 
       // Rótulos de la mesa base y de la altura máxima Z
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
-      ctx.fillStyle = hayDesb ? '#ff858d' : '#4dd2ff';
+      ctx.fillStyle = hayDesb ? '#fbbf24' : '#4dd2ff';
       ctx.fillText(`MESA BASE (Z=0) [${maxX}×${maxY}mm]`, c1.x + 8, c1.y - 8);
       ctx.fillStyle = 'rgba(0, 229, 255, 0.7)';
       ctx.fillText(`Z: +${maxZ}mm`, t1.x + 8, t1.y - 8);
@@ -2192,8 +2192,8 @@ class VisualizadorCNC {
     const w = anchoTexto + 20;
     const h = 26;
 
-    ctx.fillStyle = 'rgba(40, 10, 14, 0.95)';
-    ctx.strokeStyle = '#ff3b30';
+    ctx.fillStyle = 'rgba(28, 12, 12, 0.95)';
+    ctx.strokeStyle = '#dc2626';
     ctx.lineWidth = 1.5;
 
     ctx.beginPath();
@@ -2201,7 +2201,7 @@ class VisualizadorCNC {
     ctx.fill();
     ctx.stroke();
 
-    ctx.fillStyle = '#ff6b6b';
+    ctx.fillStyle = '#fbbf24';
     ctx.fillText(texto, x + 10, y + 17);
     ctx.restore();
   }
