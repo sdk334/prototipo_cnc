@@ -52,8 +52,12 @@ class VisualizadorCNC {
     this.ultimoRatonX = 0;
     this.ultimoRatonY = 0;
 
-    // Segmentos de trayectoria { tipo: 'G0'|'G1', x1, y1, z1, x2, y2, z2 }
+    // Segmentos de trayectoria { tipo: 'G0'|'G1', x1, y1, z1, x2, y2, z2, linea }
     this.trayectoria = [];
+    this.lineaActualEjecucion = -1; // -1 = sin ejecución activa (todo pendiente)
+    this.indiceSegmentoActivo = -1; // Índice del segmento geométrico activo
+    this.progresoSegmentoActivo = 0.0; // Fracción recorrida en el segmento activo [0.0 - 1.0]
+    this.totalLineasGcode = 0;
     this.limitesMaterial = null;
     this.limitesZ = { minZ: -1.0, maxZ: 5.0 };
     this.mostrarCuadricula = true;
@@ -72,6 +76,13 @@ class VisualizadorCNC {
       mensaje: ''
     };
     this.alertaLimitesCallback = null;
+
+    // Configuración visual personalizable (Figuras 11 del TT)
+    this.colorCortePersonalizado = localStorage.getItem('cnc_color_cut') || '#00e5ff';
+    this.colorRapidoPersonalizado = localStorage.getItem('cnc_color_rapid') || '#708090';
+    this.mostrarRetículaHerramienta = localStorage.getItem('cnc_show_reticle') !== 'false';
+    this.mostrarLimitesMesa = localStorage.getItem('cnc_show_bed_limits') !== 'false';
+    this.mostrarHerramienta3D = localStorage.getItem('cnc_show_tool_3d') !== 'false';
 
     this.cargarTrayectoriaEjemplo();
 
@@ -495,6 +506,11 @@ class VisualizadorCNC {
     this.posicionObjetivo.y = numY;
     this.posicionObjetivo.z = numZ;
 
+    if (this.lineaActualEjecucion >= 0) {
+      this.actualizarProgresoTrayectoriaDesdePosicion();
+      this.necesitaRedibujarEstatico = true;
+    }
+
     // Si la herramienta no está animada (máquina detenida o movimiento manual paso a paso),
     // aplicamos la posición de inmediato y solicitamos renderizado estático
     if (!this.herramientaGirando) {
@@ -510,6 +526,10 @@ class VisualizadorCNC {
       this.posicionHerramienta.y = numY;
       this.posicionHerramienta.z = numZ;
       this.actualizarIndicadoresPosicionTexto(numX, numY, numZ);
+      if (this.lineaActualEjecucion >= 0) {
+        this.actualizarProgresoTrayectoriaDesdePosicion();
+        this.necesitaRedibujarEstatico = true;
+      }
       this.solicitarRenderizado();
     }
   }
@@ -668,7 +688,8 @@ class VisualizadorCNC {
     let minCorteY = Infinity, maxCorteY = -Infinity;
     let minCorteZ = Infinity, maxCorteZ = -Infinity;
 
-    for (let rawLinea of lineas) {
+    for (let idxLinea = 0; idxLinea < lineas.length; idxLinea++) {
+      const rawLinea = lineas[idxLinea];
       const linea = rawLinea.replace(/\(.*?\)/g, '').split(';')[0].trim().toUpperCase();
       if (!linea) continue;
 
@@ -768,7 +789,8 @@ class VisualizadorCNC {
             nuevaTrayectoria.push({
               tipo: 'G1',
               x1: pPrevX, y1: pPrevY, z1: pPrevZ,
-              x2: arcX, y2: arcY, z2: arcZ
+              x2: arcX, y2: arcY, z2: arcZ,
+              linea: idxLinea
             });
 
             minCorteX = Math.min(minCorteX, arcX);
@@ -786,7 +808,8 @@ class VisualizadorCNC {
           nuevaTrayectoria.push({
             tipo: 'G1',
             x1: posX, y1: posY, z1: posZ,
-            x2: objetivoX, y2: objetivoY, z2: objetivoZ
+            x2: objetivoX, y2: objetivoY, z2: objetivoZ,
+            linea: idxLinea
           });
           minCorteX = Math.min(minCorteX, posX, objetivoX);
           maxCorteX = Math.max(maxCorteX, posX, objetivoX);
@@ -800,7 +823,8 @@ class VisualizadorCNC {
         nuevaTrayectoria.push({
           tipo,
           x1: posX, y1: posY, z1: posZ,
-          x2: objetivoX, y2: objetivoY, z2: objetivoZ
+          x2: objetivoX, y2: objetivoY, z2: objetivoZ,
+          linea: idxLinea
         });
 
         if (tipo === 'G1') {
@@ -819,6 +843,8 @@ class VisualizadorCNC {
     }
 
     this.trayectoria = nuevaTrayectoria;
+    this.totalLineasGcode = lineas.length;
+    this.lineaActualEjecucion = -1;
     this.evaluarLimitesPieza();
 
     if (minCorteX !== Infinity && maxCorteX !== -Infinity) {
@@ -850,7 +876,14 @@ class VisualizadorCNC {
   // Establece directamente los segmentos vectoriales
   establecerSegmentosTrayectoria(segmentos, envolvente = null) {
     if (Array.isArray(segmentos) && segmentos.length > 0) {
-      this.trayectoria = segmentos;
+      this.trayectoria = segmentos.map((seg, idx) => ({
+        ...seg,
+        linea: (seg.linea !== undefined) ? seg.linea : idx
+      }));
+      this.totalLineasGcode = this.trayectoria.length;
+      this.lineaActualEjecucion = -1;
+      this.indiceSegmentoActivo = -1;
+      this.progresoSegmentoActivo = 0.0;
       this.evaluarLimitesPieza();
       if (envolvente && envolvente.min && envolvente.max) {
         this.limitesMaterial = {
@@ -880,8 +913,10 @@ class VisualizadorCNC {
     ctx.fillStyle = '#0a0c0e';
     ctx.fillRect(0, 0, this.anchoPantalla, this.altoPantalla);
 
-    this.dibujarMesaMaquina(ctx);
     this.dibujarCuadricula(ctx);
+    if (this.mostrarLimitesMesa !== false) {
+      this.dibujarMesaMaquina(ctx);
+    }
     this.dibujarMaterial(ctx);
     this.dibujarTrayectorias(ctx);
     this.dibujarOrigenWCS(ctx);
@@ -923,7 +958,9 @@ class VisualizadorCNC {
     ctx.restore();
 
     // 3. Renderizado de capas dinámicas (herramienta girando con punta fina y alertas)
-    this.dibujarRetículaHerramienta(ctx);
+    if (this.mostrarRetículaHerramienta !== false) {
+      this.dibujarRetículaHerramienta(ctx);
+    }
     this.dibujarAlertaLimitesOverlay(ctx);
   }
 
@@ -1167,7 +1204,169 @@ class VisualizadorCNC {
     }
   }
 
+  // Obtiene el color de trayectoria ya recorrida (completada) según la herramienta activa
+  obtenerColorRecorrido() {
+    if (this.tipoHerramienta === 'laser') {
+      return '#c084fc'; // Púrpura / magenta láser brillante de corte óptico
+    } else if (this.tipoHerramienta === 'lapiz') {
+      return '#f59e0b'; // Dorado / ámbar trazo visible de lápiz
+    } else {
+      return '#22c55e'; // Verde esmeralda corte mecanizado de fresa CNC
+    }
+  }
+
+  // Convierte un color hexadecimal a formato rgba con la opacidad especificada
+  ajustarOpacidadColor(hex, opacidad) {
+    if (!hex || typeof hex !== 'string' || !hex.startsWith('#')) return hex;
+    let c = hex.slice(1);
+    if (c.length === 3) c = c.split('').map(x => x + x).join('');
+    const r = parseInt(c.slice(0, 2), 16) || 0;
+    const g = parseInt(c.slice(2, 4), 16) || 229;
+    const b = parseInt(c.slice(4, 6), 16) || 255;
+    return `rgba(${r}, ${g}, ${b}, ${opacidad})`;
+  }
+
+  // Color de trayectoria pendiente (donde aún falta pasar la herramienta)
+  obtenerColorPendiente() {
+    const colorBase = this.colorCortePersonalizado || '#00e5ff';
+    return (this.lineaActualEjecucion >= 0) ? this.ajustarOpacidadColor(colorBase, 0.45) : colorBase;
+  }
+
+  // Establece el progreso de ejecución a partir de la línea actual de G-code reportada (1-based)
+  establecerProgresoEjecucion(lineaActual, totalLineas = null) {
+    const numLinea = Number(lineaActual);
+    const nuevaLinea = (!isNaN(numLinea) && numLinea >= 1) ? (numLinea - 1) : -1;
+    if (this.lineaActualEjecucion !== nuevaLinea) {
+      this.lineaActualEjecucion = nuevaLinea;
+      if (totalLineas && numLinea >= Number(totalLineas)) {
+        this.indiceSegmentoActivo = this.trayectoria.length;
+        this.progresoSegmentoActivo = 1.0;
+      } else {
+        this.actualizarProgresoTrayectoriaDesdePosicion();
+      }
+      this.marcarEstaticoSucio();
+    }
+  }
+
+  // Establece el índice de línea activa de G-code (0-based)
+  establecerIndiceLineaActiva(indice) {
+    const num = Number(indice);
+    const nueva = (!isNaN(num) && num >= 0) ? num : -1;
+    if (this.lineaActualEjecucion !== nueva) {
+      this.lineaActualEjecucion = nueva;
+      if (nueva === 0) {
+        this.indiceSegmentoActivo = 0;
+        this.progresoSegmentoActivo = 0.0;
+      }
+      this.actualizarProgresoTrayectoriaDesdePosicion();
+      this.marcarEstaticoSucio();
+    }
+  }
+
+  // Reinicia el progreso para volver a colorear toda la trayectoria como pendiente
+  reiniciarProgresoEjecucion() {
+    this.lineaActualEjecucion = -1;
+    this.indiceSegmentoActivo = -1;
+    this.progresoSegmentoActivo = 0.0;
+    this.marcarEstaticoSucio();
+  }
+
+  // Determina con precisión física qué tramos de la trayectoria ya fueron efectivamente
+  // transitados por la punta física de la herramienta, impidiendo rigurosamente que la línea
+  // se ilumine antes de que el cabezal pase físicamente por ella.
+  actualizarProgresoTrayectoriaDesdePosicion() {
+    if (!this.trayectoria || this.trayectoria.length === 0) return;
+    if (this.lineaActualEjecucion === undefined || this.lineaActualEjecucion < 0) return;
+
+    const posH = this.posicionHerramienta;
+    const n = this.trayectoria.length;
+
+    if (this.indiceSegmentoActivo === undefined || this.indiceSegmentoActivo < 0) {
+      this.indiceSegmentoActivo = 0;
+      this.progresoSegmentoActivo = 0.0;
+    }
+
+    let idx = this.indiceSegmentoActivo;
+    if (idx >= n) {
+      this.indiceSegmentoActivo = n;
+      this.progresoSegmentoActivo = 1.0;
+      return;
+    }
+
+    // Ventana hacia adelante para encontrar el segmento físico activo
+    const lookahead = Math.min(n, idx + 25);
+    let mejorIdx = idx;
+    let mejorU = this.progresoSegmentoActivo || 0.0;
+    let menorDistSq = Infinity;
+
+    for (let i = idx; i < lookahead; i++) {
+      const seg = this.trayectoria[i];
+      const vx = seg.x2 - seg.x1;
+      const vy = seg.y2 - seg.y1;
+      const vz = seg.z2 - seg.z1;
+      const lenSq = vx * vx + vy * vy + vz * vz;
+
+      if (lenSq < 0.00001) {
+        if (i === idx) {
+          idx++;
+        }
+        continue;
+      }
+
+      const wx = posH.x - seg.x1;
+      const wy = posH.y - seg.y1;
+      const wz = posH.z - seg.z1;
+      const u = (wx * vx + wy * vy + wz * vz) / lenSq;
+      const uClamp = Math.max(0.0, Math.min(1.0, u));
+
+      const px = seg.x1 + vx * uClamp;
+      const py = seg.y1 + vy * uClamp;
+      const pz = seg.z1 + vz * uClamp;
+
+      const ddx = posH.x - px;
+      const ddy = posH.y - py;
+      const ddz = posH.z - pz;
+      const distSq = ddx * ddx + ddy * ddy + ddz * ddz;
+
+      // Si la herramienta está cercana a la línea del segmento (< 0.75 mm de desviación)
+      if (distSq < 0.6) {
+        if (distSq < menorDistSq) {
+          menorDistSq = distSq;
+          mejorIdx = i;
+          mejorU = uClamp;
+        }
+        // Si está en el cuerpo del segmento (entre 2% y 98%), es el segmento activo definitivo
+        if (u >= 0.02 && u <= 0.98) {
+          mejorIdx = i;
+          mejorU = u;
+          break;
+        }
+      }
+    }
+
+    // Si el segmento actual ya se completó (la punta llegó al extremo final p2 y hay siguiente)
+    if (mejorIdx === idx && mejorU >= 0.98 && idx + 1 < n) {
+      const segActual = this.trayectoria[idx];
+      const dfx = posH.x - segActual.x2;
+      const dfy = posH.y - segActual.y2;
+      const dfz = posH.z - segActual.z2;
+      if ((dfx * dfx + dfy * dfy + dfz * dfz) < 1.0) {
+        mejorIdx = idx + 1;
+        mejorU = 0.0;
+      }
+    }
+
+    // El índice activo solo puede progresar hacia adelante
+    if (mejorIdx > this.indiceSegmentoActivo) {
+      this.indiceSegmentoActivo = mejorIdx;
+      this.progresoSegmentoActivo = mejorU;
+    } else if (mejorIdx === this.indiceSegmentoActivo) {
+      this.progresoSegmentoActivo = Math.max(this.progresoSegmentoActivo || 0.0, mejorU);
+    }
+  }
+
   // Trazado de trayectorias en alta velocidad a 60 FPS con detalle adaptativo a máximo zoom
+  // y diferenciación en vivo del recorrido ya ejecutado vs pendiente
   dibujarTrayectorias(ctx) {
     if (!this.trayectoria || this.trayectoria.length === 0) return;
     ctx.save();
@@ -1176,9 +1375,44 @@ class VisualizadorCNC {
     const maxX = this.limitesMaquina.maxX;
     const maxY = this.limitesMaquina.maxY;
     const es3D = (this.modoVista === '3D');
+    const idxActivo = (this.indiceSegmentoActivo !== undefined && this.indiceSegmentoActivo >= 0) ? this.indiceSegmentoActivo : -1;
+    const progActivo = (this.progresoSegmentoActivo !== undefined) ? this.progresoSegmentoActivo : 0.0;
+    const enEjecucion = (this.lineaActualEjecucion >= 0 && idxActivo >= 0);
 
-    // 1. Trazado rápido G0 (líneas discontinuas grises elevadas) en un único batch continuo
-    ctx.strokeStyle = '#738090';
+    const colorRecorrido = this.obtenerColorRecorrido();
+    const colorPendiente = this.obtenerColorPendiente();
+    const baseLineWidth = Math.min(3.2, Math.max(1.4, 1.8 * Math.pow(this.zoom, 0.12)));
+
+    // 1. Trazado rápido G0 (líneas discontinuas grises)
+    // 1a. G0 transitados (desvanecidos para despejar el campo visual)
+    if (enEjecucion) {
+      ctx.strokeStyle = 'rgba(115, 128, 144, 0.28)';
+      ctx.lineWidth = Math.min(2.0, Math.max(0.8, 1.0 * Math.pow(this.zoom, 0.1)));
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      let hayG0Done = false;
+      let prevX = null, prevY = null, prevZ = null;
+      for (let i = 0; i < n; i++) {
+        const seg = this.trayectoria[i];
+        if (seg.tipo === 'G0' && i < idxActivo) {
+          const esCont = (prevX === seg.x1 && prevY === seg.y1 && prevZ === seg.z1);
+          if (!esCont) {
+            const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+            ctx.moveTo(p1.x, p1.y);
+          }
+          const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
+          ctx.lineTo(p2.x, p2.y);
+          prevX = seg.x2; prevY = seg.y2; prevZ = seg.z2;
+          hayG0Done = true;
+        } else {
+          prevX = null;
+        }
+      }
+      if (hayG0Done) ctx.stroke();
+    }
+
+    // 1b. G0 pendientes (color configurable)
+    ctx.strokeStyle = this.colorRapidoPersonalizado || '#738090';
     ctx.lineWidth = Math.min(2.5, Math.max(1.0, 1.2 * Math.pow(this.zoom, 0.1)));
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
@@ -1188,15 +1422,20 @@ class VisualizadorCNC {
     for (let i = 0; i < n; i++) {
       const seg = this.trayectoria[i];
       if (seg.tipo === 'G0') {
-        const esContinuo = (prevG0X === seg.x1 && prevG0Y === seg.y1 && prevG0Z === seg.z1);
-        if (!esContinuo) {
-          const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
-          ctx.moveTo(p1.x, p1.y);
+        const esPend = (!enEjecucion || i >= idxActivo);
+        if (esPend) {
+          const esContinuo = (prevG0X === seg.x1 && prevG0Y === seg.y1 && prevG0Z === seg.z1);
+          if (!esContinuo) {
+            const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+            ctx.moveTo(p1.x, p1.y);
+          }
+          const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
+          ctx.lineTo(p2.x, p2.y);
+          prevG0X = seg.x2; prevG0Y = seg.y2; prevG0Z = seg.z2;
+          hayG0 = true;
+        } else {
+          prevG0X = null;
         }
-        const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
-        ctx.lineTo(p2.x, p2.y);
-        prevG0X = seg.x2; prevG0Y = seg.y2; prevG0Z = seg.z2;
-        hayG0 = true;
       } else {
         prevG0X = null;
       }
@@ -1205,7 +1444,7 @@ class VisualizadorCNC {
 
     // 2. Líneas verticales indicadoras de descenso de fresa (plunges) en 3D
     if (es3D && n < 3000) {
-      ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
+      ctx.strokeStyle = enEjecucion ? 'rgba(0, 229, 255, 0.22)' : 'rgba(0, 229, 255, 0.35)';
       ctx.lineWidth = 1;
       ctx.setLineDash([2, 2]);
       ctx.beginPath();
@@ -1221,42 +1460,111 @@ class VisualizadorCNC {
       ctx.stroke();
     }
 
-    // 3. Trayectorias de corte G1/G2/G3 agrupadas con reutilización de vértices
-    ctx.lineWidth = Math.min(3.2, Math.max(1.4, 1.8 * Math.pow(this.zoom, 0.12)));
     ctx.setLineDash([]);
 
-    // 3a. Segmentos DENTRO de los límites (Cian normal de mecanizado)
-    ctx.strokeStyle = '#00e5ff';
+    // 3. Trayectorias de corte G1/G2/G3 agrupadas con reutilización de vértices
+    // 3a. Segmentos PENDIENTES (por donde aún no pasa la herramienta) - Color cian / guía de ruta
+    ctx.lineWidth = baseLineWidth;
+    ctx.strokeStyle = colorPendiente;
     ctx.beginPath();
-    let hayG1 = false;
-    let prevG1X = null, prevG1Y = null, prevG1Z = null;
+    let hayG1Pend = false;
+    let prevPendX = null, prevPendY = null, prevPendZ = null;
 
     for (let i = 0; i < n; i++) {
       const seg = this.trayectoria[i];
       if (seg.tipo !== 'G0') {
         const esOOB = (seg.x1 < 0 || seg.x1 > maxX || seg.x2 < 0 || seg.x2 > maxX ||
                        seg.y1 < 0 || seg.y1 > maxY || seg.y2 < 0 || seg.y2 > maxY);
-        if (!esOOB) {
-          const esContinuo = (prevG1X === seg.x1 && prevG1Y === seg.y1 && prevG1Z === seg.z1);
-          if (!esContinuo) {
+        if (esOOB) {
+          prevPendX = null;
+          continue;
+        }
+
+        if (!enEjecucion || i > idxActivo) {
+          const esCont = (prevPendX === seg.x1 && prevPendY === seg.y1 && prevPendZ === seg.z1);
+          if (!esCont) {
             const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
             ctx.moveTo(p1.x, p1.y);
           }
           const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
           ctx.lineTo(p2.x, p2.y);
-          prevG1X = seg.x2; prevG1Y = seg.y2; prevG1Z = seg.z2;
-          hayG1 = true;
+          prevPendX = seg.x2; prevPendY = seg.y2; prevPendZ = seg.z2;
+          hayG1Pend = true;
+        } else if (i === idxActivo && progActivo < 0.999) {
+          // Porción restante del segmento activo desde la posición de la herramienta hasta el final
+          const midX = seg.x1 + (seg.x2 - seg.x1) * progActivo;
+          const midY = seg.y1 + (seg.y2 - seg.y1) * progActivo;
+          const midZ = seg.z1 + (seg.z2 - seg.z1) * progActivo;
+          const pMid = this.convertirAPantalla(midX, midY, midZ);
+          const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
+          ctx.moveTo(pMid.x, pMid.y);
+          ctx.lineTo(p2.x, p2.y);
+          prevPendX = seg.x2; prevPendY = seg.y2; prevPendZ = seg.z2;
+          hayG1Pend = true;
         } else {
-          prevG1X = null;
+          prevPendX = null;
         }
       } else {
-        prevG1X = null;
+        prevPendX = null;
       }
     }
-    if (hayG1) ctx.stroke();
+    if (hayG1Pend) ctx.stroke();
 
-    // 3b. Segmentos FUERA de los límites (Rojo de alerta)
+    // 3b. Segmentos RECORRIDOS (por donde YA PASÓ físicamente la herramienta) - Color vivo de herramienta
+    if (enEjecucion) {
+      ctx.lineWidth = baseLineWidth * 1.25;
+      ctx.strokeStyle = colorRecorrido;
+      ctx.beginPath();
+      let hayG1Done = false;
+      let prevDoneX = null, prevDoneY = null, prevDoneZ = null;
+
+      for (let i = 0; i < n; i++) {
+        const seg = this.trayectoria[i];
+        if (seg.tipo !== 'G0') {
+          const esOOB = (seg.x1 < 0 || seg.x1 > maxX || seg.x2 < 0 || seg.x2 > maxX ||
+                         seg.y1 < 0 || seg.y1 > maxY || seg.y2 < 0 || seg.y2 > maxY);
+          if (esOOB) {
+            prevDoneX = null;
+            continue;
+          }
+
+          if (i < idxActivo) {
+            const esCont = (prevDoneX === seg.x1 && prevDoneY === seg.y1 && prevDoneZ === seg.z1);
+            if (!esCont) {
+              const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+              ctx.moveTo(p1.x, p1.y);
+            }
+            const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
+            ctx.lineTo(p2.x, p2.y);
+            prevDoneX = seg.x2; prevDoneY = seg.y2; prevDoneZ = seg.z2;
+            hayG1Done = true;
+          } else if (i === idxActivo && progActivo > 0.001) {
+            // Porción recorrida del segmento activo desde el inicio hasta la punta exacta de la herramienta
+            const midX = seg.x1 + (seg.x2 - seg.x1) * progActivo;
+            const midY = seg.y1 + (seg.y2 - seg.y1) * progActivo;
+            const midZ = seg.z1 + (seg.z2 - seg.z1) * progActivo;
+            const esCont = (prevDoneX === seg.x1 && prevDoneY === seg.y1 && prevDoneZ === seg.z1);
+            if (!esCont) {
+              const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
+              ctx.moveTo(p1.x, p1.y);
+            }
+            const pMid = this.convertirAPantalla(midX, midY, midZ);
+            ctx.lineTo(pMid.x, pMid.y);
+            prevDoneX = midX; prevDoneY = midY; prevDoneZ = midZ;
+            hayG1Done = true;
+          } else {
+            prevDoneX = null;
+          }
+        } else {
+          prevDoneX = null;
+        }
+      }
+      if (hayG1Done) ctx.stroke();
+    }
+
+    // 3d. Segmentos FUERA de los límites (Rojo de alerta)
     ctx.strokeStyle = '#dc2626';
+    ctx.lineWidth = baseLineWidth;
     ctx.beginPath();
     let hayG1OOB = false;
     let prevOOBX = null, prevOOBY = null, prevOOBZ = null;
@@ -1379,6 +1687,10 @@ class VisualizadorCNC {
         this.posicionHerramienta.y += dy * factorLerp;
         this.posicionHerramienta.z += dz * factorLerp;
         this.actualizarIndicadoresPosicionTexto(this.posicionHerramienta.x, this.posicionHerramienta.y, this.posicionHerramienta.z);
+        if (this.lineaActualEjecucion >= 0) {
+          this.actualizarProgresoTrayectoriaDesdePosicion();
+          this.necesitaRedibujarEstatico = true;
+        }
       }
 
       this.renderizar();
@@ -1412,7 +1724,7 @@ class VisualizadorCNC {
     const dy = posArribaReal.y - pos.y;
     const distEje = Math.hypot(dx, dy);
 
-    const esVistaProyectada3D = distEje >= 4;
+    const esVistaProyectada3D = distEje >= 4 && (this.mostrarHerramienta3D !== false);
 
     // Si la herramienta seleccionada es el Lápiz didáctico escolar:
     if (this.tipoHerramienta === 'lapiz') {
@@ -1420,6 +1732,17 @@ class VisualizadorCNC {
         this.dibujarLapiz3D(ctx, pos, factorEscalaZoom, dx, dy, distEje);
       } else {
         this.dibujarLapiz2D(ctx, pos, factorEscalaZoom);
+      }
+      ctx.restore();
+      return;
+    }
+
+    // Si la herramienta seleccionada es el Diodo Láser:
+    if (this.tipoHerramienta === 'laser') {
+      if (esVistaProyectada3D) {
+        this.dibujarLaser3D(ctx, pos, factorEscalaZoom, dx, dy, distEje);
+      } else {
+        this.dibujarLaser2D(ctx, pos, factorEscalaZoom);
       }
       ctx.restore();
       return;
@@ -1676,11 +1999,216 @@ class VisualizadorCNC {
     ctx.restore();
   }
 
-  // Define el tipo de herramienta activa ('fresa' o 'lapiz') y refresca el lienzo
+  // Define el tipo de herramienta activa ('fresa', 'lapiz' o 'laser') y refresca el lienzo
   establecerTipoHerramienta(tipo) {
-    this.tipoHerramienta = (tipo === 'lapiz') ? 'lapiz' : 'fresa';
+    if (tipo === 'lapiz') {
+      this.tipoHerramienta = 'lapiz';
+    } else if (tipo === 'laser' || tipo === 'láser') {
+      this.tipoHerramienta = 'laser';
+    } else {
+      this.tipoHerramienta = 'fresa';
+    }
     localStorage.setItem('cnc_tipo_herramienta', this.tipoHerramienta);
     this.solicitarRenderizado();
+  }
+
+  // Retícula y haz 2D de alta precisión para Diodo Láser
+  dibujarLaser2D(ctx, pos, factorEscalaZoom) {
+    ctx.save();
+    const radioBase = 12 * factorEscalaZoom;
+    const estaActivo = Boolean(this.herramientaGirando);
+
+    // 1. Halo difuso del diodo láser cuando está encendido
+    if (estaActivo) {
+      const gradienteHalo = ctx.createRadialGradient(pos.x, pos.y, 1, pos.x, pos.y, radioBase * 2.2);
+      gradienteHalo.addColorStop(0, 'rgba(236, 72, 153, 0.95)');
+      gradienteHalo.addColorStop(0.25, 'rgba(168, 85, 247, 0.7)');
+      gradienteHalo.addColorStop(0.6, 'rgba(147, 51, 234, 0.25)');
+      gradienteHalo.addColorStop(1, 'rgba(147, 51, 234, 0)');
+
+      ctx.fillStyle = gradienteHalo;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, radioBase * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Destello de 4 puntas de difracción óptica
+      ctx.strokeStyle = 'rgba(244, 114, 182, 0.75)';
+      ctx.lineWidth = 1.2;
+      const lRay = radioBase * 1.8;
+      ctx.beginPath();
+      ctx.moveTo(pos.x - lRay, pos.y); ctx.lineTo(pos.x + lRay, pos.y);
+      ctx.moveTo(pos.x, pos.y - lRay); ctx.lineTo(pos.x, pos.y + lRay);
+      ctx.stroke();
+    }
+
+    // 2. Anillo de colimación exterior
+    ctx.strokeStyle = estaActivo ? '#c084fc' : '#8b5cf6';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, radioBase, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 3. Cruz óptica de puntería con apertura central
+    ctx.strokeStyle = estaActivo ? '#f472b6' : '#a78bfa';
+    ctx.lineWidth = 1.2;
+    const gap = 3 * factorEscalaZoom;
+    const len = 7 * factorEscalaZoom;
+    ctx.beginPath();
+    ctx.moveTo(pos.x - gap - len, pos.y); ctx.lineTo(pos.x - gap, pos.y);
+    ctx.moveTo(pos.x + gap, pos.y); ctx.lineTo(pos.x + gap + len, pos.y);
+    ctx.moveTo(pos.x, pos.y - gap - len); ctx.lineTo(pos.x, pos.y - gap);
+    ctx.moveTo(pos.x, pos.y + gap); ctx.lineTo(pos.x, pos.y + gap + len);
+    ctx.stroke();
+
+    // 4. Punto focal central ultra nítido
+    ctx.fillStyle = estaActivo ? '#ffffff' : '#e9d5ff';
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, Math.max(1.5, 2.0 * factorEscalaZoom), 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // Renderizado fotorrealista 3D de un cabezal con Diodo Láser semiconductor montado en el eje Z
+  dibujarLaser3D(ctx, pos, factorEscalaZoom, dx, dy, distEje) {
+    ctx.save();
+    const ux = dx / distEje;
+    const uy = dy / distEje;
+    const nx = -uy;
+    const ny = ux;
+
+    const estaActivo = Boolean(this.herramientaGirando);
+    const distPx = Math.max(48 * factorEscalaZoom, distEje * 1.6);
+    const distPxLimitada = Math.min(260, distPx);
+
+    // Alturas proyectadas
+    const hFocal = Math.max(14 * factorEscalaZoom, distPxLimitada * 0.22);
+    const hLente = hFocal + 10 * factorEscalaZoom;
+    const hCuerpo = distPxLimitada + 12 * factorEscalaZoom;
+
+    const rLente = 3.2 * factorEscalaZoom;
+    const rCuerpo = 7.5 * factorEscalaZoom;
+
+    // 1. HAZ LÁSER FOCAL
+    if (estaActivo) {
+      const gradHaz = ctx.createLinearGradient(pos.x + ux * hFocal, pos.y + uy * hFocal, pos.x, pos.y);
+      gradHaz.addColorStop(0, 'rgba(168, 85, 247, 0.85)');
+      gradHaz.addColorStop(0.7, 'rgba(236, 72, 153, 0.95)');
+      gradHaz.addColorStop(1, '#ffffff');
+
+      ctx.fillStyle = 'rgba(168, 85, 247, 0.35)';
+      ctx.beginPath();
+      ctx.moveTo(pos.x + ux * hFocal - nx * (rLente * 0.7), pos.y + uy * hFocal - ny * (rLente * 0.7));
+      ctx.lineTo(pos.x, pos.y);
+      ctx.lineTo(pos.x + ux * hFocal + nx * (rLente * 0.7), pos.y + uy * hFocal + ny * (rLente * 0.7));
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = gradHaz;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(pos.x + ux * hFocal, pos.y + uy * hFocal);
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, 2.5 * factorEscalaZoom, 0, Math.PI * 2);
+      ctx.fill();
+
+      const glow = ctx.createRadialGradient(pos.x, pos.y, 1, pos.x, pos.y, 9 * factorEscalaZoom);
+      glow.addColorStop(0, 'rgba(236, 72, 153, 0.8)');
+      glow.addColorStop(1, 'rgba(147, 51, 234, 0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, 9 * factorEscalaZoom, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.strokeStyle = 'rgba(168, 85, 247, 0.35)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(pos.x + ux * hFocal, pos.y + uy * hFocal);
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // 2. LENTE COLIMADORA DE LATÓN
+    const pLenteBotL = { x: pos.x + ux * hFocal - nx * rLente, y: pos.y + uy * hFocal - ny * rLente };
+    const pLenteBotR = { x: pos.x + ux * hFocal + nx * rLente, y: pos.y + uy * hFocal + ny * rLente };
+    const pLenteTopL = { x: pos.x + ux * hLente - nx * rLente, y: pos.y + uy * hLente - ny * rLente };
+    const pLenteTopR = { x: pos.x + ux * hLente + nx * rLente, y: pos.y + uy * hLente + ny * rLente };
+
+    const gradLat = ctx.createLinearGradient(pLenteBotL.x, pLenteBotL.y, pLenteBotR.x, pLenteBotR.y);
+    gradLat.addColorStop(0, '#78350f');
+    gradLat.addColorStop(0.3, '#fde047');
+    gradLat.addColorStop(0.7, '#d97706');
+    gradLat.addColorStop(1, '#451a03');
+
+    ctx.fillStyle = gradLat;
+    ctx.strokeStyle = '#92400e';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pLenteBotL.x, pLenteBotL.y);
+    ctx.lineTo(pLenteTopL.x, pLenteTopL.y);
+    ctx.lineTo(pLenteTopR.x, pLenteTopR.y);
+    ctx.lineTo(pLenteBotR.x, pLenteBotR.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // 3. MÓDULO DISIPADOR DE ALUMINIO ANODIZADO
+    const pCpoBotL = { x: pos.x + ux * hLente - nx * rCuerpo, y: pos.y + uy * hLente - ny * rCuerpo };
+    const pCpoBotR = { x: pos.x + ux * hLente + nx * rCuerpo, y: pos.y + uy * hLente + ny * rCuerpo };
+    const pCpoTopL = { x: pos.x + ux * hCuerpo - nx * rCuerpo, y: pos.y + uy * hCuerpo - ny * rCuerpo };
+    const pCpoTopR = { x: pos.x + ux * hCuerpo + nx * rCuerpo, y: pos.y + uy * hCuerpo + ny * rCuerpo };
+
+    const gradAlu = ctx.createLinearGradient(pCpoBotL.x, pCpoBotL.y, pCpoBotR.x, pCpoBotR.y);
+    gradAlu.addColorStop(0, '#0f172a');
+    gradAlu.addColorStop(0.25, '#334155');
+    gradAlu.addColorStop(0.55, '#1e293b');
+    gradAlu.addColorStop(1, '#020617');
+
+    ctx.fillStyle = gradAlu;
+    ctx.strokeStyle = 'rgba(168, 85, 247, 0.4)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(pCpoBotL.x, pCpoBotL.y);
+    ctx.lineTo(pCpoTopL.x, pCpoTopL.y);
+    ctx.lineTo(pCpoTopR.x, pCpoTopR.y);
+    ctx.lineTo(pCpoBotR.x, pCpoBotR.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Aletas del disipador de calor
+    ctx.strokeStyle = '#020617';
+    ctx.lineWidth = 1.5;
+    const numAletas = 5;
+    for (let i = 1; i <= numAletas; i++) {
+      const hFin = hLente + (hCuerpo - hLente) * (i / (numAletas + 1));
+      ctx.beginPath();
+      ctx.moveTo(pos.x + ux * hFin - nx * (rCuerpo * 0.95), pos.y + uy * hFin - ny * (rCuerpo * 0.95));
+      ctx.lineTo(pos.x + ux * hFin + nx * (rCuerpo * 0.95), pos.y + uy * hFin + ny * (rCuerpo * 0.95));
+      ctx.stroke();
+    }
+
+    // Tapa superior
+    const pTapaL = { x: pos.x + ux * (hCuerpo + 4 * factorEscalaZoom) - nx * (rCuerpo * 0.85), y: pos.y + uy * (hCuerpo + 4 * factorEscalaZoom) - ny * (rCuerpo * 0.85) };
+    const pTapaR = { x: pos.x + ux * (hCuerpo + 4 * factorEscalaZoom) + nx * (rCuerpo * 0.85), y: pos.y + uy * (hCuerpo + 4 * factorEscalaZoom) + ny * (rCuerpo * 0.85) };
+    ctx.fillStyle = '#dc2626';
+    ctx.beginPath();
+    ctx.moveTo(pCpoTopL.x, pCpoTopL.y);
+    ctx.lineTo(pTapaL.x, pTapaL.y);
+    ctx.lineTo(pTapaR.x, pTapaR.y);
+    ctx.lineTo(pCpoTopR.x, pCpoTopR.y);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
   }
 
   // Renderizado fotorrealista 3D de un Lápiz de grafito escolar montado en la CNC
@@ -2085,10 +2613,14 @@ class VisualizadorCNC {
       ctx.lineTo(p0.x, pMax.y + tamBracket);
       ctx.stroke();
 
-      // 4. Rótulo de la Mesa
+      // 4. Rótulo de la Mesa con fondo protector
+      const textoMesa = `MESA CNC [${maxX} × ${maxY} mm]`;
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
+      const wTexto = ctx.measureText(textoMesa).width;
+      ctx.fillStyle = 'rgba(10, 14, 18, 0.94)';
+      ctx.fillRect(p0.x + 4, pMax.y - 18, wTexto + 8, 14);
       ctx.fillStyle = hayDesb ? '#fbbf24' : '#4dd2ff';
-      ctx.fillText(`MESA CNC [${maxX} × ${maxY} mm]`, p0.x + 6, pMax.y - 6);
+      ctx.fillText(textoMesa, p0.x + 8, pMax.y - 7);
 
     } else if (this.modoVista === 'XZ') {
       const p0 = this.convertirAPantalla(0, 0, 0);
@@ -2112,9 +2644,14 @@ class VisualizadorCNC {
       ctx.lineTo(pMax.x, p0.y);
       ctx.stroke();
 
+      // Rótulo de la Mesa XZ con fondo protector
+      const textoMesaXZ = `MESA XZ [X: ${maxX} mm | Recorrido Z: +${maxZ} mm]`;
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
+      const wTextoXZ = ctx.measureText(textoMesaXZ).width;
+      ctx.fillStyle = 'rgba(10, 14, 18, 0.94)';
+      ctx.fillRect(p0.x + 4, pMax.y - 18, wTextoXZ + 8, 14);
       ctx.fillStyle = hayDesb ? '#fbbf24' : '#4dd2ff';
-      ctx.fillText(`MESA XZ [X: ${maxX} mm | Recorrido Z: +${maxZ} mm]`, p0.x + 6, pMax.y - 6);
+      ctx.fillText(textoMesaXZ, p0.x + 8, pMax.y - 7);
 
     } else {
       // Modo 3D Isométrico:
@@ -2164,46 +2701,92 @@ class VisualizadorCNC {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Rótulos de la mesa base y de la altura máxima Z
+      // Rótulos de la mesa base y de la altura máxima Z con fondo protector
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
+      const txtMesa3D = `MESA BASE (Z=0) [${maxX}×${maxY}mm]`;
+      const w3D = ctx.measureText(txtMesa3D).width;
+      ctx.fillStyle = 'rgba(10, 14, 18, 0.94)';
+      ctx.fillRect(c1.x + 4, c1.y - 19, w3D + 8, 14);
       ctx.fillStyle = hayDesb ? '#fbbf24' : '#4dd2ff';
-      ctx.fillText(`MESA BASE (Z=0) [${maxX}×${maxY}mm]`, c1.x + 8, c1.y - 8);
-      ctx.fillStyle = 'rgba(0, 229, 255, 0.7)';
-      ctx.fillText(`Z: +${maxZ}mm`, t1.x + 8, t1.y - 8);
+      ctx.fillText(txtMesa3D, c1.x + 8, c1.y - 8);
+
+      const txtZ = `Z: +${maxZ}mm`;
+      const wZ = ctx.measureText(txtZ).width;
+      ctx.fillStyle = 'rgba(10, 14, 18, 0.94)';
+      ctx.fillRect(t1.x + 4, t1.y - 19, wZ + 8, 14);
+      ctx.fillStyle = 'rgba(0, 229, 255, 0.85)';
+      ctx.fillText(txtZ, t1.x + 8, t1.y - 8);
     }
 
     ctx.restore();
   }
 
-  // Superposición visual de alerta sobre el lienzo cuando el modelo desborda (ultra-rápido sin shadowBlur)
+  // Superposición visual de alerta sobre el lienzo cuando el modelo desborda (esquina inferior izquierda)
   dibujarAlertaLimitesOverlay(ctx) {
     if (!this.estadoLimites || !this.estadoLimites.hayDesbordamiento) return;
 
     ctx.save();
     const texto = `⚠️ ALERTA: MODELO FUERA DEL ÁREA CNC (${this.limitesMaquina.maxX}×${this.limitesMaquina.maxY}mm)`;
     ctx.font = 'bold 11px "JetBrains Mono", monospace';
-    if (!this.anchoTextoAlerta) {
-      this.anchoTextoAlerta = ctx.measureText(texto).width;
-    }
-    const anchoTexto = this.anchoTextoAlerta;
+    const anchoTexto = ctx.measureText(texto).width;
 
+    const alto = this.altoPantalla || (this.lienzo ? this.lienzo.clientHeight : 400);
     const x = 12;
-    const y = 48;
-    const w = anchoTexto + 20;
     const h = 26;
+    // Ubicar en la esquina inferior izquierda, justo por encima de los datos de vista (overlay-bottom-left)
+    const y = Math.round(alto - h - 34);
+    const w = anchoTexto + 20;
 
     ctx.fillStyle = 'rgba(28, 12, 12, 0.95)';
     ctx.strokeStyle = '#dc2626';
     ctx.lineWidth = 1.5;
 
     ctx.beginPath();
-    ctx.rect(x, y, w, h);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(x, y, w, h, 4);
+    } else {
+      ctx.rect(x, y, w, h);
+    }
     ctx.fill();
     ctx.stroke();
 
     ctx.fillStyle = '#fbbf24';
     ctx.fillText(texto, x + 10, y + 17);
     ctx.restore();
+  }
+
+  // Métodos de personalización gráfica invocables desde la configuración
+  establecerColorCorte(color) {
+    this.colorCortePersonalizado = color;
+    localStorage.setItem('cnc_color_cut', color);
+    this.marcarEstaticoSucio();
+    this.solicitarRenderizado();
+  }
+
+  establecerColorRapido(color) {
+    this.colorRapidoPersonalizado = color;
+    localStorage.setItem('cnc_color_rapid', color);
+    this.marcarEstaticoSucio();
+    this.solicitarRenderizado();
+  }
+
+  establecerMostrarRetícula(mostrar) {
+    this.mostrarRetículaHerramienta = Boolean(mostrar);
+    localStorage.setItem('cnc_show_reticle', this.mostrarRetículaHerramienta);
+    this.solicitarRenderizado();
+  }
+
+  establecerMostrarLimitesMesa(mostrar) {
+    this.mostrarLimitesMesa = Boolean(mostrar);
+    localStorage.setItem('cnc_show_bed_limits', this.mostrarLimitesMesa);
+    this.marcarEstaticoSucio();
+    this.solicitarRenderizado();
+  }
+
+  establecerMostrarHerramienta3D(mostrar) {
+    this.mostrarHerramienta3D = Boolean(mostrar);
+    localStorage.setItem('cnc_show_tool_3d', this.mostrarHerramienta3D);
+    this.solicitarRenderizado();
   }
 
   // Métodos puente para compatibilidad

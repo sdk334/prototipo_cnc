@@ -163,9 +163,14 @@ class PuenteCNC(QObject):
         self.senial_puertos.emit(json.dumps(puertos))
 
     @pyqtSlot(str, int)
-    def conectar(self, puerto: str, baudrate: int):
+    @pyqtSlot(str)
+    def conectar(self, puerto: str, baudrate: int = 115200):
         """Conecta al puerto COM especificado a la velocidad indicada."""
-        self.controlador.conectar(puerto, baudrate)
+        try:
+            b = int(baudrate) if baudrate is not None else 115200
+        except (ValueError, TypeError):
+            b = 115200
+        self.controlador.conectar(puerto, b)
 
     @pyqtSlot()
     def desconectar(self):
@@ -234,9 +239,14 @@ class PuenteCNC(QObject):
             self._emitir_seguro(self.senial_consola, "c-alarm", f"[ERROR HERRAMIENTA] {str(e)}")
 
     @pyqtSlot(bool, int)
-    def controlarSpindle(self, encendido: bool, rpm: int):
+    @pyqtSlot(bool)
+    def controlarSpindle(self, encendido: bool, rpm: int = 12000):
         """Enciende o apaga el husillo a las RPM solicitadas."""
-        self.controlador.controlar_spindle(encendido, rpm)
+        try:
+            r = int(rpm) if rpm is not None else 12000
+        except (ValueError, TypeError):
+            r = 12000
+        self.controlador.controlar_spindle(encendido, r)
 
     @pyqtSlot()
     def ejecutarHoming(self):

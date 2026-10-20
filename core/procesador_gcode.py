@@ -290,7 +290,8 @@ class ProcesadorGCode:
                     "z1": round(pos_actual["Z"], 3),
                     "x2": round(pos_nueva["X"], 3),
                     "y2": round(pos_nueva["Y"], 3),
-                    "z2": round(pos_nueva["Z"], 3)
+                    "z2": round(pos_nueva["Z"], 3),
+                    "linea": idx - 1
                 })
 
                 pos_actual = pos_nueva
@@ -315,7 +316,7 @@ class ProcesadorGCode:
             "distancia_corte_mm": round(distancia_total_corte, 2),
             "distancia_rapido_mm": round(distancia_total_rapido, 2),
             "distancia_total_mm": round(distancia_total_corte + distancia_total_rapido, 2),
-            "segmentos": segmentos if len(segmentos) <= 500 else [],
+            "segmentos": segmentos if len(segmentos) <= 25000 else [],
             "envolvente": {
                 "min": min_coords,
                 "max": max_coords,

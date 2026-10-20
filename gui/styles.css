@@ -34,6 +34,33 @@
   --sidebar-width: 340px;
 }
 
+/* Tema Cyberpunk High Contrast */
+body.theme-cyber {
+  --cyan-primary: #00f0ff;
+  --cyan-glow: rgba(0, 240, 255, 0.45);
+  --bg-deep: #050608;
+  --bg-panel: #0d0f14;
+  --bg-card: #12161f;
+  --border-color: #00f0ff55;
+  --border-subtle: #00f0ff22;
+  --text-primary: #ffffff;
+}
+
+/* Tema Gris Técnico Clásico */
+body.theme-classic {
+  --cyan-primary: #38bdf8;
+  --cyan-glow: rgba(56, 189, 248, 0.2);
+  --bg-deep: #1e2124;
+  --bg-panel: #282b30;
+  --bg-card: #36393e;
+  --bg-input: #1e2124;
+  --bg-hover: #42454a;
+  --border-color: #484b51;
+  --border-subtle: #303338;
+  --text-primary: #ffffff;
+  --text-muted: #99aab5;
+}
+
 /* Reset y caja base */
 * {
   box-sizing: border-box;
@@ -718,6 +745,10 @@ body.resizing-col * {
 }
 
 .legend-line.line-cut { background-color: var(--cyan-primary); }
+.legend-line.line-cut-done {
+  background-color: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+}
 .legend-line.line-rapid {
   border-top: 2px dashed #8b949e;
   background: transparent;
@@ -1134,6 +1165,13 @@ body.resizing-col * {
 .console-line.c-ok { color: #10b981; }
 .console-line.c-error { color: var(--red-estop); }
 .console-line.c-alarm { color: #f59e0b; }
+.console-line.console-line-alarm-highlight {
+  background-color: rgba(220, 38, 38, 0.16) !important;
+  border-left: 3px solid #dc2626 !important;
+  padding-left: 6px !important;
+  font-weight: 600;
+  color: #ff6b6b !important;
+}
 
 /* ==========================================================================
    6. CONTROL DE EJECUCIÓN (SIDEBAR BLOCK DEBAJO DE SPINDLE)
@@ -1989,7 +2027,14 @@ body.resizing-col * {
   background-color: #33ecff;
 }
 
-/* Diccionario Modal */
+/* Diccionario Modal Ampliado */
+.modal-dialog.modal-dict-large {
+  width: 950px;
+  max-width: 94vw;
+  height: 660px;
+  max-height: 88vh;
+}
+
 .dict-search-input {
   width: 100%;
   background-color: var(--bg-card);
@@ -1998,8 +2043,54 @@ body.resizing-col * {
   padding: 8px 12px;
   border-radius: 4px;
   font-size: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.dict-search-input:focus {
+  border-color: var(--cyan-primary);
+  box-shadow: 0 0 8px var(--cyan-glow);
+}
+
+.dict-filters-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.dict-filter-btn {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-family: var(--font-display);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dict-filter-btn:hover {
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.dict-filter-btn.active {
+  background-color: var(--cyan-primary);
+  border-color: var(--cyan-primary);
+  color: #0c1c13;
+  font-weight: 700;
+  box-shadow: 0 0 8px var(--cyan-glow);
+}
+
+.dict-table-container {
+  overflow-y: auto;
+  flex: 1;
+  max-height: 480px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
 }
 
 .dict-table {
@@ -2015,14 +2106,272 @@ body.resizing-col * {
 }
 
 .dict-table th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   background-color: var(--bg-card);
   color: var(--text-muted);
   font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  border-bottom: 2px solid var(--border-color);
 }
 
-.dict-table code {
+.dict-table tbody tr:hover {
+  background-color: rgba(0, 229, 255, 0.05);
+}
+
+.dict-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.dict-badge-g { background: rgba(0, 229, 255, 0.12); color: var(--cyan-primary); border: 1px solid rgba(0, 229, 255, 0.3); }
+.dict-badge-m { background: rgba(255, 183, 3, 0.12); color: #ffb703; border: 1px solid rgba(255, 183, 3, 0.3); }
+.dict-badge-wcs { background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); }
+.dict-badge-probe { background: rgba(168, 85, 247, 0.12); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }
+.dict-badge-grbl { background: rgba(34, 197, 94, 0.12); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.3); }
+
+.dict-cmd-cell {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--cyan-primary);
+  white-space: nowrap;
+}
+
+.dict-desc-cell {
+  line-height: 1.4;
+  color: #d1d5db;
+}
+
+.dict-example-cell code {
+  display: inline-block;
+  padding: 3px 6px;
+  background-color: var(--bg-deep);
+  border-radius: 3px;
+  border: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #93c5fd;
+}
+
+/* Modal de Guía Rápida de Operación CNC */
+.modal-dialog.modal-manual-dialog {
+  width: 980px;
+  max-width: 95vw;
+  height: 680px;
+  max-height: 90vh;
+}
+
+.manual-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.manual-nav {
+  width: 250px;
+  background-color: var(--bg-card);
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 4px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.manual-nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-family: var(--font-display);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+.manual-nav-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.manual-nav-btn.active {
+  background-color: rgba(0, 229, 255, 0.1);
+  border-color: var(--cyan-primary);
+  color: var(--cyan-primary);
+  font-weight: 700;
+}
+
+.manual-nav-btn i {
+  font-size: 13px;
+  width: 16px;
+  text-align: center;
+}
+
+.manual-content {
+  flex: 1;
+  padding: 16px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.manual-panel {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.manual-panel.active {
+  display: flex;
+}
+
+.manual-panel-title {
+  font-size: 15px;
+  color: var(--cyan-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-family: var(--font-display);
+}
+
+.manual-lead {
+  font-size: 12.5px;
+  color: #e2e8f0;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.manual-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.manual-step-item {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.manual-step-num {
+  width: 26px;
+  height: 26px;
+  background-color: rgba(0, 229, 255, 0.15);
+  border: 1px solid var(--cyan-primary);
+  border-radius: 50%;
+  color: var(--cyan-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.manual-step-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.manual-step-body h4 {
+  font-size: 12.5px;
+  color: #ffffff;
+  font-weight: 600;
+  margin: 0;
+}
+
+.manual-step-body p {
+  font-size: 11.5px;
+  color: #cbd5e1;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.manual-step-body code {
   font-family: var(--font-mono);
   color: var(--cyan-primary);
+  background: rgba(0, 229, 255, 0.08);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.manual-tip-box {
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11.5px;
+  color: #86efac;
+}
+
+.manual-warn-box {
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11.5px;
+  color: #fca5a5;
+}
+
+.manual-grid-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.manual-info-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.manual-info-card h5 {
+  font-size: 12px;
+  color: var(--cyan-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.manual-info-card p {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin: 0;
 }
 
 /* Modal de Alerta de Seguridad e Interbloqueo */
@@ -2141,7 +2490,7 @@ body.resizing-col * {
 
 /* Modal de Selección de Herramienta */
 .modal-tool-dialog {
-  max-width: 680px;
+  max-width: 880px;
 }
 
 .tool-modal-instruction {
@@ -2152,8 +2501,8 @@ body.resizing-col * {
 
 .tool-cards-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
 }
 
 .tool-select-card {
@@ -2181,6 +2530,16 @@ body.resizing-col * {
   border-color: var(--cyan-primary);
   background: linear-gradient(145deg, rgba(0, 229, 255, 0.08), rgba(18, 52, 64, 0.25));
   box-shadow: 0 0 0 1px var(--cyan-primary), 0 8px 24px rgba(0, 229, 255, 0.18);
+}
+
+.tool-select-card[data-tool="laser"].active {
+  border-color: #a855f7;
+  background: linear-gradient(145deg, rgba(168, 85, 247, 0.10), rgba(48, 20, 70, 0.25));
+  box-shadow: 0 0 0 1px #a855f7, 0 8px 24px rgba(168, 85, 247, 0.22);
+}
+
+.tool-select-card[data-tool="laser"].active .tool-select-indicator {
+  color: #c084fc;
 }
 
 .tool-select-indicator {
@@ -2215,6 +2574,12 @@ body.resizing-col * {
   border-color: rgba(255, 183, 3, 0.3);
 }
 
+.tool-badge-pill.tool-badge-laser {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+  border-color: rgba(168, 85, 247, 0.35);
+}
+
 .tool-preview-box {
   height: 68px;
   background: rgba(0, 0, 0, 0.35);
@@ -2232,6 +2597,58 @@ body.resizing-col * {
 
 .tool-preview-pencil .tool-preview-icon {
   color: #ffb703;
+}
+
+.tool-preview-laser .tool-preview-icon {
+  color: #c084fc;
+  filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.6));
+}
+
+.text-purple {
+  color: #c084fc !important;
+}
+
+.btn-spindle-toggle.modo-laser {
+  border-color: rgba(168, 85, 247, 0.5) !important;
+  color: #e9d5ff !important;
+}
+
+.btn-spindle-toggle.modo-laser.active {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.25), rgba(88, 28, 135, 0.4)) !important;
+  border-color: #a855f7 !important;
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.45) !important;
+}
+
+.btn-spindle-toggle.modo-laser .spindle-indicator {
+  background-color: #a855f7;
+  box-shadow: 0 0 6px #a855f7;
+}
+
+.spindle-block.modo-laser {
+  border-left: 3px solid #a855f7;
+}
+
+.spindle-block.modo-laser .sidebar-header i.header-icon {
+  color: #c084fc !important;
+}
+
+.spindle-block.modo-laser .spindle-rpm-badge {
+  border-color: rgba(168, 85, 247, 0.4);
+}
+
+.spindle-block.modo-laser .rpm-label {
+  color: #c084fc;
+  font-weight: 700;
+}
+
+.spindle-block.modo-laser .speed-live-val {
+  color: #c084fc !important;
+  text-shadow: 0 0 8px rgba(192, 132, 252, 0.5);
+}
+
+.spindle-block.modo-laser .spindle-slider::-webkit-slider-thumb {
+  background: #a855f7;
+  box-shadow: 0 0 8px #a855f7;
 }
 
 .tool-card-title {

@@ -41,12 +41,16 @@ class ControladorGRBL:
         self.esta_conectado: bool = False
         self.modo_virtual: bool = False
         self.modo_lapiz: bool = False
+        self.modo_laser: bool = False
         self.tipo_herramienta: str = "fresa"
 
         # Estado en tiempo real parseado del controlador
         self.estado_maquina: Dict[str, Any] = {
             "estado": "DESCONECTADO",
             "subestado": "",
+            "modo_lapiz": False,
+            "modo_laser": False,
+            "tipo_herramienta": "fresa",
             "wpos": [0.0, 0.0, 0.0],
             "mpos": [0.0, 0.0, 0.0],
             "wco": [0.0, 0.0, 0.0],
@@ -587,11 +591,24 @@ class ControladorGRBL:
                 self.enviar_tiempo_real(0x90)
 
     def establecer_tipo_herramienta(self, tipo: str):
-        """Configura el tipo de herramienta activa ('fresa' o 'lapiz')."""
+        """Configura el tipo de herramienta activa ('fresa', 'lapiz' o 'laser')."""
         tipo_normalizado = str(tipo).strip().lower()
-        self.modo_lapiz = (tipo_normalizado == "lapiz")
-        self.tipo_herramienta = "lapiz" if self.modo_lapiz else "fresa"
+        if tipo_normalizado == "lapiz":
+            self.modo_lapiz = True
+            self.modo_laser = False
+            self.tipo_herramienta = "lapiz"
+        elif tipo_normalizado in ("laser", "láser"):
+            self.modo_lapiz = False
+            self.modo_laser = True
+            self.tipo_herramienta = "laser"
+        else:
+            self.modo_lapiz = False
+            self.modo_laser = False
+            self.tipo_herramienta = "fresa"
+
         self.estado_maquina["modo_lapiz"] = self.modo_lapiz
+        self.estado_maquina["modo_laser"] = self.modo_laser
+        self.estado_maquina["tipo_herramienta"] = self.tipo_herramienta
 
         if self.modo_lapiz:
             # En modo lápiz, el husillo queda inmediatamente apagado
@@ -606,6 +623,12 @@ class ControladorGRBL:
                 "c-info",
                 "[HERRAMIENTA] Modo LÁPIZ activado: El husillo motorizado no se encenderá durante el trabajo."
             )
+        elif self.modo_laser:
+            # En modo láser, se habilita el diodo (control PWM M3/M4/M5) sin esfuerzo mecánico de fresa
+            self._notificar_consola(
+                "c-info",
+                "[HERRAMIENTA] Modo DIODO LÁSER activado: Diodo emisor habilitado con modulación PWM (M3/M4/M5). Sin interbloqueo de rotura de fresa."
+            )
         else:
             self._notificar_consola(
                 "c-info",
@@ -616,7 +639,7 @@ class ControladorGRBL:
             self.cb_estado_actualizado(dict(self.estado_maquina))
 
     def controlar_spindle(self, encendido: bool, rpm: int):
-        """Enciende (M3 S...) o apaga (M5) el husillo respetando los interbloqueos de seguridad."""
+        """Enciende (M3 S...) o apaga (M5) el husillo/láser respetando los interbloqueos de seguridad."""
         # En modo lápiz, el husillo no debe encenderse bajo ninguna circunstancia
         if self.modo_lapiz:
             if encendido:
@@ -633,8 +656,8 @@ class ControladorGRBL:
         esta_mecanizando = self._en_ejecucion_gcode or self.estado_maquina.get("estado") in ("RUN", "HOLD")
 
         # INTERBLOQUEO DE SEGURIDAD CNC:
-        # El husillo no debe poder apagarse mientras la máquina se encuentra mecanizando.
-        if esta_mecanizando and (not encendido or int(rpm) <= 0):
+        # Solo aplica a FRESA mecánica para evitar que una broca avance sin rotación
+        if not self.modo_laser and esta_mecanizando and (not encendido or int(rpm) <= 0):
             titulo = "BLOQUEO DE SEGURIDAD DEL HUSILLO"
             encabezado = "No se puede apagar el husillo durante el mecanizado"
             desc = "El husillo (Spindle) no puede apagarse mientras el mecanizado está en curso. Para proteger la herramienta de corte y la pieza, detenga o pause el programa primero."
@@ -654,7 +677,8 @@ class ControladorGRBL:
             self.estado_maquina["spindle_real"] = 0.0
 
         if self.modo_virtual:
-            self._notificar_consola("c-ok", f"> {cmd}")
+            etiqueta = "[DIODO LÁSER]" if self.modo_laser else ""
+            self._notificar_consola("c-ok", f"> {cmd} {etiqueta}".strip())
             if self.cb_estado_actualizado:
                 self.cb_estado_actualizado(dict(self.estado_maquina))
             return
@@ -679,7 +703,7 @@ class ControladorGRBL:
             return
 
         esta_mecanizando = self._en_ejecucion_gcode or self.estado_maquina.get("estado") in ("RUN", "HOLD")
-        if not self.modo_lapiz and esta_mecanizando and re.search(r"^\s*M0?5\b", comando.upper()):
+        if not self.modo_lapiz and not self.modo_laser and esta_mecanizando and re.search(r"^\s*M0?5\b", comando.upper()):
             titulo = "COMANDO M5 BLOQUEADO"
             encabezado = "Apagado manual de husillo no permitido"
             desc = "El comando M5 fue rechazado porque el mecanizado está activo. Detenga o pause el programa antes de apagar el husillo."
@@ -750,6 +774,11 @@ class ControladorGRBL:
                     "c-warn",
                     "[MODO LÁPIZ] El código G contiene códigos de encendido de motor (M3/M4), pero el husillo NO se encenderá por estar en modo lápiz."
                 )
+        elif self.modo_laser:
+            self._notificar_consola(
+                "c-info",
+                "[MODO LÁSER] Transmisión con diodo láser habilitado: modulación óptica PWM (M3/M4/M5) activa."
+            )
 
         if self.modo_virtual:
             threading.Thread(target=self._bucle_ejecucion_virtual, daemon=True).start()
@@ -862,11 +891,16 @@ class ControladorGRBL:
             else:
                 self.estado_maquina["spindle_encendido"] = True
                 match_s = re.search(r"S(\d+(?:\.\d+)?)", c)
-                self.estado_maquina["spindle_real"] = float(match_s.group(1)) if match_s else 12000.0
+                def_s = 1000.0 if self.modo_laser else 12000.0
+                self.estado_maquina["spindle_real"] = float(match_s.group(1)) if match_s else def_s
+                if self.modo_laser:
+                    self._notificar_consola("c-ok", f"[DIODO LÁSER ACTIVADO] Potencia PWM: S{self.estado_maquina['spindle_real']:.0f}")
             self._notificar_consola("c-ok", "ok")
         elif re.search(r"^\s*M0?5\b", c):
             self.estado_maquina["spindle_encendido"] = False
             self.estado_maquina["spindle_real"] = 0.0
+            if self.modo_laser:
+                self._notificar_consola("c-ok", "[DIODO LÁSER APAGADO]")
             self._notificar_consola("c-ok", "ok")
         else:
             self._notificar_consola("c-ok", "ok")
@@ -920,7 +954,7 @@ class ControladorGRBL:
                 if match_f:
                     velocidad_avance_actual = max(1.0, float(match_f.group(1)))
 
-                # Detectar encendido / apagado de husillo (M3/M03 y M5/M05)
+                # Detectar encendido / apagado de husillo / diodo láser (M3/M03 y M5/M05)
                 if re.search(r"\bM0?[34]\b", linea_limpia):
                     if self.modo_lapiz:
                         self.estado_maquina["spindle_encendido"] = False
@@ -932,8 +966,8 @@ class ControladorGRBL:
                     else:
                         self.estado_maquina["spindle_encendido"] = True
                         match_s = re.search(r"S(\d+(?:\.\d+)?)", linea_limpia)
-                        rpm = float(match_s.group(1)) if match_s else 12000.0
-                        self.estado_maquina["spindle_real"] = rpm
+                        def_s = 1000.0 if self.modo_laser else 12000.0
+                        self.estado_maquina["spindle_real"] = float(match_s.group(1)) if match_s else def_s
                 elif re.search(r"\bM0?5\b", linea_limpia):
                     self.estado_maquina["spindle_encendido"] = False
                     self.estado_maquina["spindle_real"] = 0.0
@@ -973,9 +1007,9 @@ class ControladorGRBL:
                 self.estado_maquina["feed_real"] = vel
 
                 if distancia > 0.01:
-                    # INTERBLOQUEO: Si es fresa y corte lineal/circular (G1, G2, G3) con husillo apagado, pausar de inmediato.
-                    # En modo lápiz no se utiliza husillo motorizado, por lo que no se aplica este bloqueo.
-                    if not self.modo_lapiz and modo_movimiento_actual in ("G1", "G2", "G3") and not self.estado_maquina.get("spindle_encendido", False):
+                    # INTERBLOQUEO: Solo aplica a FRESA mecánica para evitar rotura de herramienta al cortar sin giro.
+                    # En modo lápiz y diodo láser no hay husillo rotatorio que fracturar.
+                    if not self.modo_lapiz and not self.modo_laser and modo_movimiento_actual in ("G1", "G2", "G3") and not self.estado_maquina.get("spindle_encendido", False):
                         self._en_pausa_gcode = True
                         self.estado_maquina["estado"] = "HOLD"
                         titulo = "CORTE CON HUSILLO APAGADO"

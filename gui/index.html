@@ -184,8 +184,12 @@
         <!-- Floating Legend Badge (Top-Right, debajo del ViewCube) -->
         <div class="overlay-floating-badge badge-legend" id="badge-legend">
           <div class="legend-row">
-            <span class="legend-line line-cut"></span>
-            <span class="legend-text">Corte (G1/G2)</span>
+            <span class="legend-line line-cut" id="legend-line-pending"></span>
+            <span class="legend-text" id="lbl-legend-pending">Por recorrer</span>
+          </div>
+          <div class="legend-row" id="legend-row-traversed">
+            <span class="legend-line line-cut-done" id="legend-line-done"></span>
+            <span class="legend-text" id="lbl-legend-done">Ya recorrido</span>
           </div>
           <div class="legend-row">
             <span class="legend-line line-rapid"></span>
@@ -433,11 +437,11 @@
         </div>
       </section>
 
-      <!-- SPINDLE (HUSILLO) -->
+      <!-- SPINDLE (HUSILLO) / LÁSER -->
       <section class="sidebar-block spindle-block" id="block-spindle">
         <div class="sidebar-header collapsible" title="Clic para colapsar / expandir">
-          <i class="fa-solid fa-fan header-icon"></i>
-          <span class="title-sub">SPINDLE</span>
+          <i class="fa-solid fa-fan header-icon" id="spindle-header-icon"></i>
+          <span class="title-sub" id="lbl-spindle-title">SPINDLE</span>
           <i class="fa-solid fa-chevron-down block-toggle-chevron"></i>
         </div>
 
@@ -447,14 +451,14 @@
               <i class="fa-solid fa-fan spindle-icon" id="spindle-fan-icon"></i>
               <span id="lbl-spindle-btn-text">Spindle OFF</span>
             </button>
-            <div class="spindle-rpm-badge">
-              <span class="rpm-label">RPM</span>
+            <div class="spindle-rpm-badge" id="spindle-value-badge">
+              <span class="rpm-label" id="lbl-spindle-unit">RPM</span>
               <input type="number" class="rpm-input" id="input-spindle-rpm" value="12000" min="0" max="24000" step="500">
             </div>
           </div>
 
           <div class="spindle-speed-info">
-            <span class="speed-legend">Velocidad</span>
+            <span class="speed-legend" id="lbl-spindle-legend">Velocidad</span>
             <span class="speed-live-val highlight-cyan" id="lbl-spindle-speed-live">12000 RPM</span>
           </div>
 
@@ -489,7 +493,7 @@
               <span class="tele-val highlight-green" id="metric-feed-pct">100%</span>
             </div>
             <div class="tele-item">
-              <span class="tele-label">SPINDLE</span>
+              <span class="tele-label" id="lbl-tele-spindle">SPINDLE</span>
               <span class="tele-val" id="metric-spindle-state">OFF</span>
             </div>
             <div class="tele-item">
@@ -601,12 +605,12 @@
               </div>
               <div class="form-group">
                 <label>Tamaño de Buffer de Comandos:</label>
-                <input type="number" class="form-control" value="128" min="64" max="256">
+                <input type="number" class="form-control" id="cfg-buffer-size" value="128" min="64" max="256">
                 <small class="form-help">Planificación de movimiento GRBL (RX buffer por defecto: 128 bytes).</small>
               </div>
               <div class="form-group checkbox-group">
-                <label><input type="checkbox" checked> Habilitar DTR Reset al conectar</label>
-                <label><input type="checkbox" checked> Comprobación de Eco (OK check)</label>
+                <label><input type="checkbox" id="cfg-dtr-reset" checked> Habilitar DTR Reset al conectar</label>
+                <label><input type="checkbox" id="cfg-ok-check" checked> Comprobación de Eco (OK check)</label>
               </div>
             </div>
           </div>
@@ -644,6 +648,34 @@
                 <input type="number" class="form-control" id="cfg-travel-z" value="60.000" step="0.1" min="10">
               </div>
             </div>
+
+            <!-- Asistente Didáctico de Calibración de Pasos/mm -->
+            <div class="calibration-box mt-3" id="box-calibracion-pasos" style="background: rgba(0, 229, 255, 0.05); border: 1px solid rgba(0, 229, 255, 0.25); border-radius: 6px; padding: 12px; margin-top: 15px;">
+              <h4 style="margin: 0 0 8px 0; font-size: 0.88rem; color: var(--cyan-primary);"><i class="fa-solid fa-calculator"></i> Asistente de Calibración de Pasos/mm ($100, $101, $102)</h4>
+              <p class="form-help" style="margin-bottom: 10px;">Si al ordenar mover 100 mm la máquina se desplaza una distancia diferente, calcula el valor exacto aquí:</p>
+              <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+                <div class="form-group">
+                  <label>Eje a Calibrar:</label>
+                  <select class="form-control" id="calib-eje">
+                    <option value="X">Eje X ($100)</option>
+                    <option value="Y">Eje Y ($101)</option>
+                    <option value="Z">Eje Z ($102)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Distancia Comandada (mm):</label>
+                  <input type="number" class="form-control" id="calib-dist-comandada" value="100.0" step="0.1">
+                </div>
+                <div class="form-group">
+                  <label>Distancia Real Medida (mm):</label>
+                  <input type="number" class="form-control" id="calib-dist-real" value="100.0" step="0.05">
+                </div>
+              </div>
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px;">
+                <button type="button" class="btn-secondary-action" id="btn-calcular-pasos" style="padding: 6px 14px; font-size: 0.8rem;"><i class="fa-solid fa-arrows-rotate"></i> Calcular y Aplicar</button>
+                <span id="lbl-resultado-calibracion" style="font-family: var(--font-mono); font-size: 0.82rem; color: var(--green-start);"></span>
+              </div>
+            </div>
           </div>
 
           <!-- 3. Ajustes Emisor (Fig. 8) -->
@@ -652,19 +684,19 @@
             <div class="form-grid">
               <div class="form-group">
                 <label>Modo de Envío de Líneas:</label>
-                <select class="form-control">
-                  <option selected>Conteo de Caracteres en Búfer (Character-Counting)</option>
-                  <option>Respuesta Simple Enviar/Esperar (Send-Response)</option>
+                <select class="form-control" id="cfg-streamer-mode">
+                  <option value="counting" selected>Conteo de Caracteres en Búfer (Character-Counting)</option>
+                  <option value="response">Respuesta Simple Enviar/Esperar (Send-Response)</option>
                 </select>
               </div>
               <div class="form-group">
                 <label>Frecuencia de Polling de Estado (?):</label>
-                <input type="number" class="form-control" value="100" min="50" max="1000">
+                <input type="number" class="form-control" id="cfg-status-interval" value="100" min="50" max="1000">
                 <small class="form-help">Intervalo en milisegundos para telemetría DRO.</small>
               </div>
               <div class="form-group checkbox-group">
-                <label><input type="checkbox" checked> Omitir líneas vacías y comentarios</label>
-                <label><input type="checkbox" checked> Pausa segura ante comando M6 (Cambio de herramienta)</label>
+                <label><input type="checkbox" id="cfg-skip-comments" checked> Omitir líneas vacías y comentarios</label>
+                <label><input type="checkbox" id="cfg-pause-m6" checked> Pausa segura ante comando M6 (Cambio de herramienta)</label>
               </div>
             </div>
           </div>
@@ -683,17 +715,17 @@
               </div>
               <div class="form-group">
                 <label>Sistema de Unidades:</label>
-                <select class="form-control">
-                  <option selected>Milímetros (Métrico - G21)</option>
-                  <option>Pulgadas (Imperial - G20)</option>
+                <select class="form-control" id="cfg-units-select">
+                  <option value="mm" selected>Milímetros (Métrico - G21)</option>
+                  <option value="inch">Pulgadas (Imperial - G20)</option>
                 </select>
               </div>
               <div class="form-group">
                 <label>Número de Decimales en DRO:</label>
-                <select class="form-control">
-                  <option selected>3 decimales (0.001 mm)</option>
-                  <option>2 decimales (0.01 mm)</option>
-                  <option>4 decimales (0.0001 mm)</option>
+                <select class="form-control" id="cfg-dro-decimals">
+                  <option value="3" selected>3 decimales (0.001 mm)</option>
+                  <option value="2">2 decimales (0.01 mm)</option>
+                  <option value="4">4 decimales (0.0001 mm)</option>
                 </select>
               </div>
             </div>
@@ -719,22 +751,23 @@
             <div class="form-grid">
               <div class="form-group">
                 <label>Color de Trayectoria de Corte (G1/G2):</label>
-                <input type="color" class="form-control color-input" value="#00e5ff">
+                <input type="color" class="form-control color-input" id="cfg-color-cut" value="#00e5ff">
               </div>
               <div class="form-group">
                 <label>Color de Movimiento Rápido (G0):</label>
-                <input type="color" class="form-control color-input" value="#708090">
+                <input type="color" class="form-control color-input" id="cfg-color-rapid" value="#708090">
               </div>
               <div class="form-group checkbox-group">
-                <label><input type="checkbox" checked> Mostrar retícula de herramienta en tiempo real</label>
-                <label><input type="checkbox" checked> Mostrar límites de la cama de trabajo</label>
-                <label><input type="checkbox" checked> Dibujar cono de fresa en modo 3D</label>
+                <label><input type="checkbox" id="cfg-show-tool-reticle" checked> Mostrar retícula de herramienta en tiempo real</label>
+                <label><input type="checkbox" id="cfg-show-bed-limits" checked> Mostrar límites de la cama de trabajo</label>
+                <label><input type="checkbox" id="cfg-show-tool-3d" checked> Dibujar cono de fresa en modo 3D</label>
               </div>
               <div class="form-group">
                 <label>Herramienta Activa:</label>
                 <select class="form-control" id="cfg-select-tool-type">
                   <option value="fresa" selected>Herramienta Actual (Fresa de Corte CNC)</option>
                   <option value="lapiz">Lápiz de Grafito (Plotter Didáctico)</option>
+                  <option value="laser">Diodo Láser (Grabado / Corte por Luz)</option>
                 </select>
               </div>
             </div>
@@ -744,10 +777,10 @@
           <div class="cfg-panel" id="cfg-tab-consola">
             <h3 class="panel-section-title"><i class="fa-solid fa-terminal"></i> Ajustes de la Consola Serial de Diagnóstico</h3>
             <div class="form-grid checkbox-group">
-              <label><input type="checkbox" checked> Auto-desplazamiento automático al recibir mensajes</label>
-              <label><input type="checkbox" checked> Incluir marcas de tiempo (Timestamps [HH:MM:SS])</label>
-              <label><input type="checkbox"> Filtrar consultas periódicas de estado (&lt;Idle...&gt;)</label>
-              <label><input type="checkbox" checked> Resaltar errores y alarmas en color rojo</label>
+              <label><input type="checkbox" id="cfg-console-autoscroll" checked> Auto-desplazamiento automático al recibir mensajes</label>
+              <label><input type="checkbox" id="cfg-console-timestamps" checked> Incluir marcas de tiempo (Timestamps [HH:MM:SS])</label>
+              <label><input type="checkbox" id="cfg-console-filter-status"> Filtrar consultas periódicas de estado (&lt;Idle...&gt;)</label>
+              <label><input type="checkbox" id="cfg-console-highlight-alarms" checked> Resaltar errores y alarmas en color rojo</label>
             </div>
           </div>
 
@@ -775,6 +808,20 @@
                   <button class="btn-run-macro" data-macro="M3 S5000; G4 P5; M3 S12000"><i class="fa-solid fa-play"></i> Ejecutar</button>
                 </div>
                 <code>M3 S5000 ; Encender a baja RPM<br>G4 P5 ; Esperar 5 seg<br>M3 S12000 ; Velocidad de corte</code>
+              </div>
+              <div class="macro-card">
+                <div class="macro-head">
+                  <span class="macro-name"><i class="fa-solid fa-sun"></i> Prueba de Diodo Láser (Test 10% Luz 0.5s)</span>
+                  <button class="btn-run-macro" data-macro="M3 S100; G4 P0.5; M5"><i class="fa-solid fa-play"></i> Ejecutar</button>
+                </div>
+                <code>M3 S100 ; Encender diodo láser al 10%<br>G4 P0.5 ; Mantener 0.5 segundos<br>M5 ; Apagar haz láser</code>
+              </div>
+              <div class="macro-card">
+                <div class="macro-head">
+                  <span class="macro-name"><i class="fa-solid fa-unlock"></i> Desbloquear Alarma y Homing ($X + $H)</span>
+                  <button class="btn-run-macro" data-macro="$X; $H"><i class="fa-solid fa-play"></i> Ejecutar</button>
+                </div>
+                <code>$X ; Desbloquear estado de alarma<br>$H ; Iniciar ciclo de búsqueda de referencia home</code>
               </div>
             </div>
           </div>
@@ -892,35 +939,710 @@
     </div>
   </div>
 
-  <!-- ================= MODAL DICCIONARIO G-CODE ================= -->
+  <!-- ================= MODAL DICCIONARIO G-CODE INTERACTIVO AMPLIADO ================= -->
   <div class="modal-backdrop hidden" id="modal-dict-backdrop">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dict-large">
       <div class="modal-header">
         <div class="modal-title-group">
           <i class="fa-solid fa-book-bookmark modal-icon"></i>
-          <h2 class="modal-title">Diccionario G-Code Didáctico (ESCOM)</h2>
+          <div>
+            <h2 class="modal-title">Diccionario Didáctico de Comandos G-Code y GRBL</h2>
+            <span class="modal-subtitle">Guía de referencia técnica y sintaxis de maquinado CNC (ESCOM - IPN)</span>
+          </div>
         </div>
         <button class="btn-modal-close" id="btn-close-dict-modal"><i class="fa-solid fa-xmark"></i></button>
       </div>
-      <div class="modal-body">
-        <input type="text" class="dict-search-input" id="dict-search" placeholder="Buscar comando (ej. G0, G1, M3, G90...)">
+      <div class="modal-body" style="display: flex; flex-direction: column; overflow: hidden; padding: 14px 16px;">
+        <input type="text" class="dict-search-input" id="dict-search" placeholder="🔍 Buscar por código, función o palabra clave (ej. G0, avance, arco, M3, husillo, sonda, G54, homing...)" autocomplete="off">
+        
+        <!-- Píldoras de filtrado rápido por categoría -->
+        <div class="dict-filters-row">
+          <button type="button" class="dict-filter-btn active" data-category="all">Todos los Comandos</button>
+          <button type="button" class="dict-filter-btn" data-category="g">Códigos G (Trayectoria y Geometría)</button>
+          <button type="button" class="dict-filter-btn" data-category="m">Códigos M (Husillo y Máquina)</button>
+          <button type="button" class="dict-filter-btn" data-category="wcs">Coordenadas y Planos (WCS)</button>
+          <button type="button" class="dict-filter-btn" data-category="probe">Sondeo y Palpador Z</button>
+          <button type="button" class="dict-filter-btn" data-category="grbl">Comandos del Sistema GRBL ($)</button>
+        </div>
+
         <div class="dict-table-container">
-          <table class="dict-table">
+          <table class="dict-table" id="dict-main-table">
             <thead>
-              <tr><th>Comando</th><th>Función</th><th>Ejemplo Didáctico</th></tr>
+              <tr>
+                <th style="width: 105px;">Comando</th>
+                <th style="width: 120px;">Categoría</th>
+                <th>Función Técnica y Explicación Didáctica</th>
+                <th style="width: 260px;">Sintaxis y Ejemplo Práctico</th>
+              </tr>
             </thead>
             <tbody id="dict-table-body">
-              <tr><td><code>G0</code></td><td>Movimiento rápido sin corte (avance máximo)</td><td><code>G0 X10.0 Y20.0</code></td></tr>
-              <tr><td><code>G1</code></td><td>Interpolación lineal con avance de corte (F)</td><td><code>G1 X50.0 Y30.0 F800</code></td></tr>
-              <tr><td><code>G2 / G3</code></td><td>Interpolación circular horario (G2) y antihorario (G3)</td><td><code>G2 X20 Y20 I5 J0 F400</code></td></tr>
-              <tr><td><code>G90 / G91</code></td><td>Coordenadas absolutas (G90) / relativas (G91)</td><td><code>G90 ; Referencia al origen WCS</code></td></tr>
-              <tr><td><code>G92</code></td><td>Fijar desplazamiento temporal de coordenadas</td><td><code>G92 X0 Y0 Z0 ; Nuevo cero</code></td></tr>
-              <tr><td><code>M3 / M5</code></td><td>Encendido de husillo horario (M3) / Apagado (M5)</td><td><code>M3 S12000 ; 12,000 RPM</code></td></tr>
-              <tr><td><code>$H</code></td><td>Ciclo de Homing (búsqueda de interruptores fin de carrera)</td><td><code>$H ; Referencia mecánica</code></td></tr>
-              <tr><td><code>$X</code></td><td>Desbloquear alarma de seguridad GRBL</td><td><code>$X ; Quitar bloqueo de arranque</code></td></tr>
+              <!-- Códigos G: Movimiento -->
+              <tr data-category="g">
+                <td class="dict-cmd-cell"><code>G0 / G00</code></td>
+                <td><span class="dict-badge dict-badge-g">Movimiento</span></td>
+                <td class="dict-desc-cell"><b>Posicionamiento Rápido:</b> Desplaza los ejes a la velocidad máxima de la máquina sin cortar material. Se utiliza para aproximaciones y saltos de seguridad por encima de la pieza.</td>
+                <td class="dict-example-cell"><code>G0 X10.0 Y20.0 Z5.0</code></td>
+              </tr>
+              <tr data-category="g">
+                <td class="dict-cmd-cell"><code>G1 / G01</code></td>
+                <td><span class="dict-badge dict-badge-g">Movimiento</span></td>
+                <td class="dict-desc-cell"><b>Interpolación Lineal de Corte:</b> Movimiento en línea recta a la velocidad de avance controlada establecida por el parámetro <code>F</code> (Feed rate). Es el comando principal de fresado y grabado.</td>
+                <td class="dict-example-cell"><code>G1 X50.0 Y30.0 F600</code></td>
+              </tr>
+              <tr data-category="g">
+                <td class="dict-cmd-cell"><code>G2 / G02</code></td>
+                <td><span class="dict-badge dict-badge-g">Movimiento</span></td>
+                <td class="dict-desc-cell"><b>Interpolación Circular Horaria (CW):</b> Genera arcos de círculo en sentido de las manecillas del reloj. Requiere indicar punto final y centro relativo (I, J) o radio (R).</td>
+                <td class="dict-example-cell"><code>G2 X20.0 Y20.0 I5.0 J0 F400</code></td>
+              </tr>
+              <tr data-category="g">
+                <td class="dict-cmd-cell"><code>G3 / G03</code></td>
+                <td><span class="dict-badge dict-badge-g">Movimiento</span></td>
+                <td class="dict-desc-cell"><b>Interpolación Circular Antihoraria (CCW):</b> Genera arcos circulares en sentido contrario a las manecillas del reloj en el plano de trabajo activo.</td>
+                <td class="dict-example-cell"><code>G3 X10.0 Y10.0 I-5.0 J0 F400</code></td>
+              </tr>
+              <tr data-category="g">
+                <td class="dict-cmd-cell"><code>G4 / G04</code></td>
+                <td><span class="dict-badge dict-badge-g">Control</span></td>
+                <td class="dict-desc-cell"><b>Pausa Programada (Dwell):</b> Detiene temporalmente el avance del cabezal durante un lapso de tiempo definido en segundos por el parámetro <code>P</code> (útil para estabilizar RPM).</td>
+                <td class="dict-example-cell"><code>G4 P1.5 ; Espera 1.5 seg</code></td>
+              </tr>
+              <tr data-category="wcs">
+                <td class="dict-cmd-cell"><code>G10 L2 / L20</code></td>
+                <td><span class="dict-badge dict-badge-wcs">Coordenadas</span></td>
+                <td class="dict-desc-cell"><b>Fijar Origen WCS en EEPROM:</b> Almacena permanentemente el punto cero de pieza (G54-G59). <code>L20 P1</code> fija la posición actual como nuevo cero de trabajo de G54.</td>
+                <td class="dict-example-cell"><code>G10 L20 P1 X0 Y0 Z0</code></td>
+              </tr>
+              <tr data-category="wcs">
+                <td class="dict-cmd-cell"><code>G17</code></td>
+                <td><span class="dict-badge dict-badge-wcs">Planos</span></td>
+                <td class="dict-desc-cell"><b>Selección de Plano XY:</b> Establece el plano horizontal estándar para fresado, grabado de PCB y generación de arcos con I y J. Es el modo por defecto en fresadoras de 3 ejes.</td>
+                <td class="dict-example-cell"><code>G17 ; Plano superior XY</code></td>
+              </tr>
+              <tr data-category="wcs">
+                <td class="dict-cmd-cell"><code>G18</code></td>
+                <td><span class="dict-badge dict-badge-wcs">Planos</span></td>
+                <td class="dict-desc-cell"><b>Selección de Plano ZX:</b> Configura el plano vertical frontal para operaciones de interpolación circular en perfiles de altura.</td>
+                <td class="dict-example-cell"><code>G18 ; Plano vertical ZX</code></td>
+              </tr>
+              <tr data-category="wcs">
+                <td class="dict-cmd-cell"><code>G19</code></td>
+                <td><span class="dict-badge dict-badge-wcs">Planos</span></td>
+                <td class="dict-desc-cell"><b>Selección de Plano YZ:</b> Configura el plano vertical lateral para arcos cilíndricos en el eje Y/Z.</td>
+                <td class="dict-example-cell"><code>G19 ; Plano lateral YZ</code></td>
+              </tr>
+              <tr data-category="wcs">
+                <td class="dict-cmd-cell"><code>G20</code></td>
+                <td><span class="dict-badge dict-badge-wcs">Unidades</span></td>
+                <td class="dict-desc-cell"><b>Sistema de Unidades Imperial:</b> Interpreta todas las coordenadas de posición, dimensiones y avances en pulgadas (inches).</td>
+                <td class="dict-example-cell"><code>G20 ; Unidades en pulgadas</code></td>
+              </tr>
+              <tr data-category="wcs">
+                <td class="dict-cmd-cell"><code>G21</code></td>
+                <td><span class="dict-badge dict-badge-wcs">Unidades</span></td>
+                <td class="dict-desc-cell"><b>Sistema de Unidades Métrico Decimal:</b> Interpreta todas las coordenadas y velocidades en milímetros (mm). Estándar internacional ISO para CNC.</td>
+                <td class="dict-example-cell"><code>G21 ; Modo métrico (mm)</code></td>
+              </tr>
+              <tr data-category="g">
+                <td class="dict-cmd-cell"><code>G28 / G28.1</code></td>
+                <td><span class="dict-badge dict-badge-g">Referencia</span></td>
+                <td class="dict-desc-cell"><b>Retorno a Posición Home 1:</b> <code>G28</code> envía la herramienta al punto de referencia guardado previamente. <code>G28.1</code> almacena la posición actual como dicho punto de retorno.</td>
+                <td class="dict-example-cell"><code>G28 ; Ir a posición predeterminada</code></td>
+              </tr>
+              <tr data-category="g">
+                <td class="dict-cmd-cell"><code>G30 / G30.1</code></td>
+                <td><span class="dict-badge dict-badge-g">Referencia</span></td>
+                <td class="dict-desc-cell"><b>Retorno a Posición Home 2:</b> Segunda posición secundaria predefinida en coordenadas de máquina (utilizada habitualmente para aparcamiento o cambio de pieza).</td>
+                <td class="dict-example-cell"><code>G30 ; Aparcamiento secundario</code></td>
+              </tr>
+              <tr data-category="probe">
+                <td class="dict-cmd-cell"><code>G38.2</code></td>
+                <td><span class="dict-badge dict-badge-probe">Palpado</span></td>
+                <td class="dict-desc-cell"><b>Sondeo con Alarma al Contacto:</b> Mueve el cabezal hacia el material hasta que la sonda (Touch Plate) cierre circuito eléctrico. Si no detecta contacto antes del límite, dispara ALARM.</td>
+                <td class="dict-example-cell"><code>G38.2 Z-20.0 F100</code></td>
+              </tr>
+              <tr data-category="probe">
+                <td class="dict-cmd-cell"><code>G38.3</code></td>
+                <td><span class="dict-badge dict-badge-probe">Palpado</span></td>
+                <td class="dict-desc-cell"><b>Sondeo hacia Pieza sin Alarma:</b> Similar a G38.2 pero si la sonda no alcanza contacto con la superficie, detiene el movimiento limpiamente sin activar estado de alarma.</td>
+                <td class="dict-example-cell"><code>G38.3 Z-15.0 F80</code></td>
+              </tr>
+              <tr data-category="probe">
+                <td class="dict-cmd-cell"><code>G38.4</code></td>
+                <td><span class="dict-badge dict-badge-probe">Palpado</span></td>
+                <td class="dict-desc-cell"><b>Sondeo de Alejamiento con Alarma:</b> Mueve la herramienta alejándose de la superficie hasta que el circuito de la sonda se abra (pérdida de contacto físico).</td>
+                <td class="dict-example-cell"><code>G38.4 Z5.0 F50</code></td>
+              </tr>
+              <tr data-category="probe">
+                <td class="dict-cmd-cell"><code>G38.5</code></td>
+                <td><span class="dict-badge dict-badge-probe">Palpado</span></td>
+                <td class="dict-desc-cell"><b>Sondeo de Alejamiento sin Alarma:</b> Se aleja del contacto sin disparar alarma si ya se encontraba desconectada.</td>
+                <td class="dict-example-cell"><code>G38.5 Z5.0 F50</code></td>
+              </tr>
+              <tr data-category="wcs">
+                <td class="dict-cmd-cell"><code>G53</code></td>
+                <td><span class="dict-badge dict-badge-wcs">Máquina</span></td>
+                <td class="dict-desc-cell"><b>Desplazamiento en Coordenadas de Máquina (MCS):</b> Comando no-modal que ignora temporalmente el cero de pieza (WCS) y se mueve en referencia absoluta a los interruptores mecánicos.</td>
+                <td class="dict-example-cell"><code>G53 G0 Z0 ; Elevar Z a tope superior</code></td>
+              </tr>
+              <tr data-category="wcs">
+                <td class="dict-cmd-cell"><code>G54</code></td>
+                <td><span class="dict-badge dict-badge-wcs">Coordenadas</span></td>
+                <td class="dict-desc-cell"><b>Sistema de Coordenadas de Trabajo 1 (WCS Default):</b> Origen principal de trabajo del operador donde X0, Y0, Z0 coinciden con la esquina y superficie de la pieza en bruto.</td>
+                <td class="dict-example-cell"><code>G54 ; Activa origen pieza 1</code></td>
+              </tr>
+              <tr data-category="wcs">
+                <td class="dict-cmd-cell"><code>G55 ... G59</code></td>
+                <td><span class="dict-badge dict-badge-wcs">Coordenadas</span></td>
+                <td class="dict-desc-cell"><b>Sistemas de Coordenadas de Trabajo Secundarios (WCS 2 al 6):</b> Permiten mecanizar múltiples piezas montadas simultáneamente sobre la mesa con orígenes independientes.</td>
+                <td class="dict-example-cell"><code>G55 ; Activa origen de pieza 2</code></td>
+              </tr>
+              <tr data-category="g">
+                <td class="dict-cmd-cell"><code>G80</code></td>
+                <td><span class="dict-badge dict-badge-g">Ciclos</span></td>
+                <td class="dict-desc-cell"><b>Cancelar Ciclos Fijos:</b> Cancela cualquier ciclo automático modal de taladrado o roscado previo y restaura el control de movimiento estándar G0/G1.</td>
+                <td class="dict-example-cell"><code>G80 ; Fin de ciclo de taladrado</code></td>
+              </tr>
+              <tr data-category="wcs">
+                <td class="dict-cmd-cell"><code>G90</code></td>
+                <td><span class="dict-badge dict-badge-wcs">Posición</span></td>
+                <td class="dict-desc-cell"><b>Modo de Coordenadas Absolutas:</b> Todas las cotas numéricas (X, Y, Z) se miden directamente respecto al origen cero de trabajo (0,0,0) del sistema activo.</td>
+                <td class="dict-example-cell"><code>G90 ; Modo absoluto (recomendado)</code></td>
+              </tr>
+              <tr data-category="wcs">
+                <td class="dict-cmd-cell"><code>G91</code></td>
+                <td><span class="dict-badge dict-badge-wcs">Posición</span></td>
+                <td class="dict-desc-cell"><b>Modo de Coordenadas Relativas / Incrementales:</b> Cada cota representa la distancia a desplazarse a partir de la posición física en la que se encuentra la herramienta en ese instante.</td>
+                <td class="dict-example-cell"><code>G91 G0 Z5.0 ; Eleva 5mm desde donde esté</code></td>
+              </tr>
+              <tr data-category="wcs">
+                <td class="dict-cmd-cell"><code>G92</code></td>
+                <td><span class="dict-badge dict-badge-wcs">Coordenadas</span></td>
+                <td class="dict-desc-cell"><b>Desplazamiento Temporal de Coordenadas:</b> Reasigna las coordenadas de la posición actual sin sobrescribir los valores permanentes de G54 en memoria.</td>
+                <td class="dict-example-cell"><code>G92 X0 Y0 Z0 ; Cero temporal</code></td>
+              </tr>
+              <tr data-category="wcs">
+                <td class="dict-cmd-cell"><code>G92.1</code></td>
+                <td><span class="dict-badge dict-badge-wcs">Coordenadas</span></td>
+                <td class="dict-desc-cell"><b>Cancelar Desplazamiento G92:</b> Restablece los orígenes originales del sistema WCS (G54) eliminando cualquier compensación temporal aplicada con G92.</td>
+                <td class="dict-example-cell"><code>G92.1 ; Cancela offset G92</code></td>
+              </tr>
+              <tr data-category="g">
+                <td class="dict-cmd-cell"><code>G94</code></td>
+                <td><span class="dict-badge dict-badge-g">Avance</span></td>
+                <td class="dict-desc-cell"><b>Modo de Avance por Minuto:</b> Las velocidades de avance `F` se expresan en unidades lineales por minuto (mm/min o in/min). Es el estándar para fresado.</td>
+                <td class="dict-example-cell"><code>G94 F800 ; 800 mm/min</code></td>
+              </tr>
+
+              <!-- Códigos M: Husillo y Misceláneos -->
+              <tr data-category="m">
+                <td class="dict-cmd-cell"><code>M0 / M00</code></td>
+                <td><span class="dict-badge dict-badge-m">Programa</span></td>
+                <td class="dict-desc-cell"><b>Parada Obligatoria de Programa:</b> Detiene por completo la ejecución y apaga el husillo. Requiere que el operador presione "START" o envíe <code>~</code> para continuar.</td>
+                <td class="dict-example-cell"><code>M0 ; Pausa para retirar virutas</code></td>
+              </tr>
+              <tr data-category="m">
+                <td class="dict-cmd-cell"><code>M1 / M01</code></td>
+                <td><span class="dict-badge dict-badge-m">Programa</span></td>
+                <td class="dict-desc-cell"><b>Parada Opcional:</b> Pausa la ejecución únicamente si el operador ha activado el interruptor de parada opcional en el panel de control.</td>
+                <td class="dict-example-cell"><code>M1 ; Parada condicional</code></td>
+              </tr>
+              <tr data-category="m">
+                <td class="dict-cmd-cell"><code>M2 / M02</code></td>
+                <td><span class="dict-badge dict-badge-m">Programa</span></td>
+                <td class="dict-desc-cell"><b>Fin de Programa:</b> Detiene los motores, apaga el husillo y los sistemas auxiliares, indicando que la pieza ha sido completada satisfactoriamente.</td>
+                <td class="dict-example-cell"><code>M2 ; Programa concluido</code></td>
+              </tr>
+              <tr data-category="m">
+                <td class="dict-cmd-cell"><code>M3 / M03</code></td>
+                <td><span class="dict-badge dict-badge-m">Husillo / Láser</span></td>
+                <td class="dict-desc-cell"><b>Encendido de Husillo Horario (CW) / Láser ON:</b> Arranca el motor de corte a las RPM indicadas por el parámetro <code>S</code>. En modo láser, enciende el haz a potencia continua.</td>
+                <td class="dict-example-cell"><code>M3 S12000 ; Husillo a 12,000 RPM</code></td>
+              </tr>
+              <tr data-category="m">
+                <td class="dict-cmd-cell"><code>M4 / M04</code></td>
+                <td><span class="dict-badge dict-badge-m">Husillo / Láser</span></td>
+                <td class="dict-desc-cell"><b>Encendido Antihorario (CCW) / Modo Láser Dinámico:</b> En GRBL con modo láser habilitado ($32=1), M4 ajusta la potencia del haz en proporción directa a la velocidad instantánea de avance.</td>
+                <td class="dict-example-cell"><code>M4 S800 ; Láser proporcional dinámico</code></td>
+              </tr>
+              <tr data-category="m">
+                <td class="dict-cmd-cell"><code>M5 / M05</code></td>
+                <td><span class="dict-badge dict-badge-m">Husillo / Láser</span></td>
+                <td class="dict-desc-cell"><b>Apagado de Husillo / Láser OFF:</b> Corta de inmediato la energía del motor del cabezal o apaga el diodo láser. Protocolo de seguridad antes de cambios de herramienta.</td>
+                <td class="dict-example-cell"><code>M5 ; Detener rotación de herramienta</code></td>
+              </tr>
+              <tr data-category="m">
+                <td class="dict-cmd-cell"><code>M6 / M06</code></td>
+                <td><span class="dict-badge dict-badge-m">Herramienta</span></td>
+                <td class="dict-desc-cell"><b>Cambio de Herramienta:</b> Solicita montar una nueva herramienta indicada por <code>T</code>. La máquina se detiene y permite ajustar la altura Z antes de continuar.</td>
+                <td class="dict-example-cell"><code>T2 M6 ; Montar herramienta número 2</code></td>
+              </tr>
+              <tr data-category="m">
+                <td class="dict-cmd-cell"><code>M7 / M07</code></td>
+                <td><span class="dict-badge dict-badge-m">Refrigerante</span></td>
+                <td class="dict-desc-cell"><b>Refrigeración por Niebla (Mist Coolant):</b> Activa la electroválvula de lubricación por aire atomizado para enfriamiento de fresas en metales no ferrosos.</td>
+                <td class="dict-example-cell"><code>M7 ; Niebla refrigerante ON</code></td>
+              </tr>
+              <tr data-category="m">
+                <td class="dict-cmd-cell"><code>M8 / M08</code></td>
+                <td><span class="dict-badge dict-badge-m">Refrigerante</span></td>
+                <td class="dict-desc-cell"><b>Refrigeración por Inundación (Flood Coolant):</b> Activa la bomba de fluido de corte continuo para evacuación de viruta en mecanizados intensivos.</td>
+                <td class="dict-example-cell"><code>M8 ; Refrigeración líquida ON</code></td>
+              </tr>
+              <tr data-category="m">
+                <td class="dict-cmd-cell"><code>M9 / M09</code></td>
+                <td><span class="dict-badge dict-badge-m">Refrigerante</span></td>
+                <td class="dict-desc-cell"><b>Apagado de Refrigeración:</b> Desactiva simultáneamente todos los sistemas de refrigeración (niebla e inundación).</td>
+                <td class="dict-example-cell"><code>M9 ; Todos los refrigerantes OFF</code></td>
+              </tr>
+              <tr data-category="m">
+                <td class="dict-cmd-cell"><code>M30</code></td>
+                <td><span class="dict-badge dict-badge-m">Programa</span></td>
+                <td class="dict-desc-cell"><b>Fin de Programa con Rebobinado:</b> Detiene todas las funciones de la máquina y rebobina el cursor de ejecución a la primera línea del archivo de código G.</td>
+                <td class="dict-example-cell"><code>M30 ; Fin y rebobinar a línea 1</code></td>
+              </tr>
+
+              <!-- Parámetros Numéricos -->
+              <tr data-category="g">
+                <td class="dict-cmd-cell"><code>F</code></td>
+                <td><span class="dict-badge dict-badge-g">Parámetro</span></td>
+                <td class="dict-desc-cell"><b>Velocidad de Avance (Feed Rate):</b> Determina la rapidez con la que se mueven los ejes durante el corte en milímetros por minuto (mm/min). Es modal (persiste hasta que se modifique).</td>
+                <td class="dict-example-cell"><code>F800 ; Avance de corte a 800 mm/min</code></td>
+              </tr>
+              <tr data-category="m">
+                <td class="dict-cmd-cell"><code>S</code></td>
+                <td><span class="dict-badge dict-badge-m">Parámetro</span></td>
+                <td class="dict-desc-cell"><b>Velocidad de Husillo / Potencia Láser:</b> Revoluciones por minuto (RPM) del motor o intensidad PWM del diodo láser en escala de 0 a 1000 ($30).</td>
+                <td class="dict-example-cell"><code>S12000 ; 12,000 RPM (o S250 para 25% luz)</code></td>
+              </tr>
+              <tr data-category="g">
+                <td class="dict-cmd-cell"><code>I, J, K</code></td>
+                <td><span class="dict-badge dict-badge-g">Parámetro</span></td>
+                <td class="dict-desc-cell"><b>Vectores de Centro de Arco:</b> Distancia incremental desde el punto de inicio de la herramienta hasta el centro del arco en los ejes X, Y y Z respectivamente.</td>
+                <td class="dict-example-cell"><code>G2 X10 Y10 I5.0 J0 F500</code></td>
+              </tr>
+
+              <!-- Parámetros y Comandos de Sistema GRBL -->
+              <tr data-category="grbl">
+                <td class="dict-cmd-cell"><code>$$</code></td>
+                <td><span class="dict-badge dict-badge-grbl">GRBL Config</span></td>
+                <td class="dict-desc-cell"><b>Consultar Configuración Completa:</b> Imprime en la consola serial todos los parámetros ($0 a $132) almacenados en la memoria no-volátil EEPROM del microcontrolador.</td>
+                <td class="dict-example-cell"><code>$$ ; Lista parámetros del firmware</code></td>
+              </tr>
+              <tr data-category="grbl">
+                <td class="dict-cmd-cell"><code>$#</code></td>
+                <td><span class="dict-badge dict-badge-grbl">GRBL WCS</span></td>
+                <td class="dict-desc-cell"><b>Consultar Orígenes WCS y Sondas:</b> Muestra los desplazamientos absolutos de los sistemas G54-G59, coordenadas de posición G28/G30 y último contacto de sonda PRB.</td>
+                <td class="dict-example-cell"><code>$# ; Lista offsets de trabajo</code></td>
+              </tr>
+              <tr data-category="grbl">
+                <td class="dict-cmd-cell"><code>$G</code></td>
+                <td><span class="dict-badge dict-badge-grbl">GRBL Estado</span></td>
+                <td class="dict-desc-cell"><b>Consultar Modos Activos del Analizador:</b> Muestra los estados modales en curso (G0/G1, G54, G17, G21, G90, G94, M3/M5, T, F, S).</td>
+                <td class="dict-example-cell"><code>$G ; Muestra parser state actual</code></td>
+              </tr>
+              <tr data-category="grbl">
+                <td class="dict-cmd-cell"><code>$I</code></td>
+                <td><span class="dict-badge dict-badge-grbl">GRBL Info</span></td>
+                <td class="dict-desc-cell"><b>Información de Compilación y Versión:</b> Muestra la versión del firmware (ej. GRBL v1.1h) y datos de personalización del microcontrolador.</td>
+                <td class="dict-example-cell"><code>$I ; Imprime versión instalada</code></td>
+              </tr>
+              <tr data-category="grbl">
+                <td class="dict-cmd-cell"><code>$H</code></td>
+                <td><span class="dict-badge dict-badge-grbl">Homing</span></td>
+                <td class="dict-desc-cell"><b>Ciclo de Búsqueda de Referencia Home:</b> Inicia el ciclo automático de desplazamiento hacia los interruptores mecánicos fin de carrera para fijar el origen absoluto de la máquina.</td>
+                <td class="dict-example-cell"><code>$H ; Homing automático de ejes</code></td>
+              </tr>
+              <tr data-category="grbl">
+                <td class="dict-cmd-cell"><code>$X</code></td>
+                <td><span class="dict-badge dict-badge-grbl">Alarma</span></td>
+                <td class="dict-desc-cell"><b>Desbloquear Interbloqueo de Alarma (Kill Alarm Lock):</b> Quita el bloqueo de arranque obligatorio de GRBL permitiendo mover los ejes sin necesidad de ejecutar Homing previo.</td>
+                <td class="dict-example-cell"><code>$X ; Desbloqueo rápido de seguridad</code></td>
+              </tr>
+              <tr data-category="grbl">
+                <td class="dict-cmd-cell"><code>$C</code></td>
+                <td><span class="dict-badge dict-badge-grbl">Validación</span></td>
+                <td class="dict-desc-cell"><b>Modo de Comprobación de Código G (Check Mode):</b> Procesa todo el archivo de código G verificando errores de sintaxis y arcos sin mover físicamente los motores.</td>
+                <td class="dict-example-cell"><code>$C ; Alterna modo prueba simulada</code></td>
+              </tr>
+              <tr data-category="grbl">
+                <td class="dict-cmd-cell"><code>$100, $101, $102</code></td>
+                <td><span class="dict-badge dict-badge-grbl">Calibración</span></td>
+                <td class="dict-desc-cell"><b>Resolución de Pasos/mm (Ejes X, Y, Z):</b> Número exacto de pulsos que el driver debe emitir al motor paso a paso para desplazar la herramienta exactamente 1 milímetro.</td>
+                <td class="dict-example-cell"><code>$100=250.000 ; Pasos/mm en X</code></td>
+              </tr>
+              <tr data-category="grbl">
+                <td class="dict-cmd-cell"><code>$130, $131, $132</code></td>
+                <td><span class="dict-badge dict-badge-grbl">Límites</span></td>
+                <td class="dict-desc-cell"><b>Recorrido Máximo Útil (Ejes X, Y, Z):</b> Longitud física mecanizable en milímetros desde el origen hasta el límite opuesto de cada guía lineal. Previene colisiones por software.</td>
+                <td class="dict-example-cell"><code>$130=300.0 ; Recorrido útil X en mm</code></td>
+              </tr>
+              <tr data-category="grbl">
+                <td class="dict-cmd-cell"><code>?</code></td>
+                <td><span class="dict-badge dict-badge-grbl">Telemetría</span></td>
+                <td class="dict-desc-cell"><b>Consulta de Estado en Tiempo Real:</b> Comando de 1 byte que responde de inmediato con las coordenadas de máquina (MPos), coordenadas de trabajo (WPos), velocidad real y pines activados.</td>
+                <td class="dict-example-cell"><code>? ; Devuelve &lt;Idle|MPos:...&gt;</code></td>
+              </tr>
+              <tr data-category="grbl">
+                <td class="dict-cmd-cell"><code>! y ~</code></td>
+                <td><span class="dict-badge dict-badge-grbl">Tiempo Real</span></td>
+                <td class="dict-desc-cell"><b>Pausa y Reanudación Inmediatas:</b> <code>!</code> ejecuta Feed Hold (detiene el avance en menos de 10 ms con desaceleración segura). <code>~</code> reanuda el ciclo pausado de inmediato.</td>
+                <td class="dict-example-cell"><code>! (Pausar) / ~ (Reanudar)</code></td>
+              </tr>
+              <tr data-category="grbl">
+                <td class="dict-cmd-cell"><code>Ctrl + X (0x18)</code></td>
+                <td><span class="dict-badge dict-badge-grbl">Emergencia</span></td>
+                <td class="dict-desc-cell"><b>Reset por Software Inmediato (Soft Reset):</b> Reinicia el microcontrolador al instante sin apagar la fuente de alimentación, detiene todo movimiento y restaura el estado seguro.</td>
+                <td class="dict-example-cell"><code>Ctrl+X ; Reset de firmware</code></td>
+              </tr>
             </tbody>
           </table>
         </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Total: <b id="lbl-dict-total-count" style="color: var(--cyan-primary);">44</b> comandos documentados</span>
+        <button class="btn-primary-action" id="btn-close-dict-footer">Cerrar Diccionario</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL GUÍA RÁPIDA DE OPERACIÓN CNC DIDÁCTICA ================= -->
+  <div class="modal-backdrop hidden" id="modal-manual-backdrop">
+    <div class="modal-dialog modal-manual-dialog">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <i class="fa-solid fa-book-open modal-icon"></i>
+          <div>
+            <h2 class="modal-title">Guía Rápida de Operación CNC Didáctica</h2>
+            <span class="modal-subtitle">Procedimiento Estándar de Operación y Buenas Prácticas de Laboratorio (ESCOM - IPN)</span>
+          </div>
+        </div>
+        <button class="btn-modal-close" id="btn-close-manual-modal"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body manual-layout" style="padding: 0;">
+        <!-- Barra de navegación izquierda de etapas de operación -->
+        <nav class="manual-nav">
+          <button class="manual-nav-btn active" data-manual="man-seguridad">
+            <i class="fa-solid fa-shield-halved"></i> 1. Seguridad y EPP
+          </button>
+          <button class="manual-nav-btn" data-manual="man-conexion">
+            <i class="fa-solid fa-network-wired"></i> 2. Conexión y Homing
+          </button>
+          <button class="manual-nav-btn" data-manual="man-material">
+            <i class="fa-solid fa-screwdriver-wrench"></i> 3. Fijación y Herramienta
+          </button>
+          <button class="manual-nav-btn" data-manual="man-cero">
+            <i class="fa-solid fa-bullseye"></i> 4. Puesta a Cero (WCS)
+          </button>
+          <button class="manual-nav-btn" data-manual="man-gcode">
+            <i class="fa-solid fa-file-code"></i> 5. Carga de Código G
+          </button>
+          <button class="manual-nav-btn" data-manual="man-ejecucion">
+            <i class="fa-solid fa-play"></i> 6. Mecanizado en Vivo
+          </button>
+          <button class="manual-nav-btn" data-manual="man-finalizacion">
+            <i class="fa-solid fa-flag-checkered"></i> 7. Retirada de Pieza
+          </button>
+          <button class="manual-nav-btn" data-manual="man-glosario">
+            <i class="fa-solid fa-graduation-cap"></i> 8. Glosario Técnico
+          </button>
+        </nav>
+
+        <!-- Contenido dinámico de la etapa seleccionada -->
+        <div class="manual-content">
+          <!-- Etapa 1: Seguridad y EPP -->
+          <div class="manual-panel active" id="man-seguridad">
+            <h3 class="manual-panel-title"><i class="fa-solid fa-shield-halved"></i> Protocolo de Seguridad y Equipo de Protección Personal (EPP)</h3>
+            <p class="manual-lead">Antes de encender o interactuar físicamente con la máquina CNC en el laboratorio, es obligatorio cumplir rigurosamente con las siguientes normas de protección:</p>
+            
+            <div class="manual-steps-list">
+              <div class="manual-step-item">
+                <div class="manual-step-num"><i class="fa-solid fa-glasses"></i></div>
+                <div class="manual-step-body">
+                  <h4>Protección Ocular Obligatoria</h4>
+                  <p>Utilice siempre lentes de seguridad de policarbonato con protección lateral contra impacto de virutas o partículas despedidas a alta velocidad. Si utiliza el módulo de <b>Diodo Láser</b>, es estrictamente obligatorio portar gafas con filtro de atenuación óptica certificado para <b>450 nm (azul/violeta)</b>.</p>
+                </div>
+              </div>
+              <div class="manual-step-item">
+                <div class="manual-step-num"><i class="fa-solid fa-shirt"></i></div>
+                <div class="manual-step-body">
+                  <h4>Vestimenta Adecuada y Cero Elementos Sueltos</h4>
+                  <p>Prohibido el uso de ropa con mangas holgadas, corbatas, bufandas o batas sueltas. El cabello largo debe estar firmemente recogido y recogido detrás de la nuca. Retire completamente pulseras, anillos, relojes metálicos y collares antes de aproximarse al cabezal rotatorio.</p>
+                </div>
+              </div>
+              <div class="manual-step-item">
+                <div class="manual-step-num"><i class="fa-solid fa-hand"></i></div>
+                <div class="manual-step-body">
+                  <h4>Parada de Emergencia (E-STOP) Inmediata</h4>
+                  <p>Localice el botón rojo de E-STOP físico de la máquina y memorice el atajo rápido de teclado <code>ESC</code> o el botón rojo en la barra superior. En caso de sonido extraño, vibración excesiva, colisión de la fresa o humo, active E-STOP inmediatamente sin dudar.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="manual-warn-box">
+              <i class="fa-solid fa-triangle-exclamation" style="font-size: 18px;"></i>
+              <span><b>Regla de Oro:</b> Jamás introduzca las manos ni acerque herramientas manuales (desarmadores, pinzas) dentro del volumen de trabajo mientras el husillo esté girando o la máquina esté en estado <code>RUN</code>.</span>
+            </div>
+          </div>
+
+          <!-- Etapa 2: Conexión y Homing -->
+          <div class="manual-panel" id="man-conexion">
+            <h3 class="manual-panel-title"><i class="fa-solid fa-network-wired"></i> Paso 1: Conexión Serial UART e Inicialización Homing</h3>
+            <p class="manual-lead">Establezca la comunicación bidireccional entre la computadora y la placa controladora CNC (Arduino Nano / Uno con GRBL v1.1):</p>
+            
+            <div class="manual-steps-list">
+              <div class="manual-step-item">
+                <div class="manual-step-num">1</div>
+                <div class="manual-step-body">
+                  <h4>Conectar Cable USB y Seleccionar Puerto COM</h4>
+                  <p>Inserte el cable USB en el equipo. En el selector superior de puertos COM, elija el puerto detectado (ej. <code>COM3 - Arduino Nano / CH340</code>). La velocidad recomendada es <code>115200 baudios</code>. El indicador de estado cambiará a color verde.</p>
+                </div>
+              </div>
+              <div class="manual-step-item">
+                <div class="manual-step-num">2</div>
+                <div class="manual-step-body">
+                  <h4>Desbloquear Alarma de Seguridad ($X)</h4>
+                  <p>Por diseño didáctico, GRBL arranca en estado de seguridad bloqueado <code>ALARM</code> para evitar movimientos accidentales al encender. Presione el botón naranja <b>DESBLOQUEAR ($X)</b> en la barra superior o teclee <code>$X</code> en la terminal MDI.</p>
+                </div>
+              </div>
+              <div class="manual-step-item">
+                <div class="manual-step-num">3</div>
+                <div class="manual-step-body">
+                  <h4>Ejecutar Ciclo de Homing ($H)</h4>
+                  <p>En el menú <b>Máquina > Iniciar Homing ($H)</b> o enviando <code>$H</code>, la máquina moverá primero el eje Z hacia arriba y luego los ejes X e Y hacia los interruptores fin de carrera mecánicos. Esto sincroniza las coordenadas absolutas de la máquina (MCS) con la realidad física.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="manual-tip-box">
+              <i class="fa-solid fa-lightbulb" style="font-size: 16px;"></i>
+              <span><b>Consejo Práctico:</b> Si la máquina no cuenta con sensores de fin de carrera físicos instalados, puede omitir el homing desbloqueando con <code>$X</code> y fijando el origen manualmente con los botones ZERO.</span>
+            </div>
+          </div>
+
+          <!-- Etapa 3: Fijación y Herramienta -->
+          <div class="manual-panel" id="man-material">
+            <h3 class="manual-panel-title"><i class="fa-solid fa-screwdriver-wrench"></i> Paso 2: Fijación Segura del Material y Selección de Herramienta</h3>
+            <p class="manual-lead">Prepare la pieza en bruto y configure el elemento de trabajo montado en el cabezal Z:</p>
+
+            <div class="manual-grid-2col">
+              <div class="manual-info-card">
+                <h5><i class="fa-solid fa-bore-hole"></i> Fresa de Grabado / Corte (PCB)</h5>
+                <p>Inserte al menos el 80% del vástago de la fresa (carburo de tungsteno / V-bit 20° o 30°) dentro de la pinza ER11. Apriete la tuerca mandril firmemente con las dos llaves planas. <b>Requiere husillo encendido a altas RPM (10,000 - 12,000 RPM) antes de penetrar el material.</b></p>
+              </div>
+              <div class="manual-info-card">
+                <h5><i class="fa-solid fa-pencil"></i> Lápiz Didáctico de Grafito</h5>
+                <p>Ideal para prácticas iniciales de laboratorio. Coloque el adaptador elástico con el lápiz escolar en el soporte Z. Al seleccionar modo Lápiz en el software, <b>el motor del husillo permanece protegido en OFF</b> para evitar desgaste o roturas sobre papel bond.</p>
+              </div>
+            </div>
+
+            <div class="manual-steps-list mt-2">
+              <div class="manual-step-item">
+                <div class="manual-step-num"><i class="fa-solid fa-grip"></i></div>
+                <div class="manual-step-body">
+                  <h4>Sujeción Rígida a la Cama de Sacrificio</h4>
+                  <p>Fije la placa de material (fenólica, acrílico, MDF) sobre la cama usando las bridas perimetrales (clamps) o cinta doble cara de alta adherencia sin holgura. Verifique que las cabezas de los tornillos de sujeción queden fuera de la trayectoria de corte de la herramienta.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="manual-tip-box">
+              <i class="fa-solid fa-circle-check" style="font-size: 16px;"></i>
+              <span>Para cambiar la modalidad de trabajo, haga clic en el botón <b>"Herramienta"</b> en la pestaña superior derecha o en <b>Herramientas > Tipo de Herramienta</b>.</span>
+            </div>
+          </div>
+
+          <!-- Etapa 4: Cero Pieza WCS -->
+          <div class="manual-panel" id="man-cero">
+            <h3 class="manual-panel-title"><i class="fa-solid fa-bullseye"></i> Paso 3: Puesta a Cero de Trabajo (Cero Pieza / WCS G54)</h3>
+            <p class="manual-lead">Haga coincidir el origen de coordenadas de trabajo de su diseño (X0, Y0, Z0) con la esquina de referencia física de la placa:</p>
+
+            <div class="manual-steps-list">
+              <div class="manual-step-item">
+                <div class="manual-step-num">1</div>
+                <div class="manual-step-body">
+                  <h4>Puesta a Cero en el Plano XY</h4>
+                  <p>Use las teclas de flecha del teclado o el panel <b>JOG MANUAL</b> para mover el cabezal sobre la esquina inferior izquierda de su material. Una vez alineada la punta de la herramienta con la esquina, presione el botón <b>ZERO XY</b>. El visor DRO marcará <code>X: 0.000</code> e <code>Y: 0.000</code>.</p>
+                </div>
+              </div>
+              <div class="manual-step-item">
+                <div class="manual-step-num">2</div>
+                <div class="manual-step-body">
+                  <h4>Calibración del Eje Z con Método del Papel</h4>
+                  <p>Coloque una tira de papel bond común (espesor aproximado: 0.1 mm) sobre la superficie del material. Con el paso de Jog en <code>0.1 mm</code> o <code>0.01 mm</code>, baje el eje Z lentamente mientras desliza el papel suavemente con los dedos. En el instante exacto en que sienta fricción o resistencia ligera al jalar el papel, detenga el descenso.</p>
+                </div>
+              </div>
+              <div class="manual-step-item">
+                <div class="manual-step-num">3</div>
+                <div class="manual-step-body">
+                  <h4>Fijar Cero Z y Retraer Herramienta a Altura Segura</h4>
+                  <p>Presione el botón <b>ZERO Z</b>. El DRO marcará <code>Z: 0.000</code>. A continuación, eleve inmediatamente el cabezal Z al menos <b>+5.0 mm</b> con el botón <code>Z+</code> para evitar rayar la pieza antes del inicio.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="manual-tip-box">
+              <i class="fa-solid fa-microchip" style="font-size: 16px;"></i>
+              <span><b>Con Sonda Touch Plate:</b> Si utiliza una placa metálica de contacto táctil, coloque la sonda sobre la pieza y ejecute la macro <b>Sonda Cero Z</b> (comando <code>G38.2 Z-20 F100; G92 Z5.0; G0 Z15.0</code>).</span>
+            </div>
+          </div>
+
+          <!-- Etapa 5: Carga de G-Code -->
+          <div class="manual-panel" id="man-gcode">
+            <h3 class="manual-panel-title"><i class="fa-solid fa-file-code"></i> Paso 4: Carga, Inspección 3D y Validación de Límites</h3>
+            <p class="manual-lead">Cargue y verifique el programa numérico generado por su software CAM (FlatCAM, Fusion 360, LaserGRBL, CopperCAM):</p>
+
+            <div class="manual-steps-list">
+              <div class="manual-step-item">
+                <div class="manual-step-num">1</div>
+                <div class="manual-step-body">
+                  <h4>Cargar Archivo de Maquinado</h4>
+                  <p>Presione el botón <b>"Abrir Archivo G-Code"</b> en la barra superior o utilice el atajo rápido <code>Ctrl + O</code>. Seleccione un archivo con extensión <code>.nc</code>, <code>.gcode</code>, <code>.tap</code> o <code>.ngc</code>.</p>
+                </div>
+              </div>
+              <div class="manual-step-item">
+                <div class="manual-step-num">2</div>
+                <div class="manual-step-body">
+                  <h4>Inspección Visual en el Renderizador 2D / 3D</h4>
+                  <p>Examine la trayectoria en el lienzo gráfico interactivo. Puede alternar entre vista de planta (<b>XY</b>), vista frontal (<b>XZ</b>) o perspectiva isométrica (<b>3D</b>). Use la rueda del ratón para hacer zoom hacia las pistas y arrastre para orbitar el cubo ViewCube.</p>
+                </div>
+              </div>
+              <div class="manual-step-item">
+                <div class="manual-step-num">3</div>
+                <div class="manual-step-body">
+                  <h4>Comprobación de Alerta de Límites de la Máquina</h4>
+                  <p>El software analiza automáticamente las coordenadas mínimas y máximas del programa. Si alguna trayectoria sobrepasa las dimensiones físicas útiles de la máquina (ej. 300 × 200 mm), aparecerá un recuadro amarillo de advertencia en la esquina inferior izquierda indicando el exceso en milímetros para evitar colisiones mecánicas.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="manual-tip-box">
+              <i class="fa-solid fa-clock" style="font-size: 16px;"></i>
+              <span>Verifique el tiempo estimado total de mecanizado en la barra inferior (ej. <code>12m 45s</code>) y el conteo de líneas antes de arrancar.</span>
+            </div>
+          </div>
+
+          <!-- Etapa 6: Mecanizado en Vivo -->
+          <div class="manual-panel" id="man-ejecucion">
+            <h3 class="manual-panel-title"><i class="fa-solid fa-play"></i> Paso 5: Mecanizado en Vivo, Control de Avance y Supervisión</h3>
+            <p class="manual-lead">Ejecute el programa de corte con supervisión activa de parámetros de telemetría:</p>
+
+            <div class="manual-steps-list">
+              <div class="manual-step-item">
+                <div class="manual-step-num">1</div>
+                <div class="manual-step-body">
+                  <h4>Encendido Previo del Husillo (Modo Fresa)</h4>
+                  <p>Si está trabajando con fresa CNC, presione el botón <b>Spindle ON</b> antes de iniciar para asegurar que el motor alcance su velocidad de régimen (10,000 - 12,000 RPM). En modo Láser o Lápiz, el sistema gestionará el encendido automáticamente según el código.</p>
+                </div>
+              </div>
+              <div class="manual-step-item">
+                <div class="manual-step-num">2</div>
+                <div class="manual-step-body">
+                  <h4>Iniciar Ejecución (START)</h4>
+                  <p>Presione el botón verde <b>START</b>. La máquina comenzará a transmitir los bloques de código G hacia el búfer planificador de GRBL. El estado operativo cambiará a <code>RUN</code>.</p>
+                </div>
+              </div>
+              <div class="manual-step-item">
+                <div class="manual-step-num">3</div>
+                <div class="manual-step-body">
+                  <h4>Supervisión Visual en Vivo (Ruta Recorrida)</h4>
+                  <p>A medida que la herramienta física se desplaza sobre el material, el visualizador colorea exactamente detrás de la punta de la herramienta la trayectoria que ya fue completada (verde para fresa, dorado para lápiz, púrpura para láser), manteniendo en color cian las líneas que faltan por recorrer.</p>
+                </div>
+              </div>
+              <div class="manual-step-item">
+                <div class="manual-step-num">4</div>
+                <div class="manual-step-body">
+                  <h4>Ajuste Dinámico de Avance (Feed Override)</h4>
+                  <p>Si nota vibraciones o desea acelerar el maquinado, mueva el deslizador <b>Feed Override</b> (entre 10% y 200%). El sistema ajustará la velocidad en tiempo real sin necesidad de reiniciar el programa.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="manual-warn-box">
+              <i class="fa-solid fa-pause" style="font-size: 16px;"></i>
+              <span><b>Interrupción Segura:</b> Para pausar momentáneamente la máquina y examinar la pieza, presione la <b>Barra Espaciadora</b> o el botón <b>PAUSA</b>. Para reanudar el corte, presione <b>START</b> nuevamente.</span>
+            </div>
+          </div>
+
+          <!-- Etapa 7: Finalización y Retirada -->
+          <div class="manual-panel" id="man-finalizacion">
+            <h3 class="manual-panel-title"><i class="fa-solid fa-flag-checkered"></i> Paso 6: Conclusión del Programa, Limpieza y Retirada de Pieza</h3>
+            <p class="manual-lead">Procedimiento correcto y seguro al concluir el ciclo de maquinado:</p>
+
+            <div class="manual-steps-list">
+              <div class="manual-step-item">
+                <div class="manual-step-num">1</div>
+                <div class="manual-step-body">
+                  <h4>Verificar Apagado Automático del Husillo</h4>
+                  <p>Al llegar al final del programa (comando <code>M30</code> o <code>M2</code>), la barra de progreso marcará el 100%, el husillo se apagará automáticamente y el estado del controlador volverá a <code>IDLE</code>.</p>
+                </div>
+              </div>
+              <div class="manual-step-item">
+                <div class="manual-step-num">2</div>
+                <div class="manual-step-body">
+                  <h4>Ejecutar Aparcamiento Seguro (Safe Park)</h4>
+                  <p>En el menú <b>Herramientas > Comandos Rápidos de Usuario</b>, ejecute la macro <b>Safe Park</b> (comando <code>G90; G0 Z25.0; G0 X0 Y200.0</code>). La máquina elevará la herramienta a una altura segura y adelantará la mesa hacia el operador para facilitar el acceso.</p>
+                </div>
+              </div>
+              <div class="manual-step-item">
+                <div class="manual-step-num">3</div>
+                <div class="manual-step-body">
+                  <h4>Aspiración de Virutas y Desanclaje</h4>
+                  <p>Aspire las virutas o polvo con una aspiradora de taller o brocha suave. <b>Nunca sople con la boca</b> para evitar que las partículas de fibra de vidrio o acrílico penetren en los ojos o vías respiratorias. Afloje las bridas y retire la pieza terminada.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="manual-tip-box">
+              <i class="fa-solid fa-power-off" style="font-size: 16px;"></i>
+              <span>Al terminar la sesión de laboratorio, apague el interruptor de la fuente de alimentación de la máquina y desconecte el cable USB de la computadora.</span>
+            </div>
+          </div>
+
+          <!-- Etapa 8: Glosario Técnico -->
+          <div class="manual-panel" id="man-glosario">
+            <h3 class="manual-panel-title"><i class="fa-solid fa-graduation-cap"></i> Glosario Didáctico de Términos y Conceptos CNC</h3>
+            <p class="manual-lead">Conceptos fundamentales de manufactura por control numérico computarizado (ESCOM - IPN):</p>
+
+            <div class="manual-grid-2col">
+              <div class="manual-info-card">
+                <h5>WCS (Work Coordinate System)</h5>
+                <p>Sistema de coordenadas de trabajo de la pieza (G54). Es el origen (0,0,0) asignado libremente por el usuario sobre el material para que coincida con el plano CAD/CAM.</p>
+              </div>
+              <div class="manual-info-card">
+                <h5>MCS (Machine Coordinate System)</h5>
+                <p>Sistema de coordenadas absoluto e inmutable de la máquina. Está referenciado físicamente a los interruptores de límite (Homing) y no depende del diseño de la pieza.</p>
+              </div>
+              <div class="manual-info-card">
+                <h5>DRO (Digital Read Out)</h5>
+                <p>Visualizador digital de posición en pantalla que muestra en tiempo real las coordenadas numéricas instantáneas de los ejes X, Y y Z en milímetros o pulgadas.</p>
+              </div>
+              <div class="manual-info-card">
+                <h5>Feed Rate (Velocidad de Avance - F)</h5>
+                <p>Rapidez lineal con la que la herramienta avanza a través del material cortándolo. Se expresa en milímetros por minuto (mm/min).</p>
+              </div>
+              <div class="manual-info-card">
+                <h5>Spindle RPM (Velocidad de Husillo - S)</h5>
+                <p>Número de revoluciones por minuto del motor principal que hace rotar la fresa de corte para arrancar viruta del material.</p>
+              </div>
+              <div class="manual-info-card">
+                <h5>Jog Manual</h5>
+                <p>Modo de movimiento manual paso a paso que permite al operador posicionar los ejes libremente mediante botones o atajos de teclado sin ejecutar un programa.</p>
+              </div>
+              <div class="manual-info-card">
+                <h5>Pinza Portaherramientas ER11</h5>
+                <p>Mandril de precisión autocentrante con ranuras cónicas que sujeta el vástago cilíndrico de la fresa contra el eje del motor para evitar vibraciones o excentricidad.</p>
+              </div>
+              <div class="manual-info-card">
+                <h5>Cama de Sacrificio (Wasteboard)</h5>
+                <p>Superficie de madera MDF o placa reemplazable colocada sobre la mesa de aluminio para permitir que las brocas penetren ligeramente sin dañar la estructura de la máquina.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; align-items: center;">
+        <button class="btn-primary-action" id="btn-close-manual-footer">Entendido / Cerrar Guía</button>
       </div>
     </div>
   </div>
@@ -1002,6 +1724,22 @@
               <span><i class="fa-solid fa-check text-gold"></i> Cuerpo hexagonal amarillo tradicional</span>
               <span><i class="fa-solid fa-check text-gold"></i> Cuello de madera afilada y grafito #2</span>
               <span><i class="fa-solid fa-check text-gold"></i> Virola metálica y borrador en cabezal</span>
+            </div>
+          </div>
+
+          <!-- Tarjeta 3: Diodo Láser -->
+          <div class="tool-select-card" id="card-tool-laser" data-tool="laser">
+            <div class="tool-select-indicator"><i class="fa-solid fa-circle-check"></i></div>
+            <div class="tool-badge-pill tool-badge-laser">GRABADO &amp; CORTE LÁSER</div>
+            <div class="tool-preview-box tool-preview-laser">
+              <i class="fa-solid fa-bolt tool-preview-icon"></i>
+            </div>
+            <h3 class="tool-card-title">Diodo Láser (Grabado / Corte)</h3>
+            <p class="tool-card-desc">Módulo láser de diodo semiconductor de 450 nm (azul/violeta) con modulación PWM activa (M3/M4/M5). Grabado y corte por fotones sin contacto físico ni desgaste de fresas.</p>
+            <div class="tool-specs-list">
+              <span><i class="fa-solid fa-check text-purple"></i> Diodo colimado de foco ultra fino</span>
+              <span><i class="fa-solid fa-check text-purple"></i> Habilitación y potencia PWM por G-code</span>
+              <span><i class="fa-solid fa-check text-purple"></i> Sin rotura de fresa ni interbloqueo de motor</span>
             </div>
           </div>
         </div>

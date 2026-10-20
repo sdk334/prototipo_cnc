@@ -65,7 +65,11 @@ document.addEventListener('DOMContentLoaded', () => {
       { texto: "M5 ; Spindle OFF" }
     ],
     temporizadorEjecucion: null,
-    // Tipo de herramienta seleccionada ('fresa' | 'lapiz')
+    revolucionesPorMinuto: 12000,
+    potenciaLaserPct: parseInt(localStorage.getItem('cnc_laser_power_pct'), 10) || 100,
+    modificadorHusillo: 100,
+    husilloActivo: false,
+    // Tipo de herramienta seleccionada ('fresa' | 'lapiz' | 'laser')
     tipoHerramienta: localStorage.getItem('cnc_tipo_herramienta') || 'fresa'
   };
 
@@ -101,13 +105,20 @@ document.addEventListener('DOMContentLoaded', () => {
     botonesPaso: document.querySelectorAll('.step-btn'),
     deslizadorVelocidadJog: document.getElementById('slider-jog-speed'),
     etiquetaVelocidadJog: document.getElementById('lbl-jog-vel'),
-    // Control del husillo
+    // Control del husillo / láser
+    bloqueHusillo: document.getElementById('block-spindle'),
+    iconoHeaderHusillo: document.getElementById('spindle-header-icon'),
+    tituloBloqueHusillo: document.getElementById('lbl-spindle-title'),
     botonAlternarHusillo: document.getElementById('btn-spindle-toggle'),
     iconoVentiladorHusillo: document.getElementById('spindle-fan-icon'),
     textoBotonHusillo: document.getElementById('lbl-spindle-btn-text'),
+    badgeValorHusillo: document.getElementById('spindle-value-badge'),
+    etiquetaUnidadHusillo: document.getElementById('lbl-spindle-unit'),
     entradaRpmHusillo: document.getElementById('input-spindle-rpm'),
+    leyendaVelocidadHusillo: document.getElementById('lbl-spindle-legend'),
     etiquetaRpmEnVivo: document.getElementById('lbl-spindle-speed-live'),
     deslizadorModificadorHusillo: document.getElementById('slider-spindle-override'),
+    etiquetaTeleHusillo: document.getElementById('lbl-tele-spindle'),
     metricaEstadoHusillo: document.getElementById('metric-spindle-state'),
     // Barra de estado y paro de emergencia
     botonParoEmergencia: document.getElementById('btn-estop'),
@@ -162,8 +173,17 @@ document.addEventListener('DOMContentLoaded', () => {
     panelesConfiguracion: document.querySelectorAll('.cfg-panel'),
     modalDiccionario: document.getElementById('modal-dict-backdrop'),
     botonCerrarDiccionario: document.getElementById('btn-close-dict-modal'),
+    botonCerrarDiccionarioFooter: document.getElementById('btn-close-dict-footer'),
     campoBusquedaDiccionario: document.getElementById('dict-search'),
     cuerpoTablaDiccionario: document.getElementById('dict-table-body'),
+    botonesFiltroDiccionario: document.querySelectorAll('.dict-filter-btn'),
+    etiquetaConteoDiccionario: document.getElementById('lbl-dict-total-count'),
+    // Modal Guía Rápida de Operación CNC Didáctica
+    modalManual: document.getElementById('modal-manual-backdrop'),
+    botonCerrarManual: document.getElementById('btn-close-manual-modal'),
+    botonCerrarManualFooter: document.getElementById('btn-close-manual-footer'),
+    botonesNavManual: document.querySelectorAll('.manual-nav-btn'),
+    panelesManual: document.querySelectorAll('.manual-panel'),
     // Modal de Alerta de Seguridad
     modalSeguridad: document.getElementById('modal-seguridad-backdrop'),
     botonCerrarSeguridad: document.getElementById('btn-close-seguridad-modal'),
@@ -182,6 +202,7 @@ document.addEventListener('DOMContentLoaded', () => {
     botonAplicarModalHerramienta: document.getElementById('btn-apply-tool'),
     tarjetaToolFresa: document.getElementById('card-tool-fresa'),
     tarjetaToolLapiz: document.getElementById('card-tool-lapiz'),
+    tarjetaToolLaser: document.getElementById('card-tool-laser'),
     selectorConfigHerramienta: document.getElementById('cfg-select-tool-type'),
     botonMenuSeleccionarHerramienta: document.getElementById('btn-menu-select-tool'),
     etiquetaBadgeHerramienta: document.getElementById('lbl-badge-tool-title'),
@@ -326,18 +347,54 @@ document.addEventListener('DOMContentLoaded', () => {
               }
               if (elementos.textoBotonHusillo && elementos.textoBotonHusillo.textContent !== 'Spindle Inactivo (Lápiz)') {
                 elementos.textoBotonHusillo.textContent = 'Spindle Inactivo (Lápiz)';
-                elementos.botonAlternarHusillo.classList.remove('active');
+                elementos.botonAlternarHusillo.classList.remove('active', 'modo-laser');
                 elementos.botonAlternarHusillo.classList.add('modo-lapiz');
               }
               if (elementos.iconoVentiladorHusillo) {
                 elementos.iconoVentiladorHusillo.classList.remove('fa-spin');
+              }
+            } else if (estado.tipoHerramienta === 'laser') {
+              estado.husilloActivo = d.spindle_encendido;
+              if (elementos.botonAlternarHusillo) {
+                elementos.botonAlternarHusillo.classList.remove('modo-lapiz');
+                elementos.botonAlternarHusillo.classList.add('modo-laser');
+              }
+              if (estado.husilloActivo) {
+                const sReal = Math.round(d.spindle_real);
+                const pctReal = sReal > 100 ? Math.min(100, Math.round((sReal / 1000) * 100)) : (sReal > 0 ? sReal : estado.potenciaLaserPct);
+                estado.potenciaLaserPct = pctReal;
+                if (elementos.entradaRpmHusillo && document.activeElement !== elementos.entradaRpmHusillo) {
+                  elementos.entradaRpmHusillo.value = pctReal;
+                }
+                if (elementos.deslizadorModificadorHusillo && document.activeElement !== elementos.deslizadorModificadorHusillo) {
+                  elementos.deslizadorModificadorHusillo.value = pctReal;
+                }
+                if (elementos.botonAlternarHusillo) elementos.botonAlternarHusillo.classList.add('active');
+                if (elementos.textoBotonHusillo) elementos.textoBotonHusillo.textContent = 'Diodo Láser ON';
+                if (elementos.metricaEstadoHusillo) {
+                  elementos.metricaEstadoHusillo.textContent = `${pctReal}% LUZ`;
+                  elementos.metricaEstadoHusillo.classList.add('highlight-cyan');
+                }
+                if (elementos.etiquetaRpmEnVivo) {
+                  elementos.etiquetaRpmEnVivo.textContent = `${pctReal}% Luz (S${sReal})`;
+                }
+              } else {
+                if (elementos.botonAlternarHusillo) elementos.botonAlternarHusillo.classList.remove('active');
+                if (elementos.textoBotonHusillo) elementos.textoBotonHusillo.textContent = 'Diodo Láser OFF';
+                if (elementos.metricaEstadoHusillo) {
+                  elementos.metricaEstadoHusillo.textContent = 'OFF';
+                  elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
+                }
+                if (elementos.etiquetaRpmEnVivo) {
+                  elementos.etiquetaRpmEnVivo.textContent = '0% Luz (S0)';
+                }
               }
             } else {
               const txtRpm = `${Math.round(d.spindle_real)} RPM`;
               if (elementos.etiquetaRpmEnVivo.textContent !== txtRpm) {
                 elementos.etiquetaRpmEnVivo.textContent = txtRpm;
               }
-
+              elementos.botonAlternarHusillo.classList.remove('modo-lapiz', 'modo-laser');
               if (estado.husilloActivo !== d.spindle_encendido) {
                 estado.husilloActivo = d.spindle_encendido;
                 if (estado.husilloActivo) {
@@ -399,6 +456,10 @@ document.addEventListener('DOMContentLoaded', () => {
           elementos.metricaTiempoTranscurrido.textContent = t;
           elementos.telemetriaTiempoTranscurrido.textContent = t;
 
+          if (window.visualizadorCNC) {
+            window.visualizadorCNC.establecerProgresoEjecucion(act, tot);
+          }
+
           resaltarLineaGcodeActiva();
 
           if (act >= tot) {
@@ -453,8 +514,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const puerto = elementos.selectorPuertoCom.value;
     if (!puerto) return;
 
+    const baud = parseInt(localStorage.getItem('cnc_baudrate'), 10) || 115200;
     if (window.puenteCNC) {
-      window.puenteCNC.conectar(puerto, 115200);
+      window.puenteCNC.conectar(puerto, baud);
       elementos.puntoIndicadorPuerto.className = 'indicator-dot dot-connected';
     }
   }
@@ -501,17 +563,21 @@ document.addEventListener('DOMContentLoaded', () => {
     estado.coordenadasMaquina.y = myVal;
     estado.coordenadasMaquina.z = mzVal;
 
-    const xStr = xVal.toFixed(3);
-    const yStr = yVal.toFixed(3);
-    const zStr = zVal.toFixed(3);
+    const unidades = localStorage.getItem('cnc_units') || 'mm';
+    const factorUnidad = (unidades === 'inch') ? (1.0 / 25.4) : 1.0;
+    const numDec = parseInt(localStorage.getItem('cnc_dro_decimals'), 10) || 3;
+
+    const xStr = (xVal * factorUnidad).toFixed(numDec);
+    const yStr = (yVal * factorUnidad).toFixed(numDec);
+    const zStr = (zVal * factorUnidad).toFixed(numDec);
 
     if (elementos.droValorX && elementos.droValorX.textContent !== xStr) elementos.droValorX.textContent = xStr;
     if (elementos.droValorY && elementos.droValorY.textContent !== yStr) elementos.droValorY.textContent = yStr;
     if (elementos.droValorZ && elementos.droValorZ.textContent !== zStr) elementos.droValorZ.textContent = zStr;
 
-    const mxStr = mxVal.toFixed(3);
-    const myStr = myVal.toFixed(3);
-    const mzStr = mzVal.toFixed(3);
+    const mxStr = (mxVal * factorUnidad).toFixed(numDec);
+    const myStr = (myVal * factorUnidad).toFixed(numDec);
+    const mzStr = (mzVal * factorUnidad).toFixed(numDec);
 
     if (elementos.droMaquinaX && elementos.droMaquinaX.textContent !== mxStr) elementos.droMaquinaX.textContent = mxStr;
     if (elementos.droMaquinaY && elementos.droMaquinaY.textContent !== myStr) elementos.droMaquinaY.textContent = myStr;
@@ -550,16 +616,17 @@ document.addEventListener('DOMContentLoaded', () => {
     actualizarEstadoGiroVisualizador();
   }
 
-  // Sincronización de giro de herramienta entre estado CNC, UI y visualizador gráfico
+  // Sincronización de giro de herramienta / emisión láser entre estado CNC, UI y visualizador gráfico
   function actualizarEstadoGiroVisualizador() {
     const esLapiz = (estado.tipoHerramienta === 'lapiz');
+    const esLaser = (estado.tipoHerramienta === 'laser');
     const debeGirar = !esLapiz && (
                       (estado.enEjecucion && !estado.enPausa && estado.husilloActivo) ||
                       (estado.estadoOperativo === 'RUN' && estado.husilloActivo) ||
                       estado.husilloActivo);
 
     if (elementos.iconoVentiladorHusillo) {
-      if (debeGirar) {
+      if (debeGirar && !esLaser) {
         elementos.iconoVentiladorHusillo.classList.add('fa-spin');
       } else {
         elementos.iconoVentiladorHusillo.classList.remove('fa-spin');
@@ -706,8 +773,8 @@ document.addEventListener('DOMContentLoaded', () => {
                             estado.estadoOperativo === 'RUN' || 
                             (estado.estadoOperativo === 'HOLD' && estado.enEjecucion);
 
-    // INTERBLOQUEO DE SEGURIDAD CNC: Prohibido apagar el husillo mientras se mecaniza
-    if (estado.husilloActivo && estaMecanizando) {
+    // INTERBLOQUEO DE SEGURIDAD CNC: Prohibido apagar el husillo mientras se mecaniza con FRESA
+    if (estado.tipoHerramienta === 'fresa' && estado.husilloActivo && estaMecanizando) {
       mostrarAlertaSeguridadHusillo(
         'BLOQUEO DE SEGURIDAD DEL HUSILLO',
         'No es posible apagar el husillo mientras la máquina está mecanizando',
@@ -725,6 +792,34 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const nuevoEstado = !estado.husilloActivo;
+    const esLaser = (estado.tipoHerramienta === 'laser');
+
+    if (esLaser) {
+      const pwmS = Math.round(((estado.potenciaLaserPct || 100) / 100) * 1000);
+      estado.husilloActivo = nuevoEstado;
+      if (window.puenteCNC) {
+        window.puenteCNC.controlarSpindle(nuevoEstado, pwmS);
+      } else {
+        if (estado.husilloActivo) {
+          elementos.botonAlternarHusillo.classList.add('active');
+          elementos.textoBotonHusillo.textContent = 'Diodo Láser ON';
+          elementos.metricaEstadoHusillo.textContent = `${estado.potenciaLaserPct}% LUZ`;
+          elementos.metricaEstadoHusillo.classList.add('highlight-cyan');
+          elementos.etiquetaRpmEnVivo.textContent = `${estado.potenciaLaserPct}% Luz (S${pwmS})`;
+          imprimirEnConsola('c-grbl', `> M3 S${pwmS} [LÁSER ${estado.potenciaLaserPct}%]`);
+        } else {
+          elementos.botonAlternarHusillo.classList.remove('active');
+          elementos.textoBotonHusillo.textContent = 'Diodo Láser OFF';
+          elementos.metricaEstadoHusillo.textContent = 'OFF';
+          elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
+          elementos.etiquetaRpmEnVivo.textContent = '0% Luz (S0)';
+          imprimirEnConsola('c-grbl', '> M5 [LÁSER OFF]');
+        }
+      }
+      actualizarEstadoGiroVisualizador();
+      return;
+    }
+
     if (window.puenteCNC) {
       window.puenteCNC.controlarSpindle(nuevoEstado, estado.revolucionesPorMinuto);
     } else {
@@ -749,6 +844,31 @@ document.addEventListener('DOMContentLoaded', () => {
   elementos.botonAlternarHusillo.addEventListener('click', alternarHusillo);
 
   elementos.entradaRpmHusillo.addEventListener('change', (evento) => {
+    if (estado.tipoHerramienta === 'laser') {
+      let nuevoPct = parseInt(evento.target.value, 10);
+      if (isNaN(nuevoPct)) nuevoPct = 100;
+      nuevoPct = Math.max(0, Math.min(100, nuevoPct));
+      estado.potenciaLaserPct = nuevoPct;
+      localStorage.setItem('cnc_laser_power_pct', nuevoPct);
+      evento.target.value = nuevoPct;
+      if (elementos.deslizadorModificadorHusillo) {
+        elementos.deslizadorModificadorHusillo.value = nuevoPct;
+      }
+      const pwmS = Math.round((nuevoPct / 100) * 1000);
+      if (estado.husilloActivo) {
+        elementos.etiquetaRpmEnVivo.textContent = `${nuevoPct}% Luz (S${pwmS})`;
+        elementos.metricaEstadoHusillo.textContent = `${nuevoPct}% LUZ`;
+        if (window.puenteCNC) {
+          window.puenteCNC.controlarSpindle(true, pwmS);
+        } else {
+          imprimirEnConsola('c-grbl', `> M3 S${pwmS} [POTENCIA ${nuevoPct}%]`);
+        }
+      } else {
+        elementos.etiquetaRpmEnVivo.textContent = '0% Luz (S0)';
+      }
+      return;
+    }
+
     let nuevaRpm = parseInt(evento.target.value, 10) || 0;
     const estaMecanizando = estado.enEjecucion || 
                             estado.estadoOperativo === 'RUN' || 
@@ -774,6 +894,28 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   elementos.deslizadorModificadorHusillo.addEventListener('input', (evento) => {
+    if (estado.tipoHerramienta === 'laser') {
+      let nuevoPct = parseInt(evento.target.value, 10);
+      if (isNaN(nuevoPct)) nuevoPct = 100;
+      nuevoPct = Math.max(0, Math.min(100, nuevoPct));
+      estado.potenciaLaserPct = nuevoPct;
+      localStorage.setItem('cnc_laser_power_pct', nuevoPct);
+      if (elementos.entradaRpmHusillo) {
+        elementos.entradaRpmHusillo.value = nuevoPct;
+      }
+      const pwmS = Math.round((nuevoPct / 100) * 1000);
+      if (estado.husilloActivo) {
+        elementos.etiquetaRpmEnVivo.textContent = `${nuevoPct}% Luz (S${pwmS})`;
+        elementos.metricaEstadoHusillo.textContent = `${nuevoPct}% LUZ`;
+        if (window.puenteCNC) {
+          window.puenteCNC.controlarSpindle(true, pwmS);
+        }
+      } else {
+        elementos.etiquetaRpmEnVivo.textContent = `${nuevoPct}% Luz (S0)`;
+      }
+      return;
+    }
+
     let modVal = parseInt(evento.target.value, 10);
     const estaMecanizando = estado.enEjecucion || estado.estadoOperativo === 'RUN';
     if (estaMecanizando && modVal < 10) {
@@ -916,6 +1058,9 @@ document.addEventListener('DOMContentLoaded', () => {
   function seleccionarLineaGcode(indice) {
     if (indice < 0 || indice >= estado.lineasPrograma.length) return;
     estado.indiceLineaActiva = indice;
+    if (window.visualizadorCNC && (estado.enEjecucion || estado.enPausa)) {
+      window.visualizadorCNC.establecerIndiceLineaActiva(indice);
+    }
     resaltarLineaGcodeActiva();
     actualizarMetricasTelemetria();
 
@@ -981,15 +1126,54 @@ document.addEventListener('DOMContentLoaded', () => {
   // CONSOLA SERIAL Y TERMINAL MDI
   // ==========================================
   function imprimirEnConsola(claseCss, mensaje) {
+    if (!mensaje) return;
+
+    // Filtro didáctico opcional de consultas periódicas de estado (<Idle|MPos:...>, etc.)
+    const filtrarStatus = localStorage.getItem('cnc_console_filter_status') === 'true';
+    if (filtrarStatus && typeof mensaje === 'string' && mensaje.trim().startsWith('<') && mensaje.trim().endsWith('>')) {
+      return;
+    }
+
     const renglon = document.createElement('div');
-    renglon.className = `console-line ${claseCss}`;
-    renglon.textContent = mensaje;
+    let clases = `console-line ${claseCss}`;
+
+    // Resaltado de alarmas y errores en color rojo
+    const resaltarAlarmas = localStorage.getItem('cnc_console_highlight_alarms') !== 'false';
+    const esAlarma = (claseCss && (claseCss.includes('alarm') || claseCss.includes('error'))) ||
+                     (typeof mensaje === 'string' && (/ALARM|error:/i.test(mensaje)));
+    if (resaltarAlarmas && esAlarma) {
+      clases += ' console-line-alarm-highlight';
+    }
+    renglon.className = clases;
+
+    // Marcas de tiempo opcionales ([HH:MM:SS])
+    const mostrarTimestamps = localStorage.getItem('cnc_console_timestamps') !== 'false';
+    if (mostrarTimestamps) {
+      const ahora = new Date();
+      const horaStr = ahora.toTimeString().split(' ')[0];
+      const stamp = document.createElement('span');
+      stamp.className = 'console-timestamp';
+      stamp.style.color = 'var(--text-muted)';
+      stamp.style.marginRight = '6px';
+      stamp.style.fontSize = '0.75rem';
+      stamp.textContent = `[${horaStr}]`;
+      renglon.appendChild(stamp);
+      const spanTexto = document.createElement('span');
+      spanTexto.textContent = mensaje;
+      renglon.appendChild(spanTexto);
+    } else {
+      renglon.textContent = mensaje;
+    }
+
     if (elementos.salidaConsola) {
       elementos.salidaConsola.appendChild(renglon);
       while (elementos.salidaConsola.children.length > 200) {
         elementos.salidaConsola.removeChild(elementos.salidaConsola.firstChild);
       }
-      elementos.salidaConsola.scrollTop = elementos.salidaConsola.scrollHeight;
+      const autoScroll = localStorage.getItem('cnc_console_autoscroll') !== 'false';
+      if (autoScroll) {
+        elementos.salidaConsola.scrollTop = elementos.salidaConsola.scrollHeight;
+      }
     }
   }
   window.imprimirEnConsola = imprimirEnConsola;
@@ -1207,6 +1391,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
+    if (window.visualizadorCNC) {
+      window.visualizadorCNC.establecerIndiceLineaActiva(0);
+    }
+
     if (window.puenteCNC) {
       window.puenteCNC.iniciarPrograma(textoCompleto);
     } else {
@@ -1224,7 +1412,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (lineaActualObj && lineaActualObj.texto) {
           const tLimpio = lineaActualObj.texto.trim().toUpperCase();
           const esCorte = /\bG0?[123]\b/.test(tLimpio);
-          if (esCorte && !estado.husilloActivo && estado.tipoHerramienta !== 'lapiz') {
+          if (esCorte && !estado.husilloActivo && estado.tipoHerramienta === 'fresa') {
             pausarMecanizado();
             mostrarAlertaSeguridadHusillo(
               '¡CORTE CON HUSILLO APAGADO!',
@@ -1283,6 +1471,9 @@ document.addEventListener('DOMContentLoaded', () => {
     elementos.botonDetenerMecanizado.classList.add('hidden');
     elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-pause"></i> PAUSA';
     establecerEstadoOperativo('IDLE');
+    if (window.visualizadorCNC) {
+      window.visualizadorCNC.reiniciarProgresoEjecucion();
+    }
     actualizarEstadoGiroVisualizador();
   }
 
@@ -1355,13 +1546,144 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (evento.key === 'PageUp') { evento.preventDefault(); moverEjeManual('Z', 1); }
     else if (evento.key === 'PageDown') { evento.preventDefault(); moverEjeManual('Z', -1); }
     else if (evento.key === ' ') { evento.preventDefault(); if (estado.enEjecucion) pausarMecanizado(); }
-    else if (evento.key === 'Escape') { elementos.botonParoEmergencia.click(); }
+    else if (evento.key === 'Escape') {
+      const modalAbierto = [
+        elementos.modalDiccionario,
+        elementos.modalManual,
+        elementos.modalConfiguracion,
+        elementos.modalSeleccionHerramienta,
+        elementos.modalSeguridad
+      ].find(m => m && !m.classList.contains('hidden'));
+      if (modalAbierto) {
+        modalAbierto.classList.add('hidden');
+        if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+        return;
+      }
+      elementos.botonParoEmergencia.click();
+    }
   });
 
   // ==========================================
   // GESTIÓN DE MODALES Y MENÚS
   // ==========================================
+  // Aplicación dinámica de temas visuales
+  function aplicarTema(tema) {
+    document.body.classList.remove('theme-cyber', 'theme-classic');
+    if (tema === 'cyber') {
+      document.body.classList.add('theme-cyber');
+    } else if (tema === 'classic') {
+      document.body.classList.add('theme-classic');
+    }
+    localStorage.setItem('cnc_theme', tema);
+  }
+  window.aplicarTema = aplicarTema;
+
+  // Carga y sincronización de valores reales en el Modal de Configuración
+  function cargarValoresModalConfiguracion() {
+    // 1. Ajustes de Conexión
+    const selPort = document.getElementById('cfg-port');
+    if (selPort && elementos.selectorPuertoCom) {
+      selPort.innerHTML = '';
+      Array.from(elementos.selectorPuertoCom.options).forEach(opt => {
+        const o = document.createElement('option');
+        o.value = opt.value;
+        o.textContent = opt.textContent;
+        if (opt.value === elementos.selectorPuertoCom.value) o.selected = true;
+        selPort.appendChild(o);
+      });
+      if (selPort.options.length === 0) {
+        const o = document.createElement('option');
+        o.value = 'COM3';
+        o.textContent = 'COM3 (Arduino Nano / Uno CH340)';
+        o.selected = true;
+        selPort.appendChild(o);
+      }
+    }
+    const cfgBaud = document.getElementById('cfg-baud');
+    if (cfgBaud) cfgBaud.value = localStorage.getItem('cnc_baudrate') || '115200';
+
+    const cfgBuffer = document.getElementById('cfg-buffer-size');
+    if (cfgBuffer) cfgBuffer.value = localStorage.getItem('cnc_buffer_size') || '128';
+
+    const cfgDtr = document.getElementById('cfg-dtr-reset');
+    if (cfgDtr) cfgDtr.checked = localStorage.getItem('cnc_dtr_reset') !== 'false';
+
+    const cfgOk = document.getElementById('cfg-ok-check');
+    if (cfgOk) cfgOk.checked = localStorage.getItem('cnc_ok_check') !== 'false';
+
+    // 2. Información de la Máquina (GRBL)
+    const cfgStepX = document.getElementById('cfg-step-x');
+    if (cfgStepX) cfgStepX.value = localStorage.getItem('cnc_step_x') || '250.000';
+    const cfgStepY = document.getElementById('cfg-step-y');
+    if (cfgStepY) cfgStepY.value = localStorage.getItem('cnc_step_y') || '250.000';
+    const cfgStepZ = document.getElementById('cfg-step-z');
+    if (cfgStepZ) cfgStepZ.value = localStorage.getItem('cnc_step_z') || '400.000';
+
+    const cfgTravelX = document.getElementById('cfg-travel-x');
+    if (cfgTravelX) cfgTravelX.value = localStorage.getItem('cnc_travel_x') || '300.0';
+    const cfgTravelY = document.getElementById('cfg-travel-y');
+    if (cfgTravelY) cfgTravelY.value = localStorage.getItem('cnc_travel_y') || '200.0';
+    const cfgTravelZ = document.getElementById('cfg-travel-z');
+    if (cfgTravelZ) cfgTravelZ.value = localStorage.getItem('cnc_travel_z') || '60.0';
+
+    // 3. Ajustes Emisor (Streamer)
+    const cfgStreamer = document.getElementById('cfg-streamer-mode');
+    if (cfgStreamer) cfgStreamer.value = localStorage.getItem('cnc_streamer_mode') || 'counting';
+
+    const cfgInterval = document.getElementById('cfg-status-interval');
+    if (cfgInterval) cfgInterval.value = localStorage.getItem('cnc_status_interval') || '100';
+
+    const cfgSkip = document.getElementById('cfg-skip-comments');
+    if (cfgSkip) cfgSkip.checked = localStorage.getItem('cnc_skip_comments') !== 'false';
+
+    const cfgPauseM6 = document.getElementById('cfg-pause-m6');
+    if (cfgPauseM6) cfgPauseM6.checked = localStorage.getItem('cnc_pause_m6') !== 'false';
+
+    // 4. Interfaz de Usuario
+    const cfgTheme = document.getElementById('cfg-theme-select');
+    if (cfgTheme) cfgTheme.value = localStorage.getItem('cnc_theme') || 'dark';
+
+    const cfgUnits = document.getElementById('cfg-units-select');
+    if (cfgUnits) cfgUnits.value = localStorage.getItem('cnc_units') || 'mm';
+
+    const cfgDecimals = document.getElementById('cfg-dro-decimals');
+    if (cfgDecimals) cfgDecimals.value = localStorage.getItem('cnc_dro_decimals') || '3';
+
+    // 6. Ajustes Visualizador
+    const cfgCutColor = document.getElementById('cfg-color-cut');
+    if (cfgCutColor) cfgCutColor.value = localStorage.getItem('cnc_color_cut') || '#00e5ff';
+
+    const cfgRapidColor = document.getElementById('cfg-color-rapid');
+    if (cfgRapidColor) cfgRapidColor.value = localStorage.getItem('cnc_color_rapid') || '#708090';
+
+    const cfgReticle = document.getElementById('cfg-show-tool-reticle');
+    if (cfgReticle) cfgReticle.checked = localStorage.getItem('cnc_show_reticle') !== 'false';
+
+    const cfgBedLimits = document.getElementById('cfg-show-bed-limits');
+    if (cfgBedLimits) cfgBedLimits.checked = localStorage.getItem('cnc_show_bed_limits') !== 'false';
+
+    const cfgTool3D = document.getElementById('cfg-show-tool-3d');
+    if (cfgTool3D) cfgTool3D.checked = localStorage.getItem('cnc_show_tool_3d') !== 'false';
+
+    const cfgToolType = document.getElementById('cfg-select-tool-type');
+    if (cfgToolType) cfgToolType.value = estado.tipoHerramienta || 'fresa';
+
+    // 7. Ajustes Consola
+    const cfgAutoscroll = document.getElementById('cfg-console-autoscroll');
+    if (cfgAutoscroll) cfgAutoscroll.checked = localStorage.getItem('cnc_console_autoscroll') !== 'false';
+
+    const cfgTimestamps = document.getElementById('cfg-console-timestamps');
+    if (cfgTimestamps) cfgTimestamps.checked = localStorage.getItem('cnc_console_timestamps') !== 'false';
+
+    const cfgFilter = document.getElementById('cfg-console-filter-status');
+    if (cfgFilter) cfgFilter.checked = localStorage.getItem('cnc_console_filter_status') === 'true';
+
+    const cfgHighlight = document.getElementById('cfg-console-highlight-alarms');
+    if (cfgHighlight) cfgHighlight.checked = localStorage.getItem('cnc_console_highlight_alarms') !== 'false';
+  }
+
   elementos.botonAbrirConfiguracion.addEventListener('click', () => {
+    cargarValoresModalConfiguracion();
     elementos.modalConfiguracion.classList.remove('hidden');
   });
   elementos.botonCerrarConfiguracion.addEventListener('click', () => {
@@ -1372,8 +1694,34 @@ document.addEventListener('DOMContentLoaded', () => {
     elementos.modalConfiguracion.classList.add('hidden');
     if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
   });
+
   elementos.botonGuardarConfiguracion.addEventListener('click', () => {
-    // 1. Guardar dimensiones físicas útiles de la máquina ($130, $131, $132)
+    // 1. Conexión Serial
+    const selPort = document.getElementById('cfg-port');
+    const baudSelect = document.getElementById('cfg-baud');
+    const bufferInput = document.getElementById('cfg-buffer-size');
+    const dtrCheck = document.getElementById('cfg-dtr-reset');
+    const okCheck = document.getElementById('cfg-ok-check');
+
+    if (baudSelect) localStorage.setItem('cnc_baudrate', baudSelect.value);
+    if (bufferInput) localStorage.setItem('cnc_buffer_size', bufferInput.value);
+    if (dtrCheck) localStorage.setItem('cnc_dtr_reset', dtrCheck.checked);
+    if (okCheck) localStorage.setItem('cnc_ok_check', okCheck.checked);
+
+    if (selPort && selPort.value && selPort.value !== elementos.selectorPuertoCom.value) {
+      elementos.selectorPuertoCom.value = selPort.value;
+      conectarPuertoSeleccionado();
+    }
+
+    // 2. Parámetros de Máquina ($100, $101, $102) y ($130, $131, $132)
+    const stepX = parseFloat(document.getElementById('cfg-step-x')?.value) || 250.0;
+    const stepY = parseFloat(document.getElementById('cfg-step-y')?.value) || 250.0;
+    const stepZ = parseFloat(document.getElementById('cfg-step-z')?.value) || 400.0;
+
+    localStorage.setItem('cnc_step_x', stepX.toFixed(3));
+    localStorage.setItem('cnc_step_y', stepY.toFixed(3));
+    localStorage.setItem('cnc_step_z', stepZ.toFixed(3));
+
     const travelX = parseFloat(document.getElementById('cfg-travel-x')?.value) || 300.0;
     const travelY = parseFloat(document.getElementById('cfg-travel-y')?.value) || 200.0;
     const travelZ = parseFloat(document.getElementById('cfg-travel-z')?.value) || 60.0;
@@ -1386,23 +1734,112 @@ document.addEventListener('DOMContentLoaded', () => {
       window.visualizadorCNC.establecerLimitesMaquina(travelX, travelY, travelZ);
     }
 
-    // Si hay conexión con puente o GRBL, enviar parámetros $130, $131, $132
+    // Enviar a GRBL tanto pasos/mm como límites de recorrido
     if (window.puenteCNC) {
+      window.puenteCNC.enviarMDI(`$100=${stepX.toFixed(3)}`);
+      window.puenteCNC.enviarMDI(`$101=${stepY.toFixed(3)}`);
+      window.puenteCNC.enviarMDI(`$102=${stepZ.toFixed(3)}`);
       window.puenteCNC.enviarMDI(`$130=${travelX.toFixed(1)}`);
       window.puenteCNC.enviarMDI(`$131=${travelY.toFixed(1)}`);
       window.puenteCNC.enviarMDI(`$132=${travelZ.toFixed(1)}`);
     }
 
-    // Guardar tipo de herramienta si se seleccionó en configuración
+    // 3. Emisor (Streamer)
+    const streamMode = document.getElementById('cfg-streamer-mode')?.value || 'counting';
+    const statusInt = parseInt(document.getElementById('cfg-status-interval')?.value, 10) || 100;
+    const skipCom = document.getElementById('cfg-skip-comments')?.checked !== false;
+    const pauseM6 = document.getElementById('cfg-pause-m6')?.checked !== false;
+
+    localStorage.setItem('cnc_streamer_mode', streamMode);
+    localStorage.setItem('cnc_status_interval', statusInt);
+    localStorage.setItem('cnc_skip_comments', skipCom);
+    localStorage.setItem('cnc_pause_m6', pauseM6);
+
+    // 4. Interfaz de Usuario
+    const themeSel = document.getElementById('cfg-theme-select')?.value || 'dark';
+    aplicarTema(themeSel);
+
+    const unitsSel = document.getElementById('cfg-units-select')?.value || 'mm';
+    localStorage.setItem('cnc_units', unitsSel);
+
+    const droDec = parseInt(document.getElementById('cfg-dro-decimals')?.value, 10) || 3;
+    localStorage.setItem('cnc_dro_decimals', droDec);
+    actualizarLecturasDRO();
+
+    // 6. Visualizador
+    const cutColor = document.getElementById('cfg-color-cut')?.value || '#00e5ff';
+    const rapidColor = document.getElementById('cfg-color-rapid')?.value || '#708090';
+    const showReticle = document.getElementById('cfg-show-tool-reticle')?.checked !== false;
+    const showBed = document.getElementById('cfg-show-bed-limits')?.checked !== false;
+    const show3D = document.getElementById('cfg-show-tool-3d')?.checked !== false;
+
+    if (window.visualizadorCNC) {
+      window.visualizadorCNC.establecerColorCorte(cutColor);
+      window.visualizadorCNC.establecerColorRapido(rapidColor);
+      window.visualizadorCNC.establecerMostrarRetícula(showReticle);
+      window.visualizadorCNC.establecerMostrarLimitesMesa(showBed);
+      window.visualizadorCNC.establecerMostrarHerramienta3D(show3D);
+    }
+
     const selHerramienta = document.getElementById('cfg-select-tool-type');
     if (selHerramienta && selHerramienta.value) {
       actualizarUIPorTipoHerramienta(selHerramienta.value);
     }
 
+    // 7. Consola
+    const autoScroll = document.getElementById('cfg-console-autoscroll')?.checked !== false;
+    const timeStamps = document.getElementById('cfg-console-timestamps')?.checked !== false;
+    const filterStatus = document.getElementById('cfg-console-filter-status')?.checked === true;
+    const highlightAlarms = document.getElementById('cfg-console-highlight-alarms')?.checked !== false;
+
+    localStorage.setItem('cnc_console_autoscroll', autoScroll);
+    localStorage.setItem('cnc_console_timestamps', timeStamps);
+    localStorage.setItem('cnc_console_filter_status', filterStatus);
+    localStorage.setItem('cnc_console_highlight_alarms', highlightAlarms);
+
     elementos.modalConfiguracion.classList.add('hidden');
-    imprimirEnConsola('c-info', `[CONFIG] Parámetros guardados. Área útil CNC: ${travelX} × ${travelY} × ${travelZ} mm.`);
+    imprimirEnConsola('c-ok', `[CONFIG] Configuración guardada: Área ${travelX}×${travelY}×${travelZ}mm | Pasos X:${stepX} Y:${stepY} Z:${stepZ} | Tema: ${themeSel} | Unidades: ${unitsSel}.`);
     if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
   });
+
+  // Asistente Didáctico de Calibración de Pasos/mm
+  const btnCalcularPasos = document.getElementById('btn-calcular-pasos');
+  if (btnCalcularPasos) {
+    btnCalcularPasos.addEventListener('click', () => {
+      const eje = document.getElementById('calib-eje')?.value || 'X';
+      const comandada = parseFloat(document.getElementById('calib-dist-comandada')?.value);
+      const real = parseFloat(document.getElementById('calib-dist-real')?.value);
+      const lblResultado = document.getElementById('lbl-resultado-calibracion');
+
+      if (isNaN(comandada) || comandada <= 0 || isNaN(real) || real <= 0) {
+        if (lblResultado) {
+          lblResultado.style.color = '#dc2626';
+          lblResultado.textContent = 'Valores inválidos. Ingrese distancias mayores a 0.';
+        }
+        return;
+      }
+
+      const inputEje = document.getElementById(`cfg-step-${eje.toLowerCase()}`);
+      const actual = parseFloat(inputEje ? inputEje.value : '250.0') || 250.0;
+      const nuevo = (actual * comandada) / real;
+
+      if (inputEje) {
+        inputEje.value = nuevo.toFixed(3);
+      }
+      localStorage.setItem(`cnc_step_${eje.toLowerCase()}`, nuevo.toFixed(3));
+
+      const cmdNum = (eje === 'X') ? '100' : (eje === 'Y' ? '101' : '102');
+      if (window.puenteCNC) {
+        window.puenteCNC.enviarMDI(`$${cmdNum}=${nuevo.toFixed(3)}`);
+      }
+
+      if (lblResultado) {
+        lblResultado.style.color = 'var(--green-start)';
+        lblResultado.textContent = `✓ Eje ${eje}: $${cmdNum}=${nuevo.toFixed(3)} pasos/mm aplicado!`;
+      }
+      imprimirEnConsola('c-ok', `[CALIBRACIÓN] Nuevo valor para Eje ${eje}: $${cmdNum}=${nuevo.toFixed(3)} pasos/mm (Comandado: ${comandada}mm, Medido: ${real}mm).`);
+    });
+  }
 
   elementos.botonesPestañasConfiguracion.forEach(botonPestaña => {
     botonPestaña.addEventListener('click', () => {
@@ -1469,7 +1906,13 @@ document.addEventListener('DOMContentLoaded', () => {
   let tipoHerramientaSeleccionada = estado.tipoHerramienta;
 
   function actualizarUIPorTipoHerramienta(tipo) {
-    estado.tipoHerramienta = (tipo === 'lapiz') ? 'lapiz' : 'fresa';
+    if (tipo === 'lapiz') {
+      estado.tipoHerramienta = 'lapiz';
+    } else if (tipo === 'laser' || tipo === 'láser') {
+      estado.tipoHerramienta = 'laser';
+    } else {
+      estado.tipoHerramienta = 'fresa';
+    }
     tipoHerramientaSeleccionada = estado.tipoHerramienta;
     localStorage.setItem('cnc_tipo_herramienta', estado.tipoHerramienta);
 
@@ -1482,11 +1925,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const esLapiz = (estado.tipoHerramienta === 'lapiz');
+    const esLaser = (estado.tipoHerramienta === 'laser');
 
     if (esLapiz) {
       estado.husilloActivo = false;
+      if (elementos.bloqueHusillo) {
+        elementos.bloqueHusillo.classList.remove('modo-laser');
+        elementos.bloqueHusillo.classList.add('modo-lapiz');
+      }
+      if (elementos.iconoHeaderHusillo) {
+        elementos.iconoHeaderHusillo.className = 'fa-solid fa-fan header-icon';
+      }
+      if (elementos.tituloBloqueHusillo) {
+        elementos.tituloBloqueHusillo.textContent = 'SPINDLE (INACTIVO)';
+      }
+      if (elementos.iconoVentiladorHusillo) {
+        elementos.iconoVentiladorHusillo.className = 'fa-solid fa-fan spindle-icon';
+        elementos.iconoVentiladorHusillo.classList.remove('fa-spin');
+      }
+      if (elementos.etiquetaUnidadHusillo) {
+        elementos.etiquetaUnidadHusillo.textContent = 'RPM';
+      }
+      if (elementos.leyendaVelocidadHusillo) {
+        elementos.leyendaVelocidadHusillo.textContent = 'Velocidad';
+      }
+      if (elementos.etiquetaTeleHusillo) {
+        elementos.etiquetaTeleHusillo.textContent = 'SPINDLE';
+      }
       if (elementos.botonAlternarHusillo) {
-        elementos.botonAlternarHusillo.classList.remove('active');
+        elementos.botonAlternarHusillo.classList.remove('active', 'modo-laser');
         elementos.botonAlternarHusillo.classList.add('modo-lapiz');
       }
       if (elementos.textoBotonHusillo) {
@@ -1499,50 +1966,162 @@ document.addEventListener('DOMContentLoaded', () => {
       if (elementos.etiquetaRpmEnVivo) {
         elementos.etiquetaRpmEnVivo.textContent = '0 RPM';
       }
+    } else if (esLaser) {
+      if (elementos.bloqueHusillo) {
+        elementos.bloqueHusillo.classList.remove('modo-lapiz');
+        elementos.bloqueHusillo.classList.add('modo-laser');
+      }
+      if (elementos.iconoHeaderHusillo) {
+        elementos.iconoHeaderHusillo.className = 'fa-solid fa-bolt header-icon text-purple';
+      }
+      if (elementos.tituloBloqueHusillo) {
+        elementos.tituloBloqueHusillo.textContent = 'LÁSER';
+      }
       if (elementos.iconoVentiladorHusillo) {
+        elementos.iconoVentiladorHusillo.className = 'fa-solid fa-bolt spindle-icon';
         elementos.iconoVentiladorHusillo.classList.remove('fa-spin');
       }
-    } else {
+      if (elementos.etiquetaUnidadHusillo) {
+        elementos.etiquetaUnidadHusillo.textContent = '% LUZ';
+      }
+      if (elementos.entradaRpmHusillo) {
+        elementos.entradaRpmHusillo.min = '0';
+        elementos.entradaRpmHusillo.max = '100';
+        elementos.entradaRpmHusillo.step = '5';
+        elementos.entradaRpmHusillo.value = estado.potenciaLaserPct;
+      }
+      if (elementos.leyendaVelocidadHusillo) {
+        elementos.leyendaVelocidadHusillo.textContent = 'Potencia Láser';
+      }
+      if (elementos.deslizadorModificadorHusillo) {
+        elementos.deslizadorModificadorHusillo.min = '0';
+        elementos.deslizadorModificadorHusillo.max = '100';
+        elementos.deslizadorModificadorHusillo.step = '1';
+        elementos.deslizadorModificadorHusillo.value = estado.potenciaLaserPct;
+        elementos.deslizadorModificadorHusillo.title = 'Potencia de luz láser (0% a 100%)';
+      }
+      if (elementos.etiquetaTeleHusillo) {
+        elementos.etiquetaTeleHusillo.textContent = 'LÁSER';
+      }
       if (elementos.botonAlternarHusillo) {
         elementos.botonAlternarHusillo.classList.remove('modo-lapiz');
+        elementos.botonAlternarHusillo.classList.add('modo-laser');
+        if (estado.husilloActivo) {
+          elementos.botonAlternarHusillo.classList.add('active');
+          elementos.textoBotonHusillo.textContent = 'Diodo Láser ON';
+          elementos.metricaEstadoHusillo.textContent = `${estado.potenciaLaserPct}% LUZ`;
+          elementos.metricaEstadoHusillo.classList.add('highlight-cyan');
+          const pwmS = Math.round((estado.potenciaLaserPct / 100) * 1000);
+          elementos.etiquetaRpmEnVivo.textContent = `${estado.potenciaLaserPct}% Luz (S${pwmS})`;
+        } else {
+          elementos.botonAlternarHusillo.classList.remove('active');
+          elementos.textoBotonHusillo.textContent = 'Diodo Láser OFF';
+          elementos.metricaEstadoHusillo.textContent = 'OFF';
+          elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
+          elementos.etiquetaRpmEnVivo.textContent = '0% Luz (S0)';
+        }
+      }
+    } else {
+      if (elementos.bloqueHusillo) {
+        elementos.bloqueHusillo.classList.remove('modo-laser', 'modo-lapiz');
+      }
+      if (elementos.iconoHeaderHusillo) {
+        elementos.iconoHeaderHusillo.className = 'fa-solid fa-fan header-icon';
+      }
+      if (elementos.tituloBloqueHusillo) {
+        elementos.tituloBloqueHusillo.textContent = 'SPINDLE';
+      }
+      if (elementos.iconoVentiladorHusillo) {
+        elementos.iconoVentiladorHusillo.className = 'fa-solid fa-fan spindle-icon' + (estado.husilloActivo ? ' fa-spin' : '');
+      }
+      if (elementos.etiquetaUnidadHusillo) {
+        elementos.etiquetaUnidadHusillo.textContent = 'RPM';
+      }
+      if (elementos.entradaRpmHusillo) {
+        elementos.entradaRpmHusillo.min = '0';
+        elementos.entradaRpmHusillo.max = '24000';
+        elementos.entradaRpmHusillo.step = '500';
+        elementos.entradaRpmHusillo.value = estado.revolucionesPorMinuto || 12000;
+      }
+      if (elementos.leyendaVelocidadHusillo) {
+        elementos.leyendaVelocidadHusillo.textContent = 'Velocidad';
+      }
+      if (elementos.deslizadorModificadorHusillo) {
+        elementos.deslizadorModificadorHusillo.min = '0';
+        elementos.deslizadorModificadorHusillo.max = '150';
+        elementos.deslizadorModificadorHusillo.step = '1';
+        elementos.deslizadorModificadorHusillo.value = estado.modificadorHusillo || 100;
+        elementos.deslizadorModificadorHusillo.title = 'Override Spindle (0% a 150%)';
+      }
+      if (elementos.etiquetaTeleHusillo) {
+        elementos.etiquetaTeleHusillo.textContent = 'SPINDLE';
+      }
+      if (elementos.botonAlternarHusillo) {
+        elementos.botonAlternarHusillo.classList.remove('modo-lapiz', 'modo-laser');
         if (estado.husilloActivo) {
           elementos.botonAlternarHusillo.classList.add('active');
           elementos.textoBotonHusillo.textContent = 'Spindle ON';
           elementos.metricaEstadoHusillo.textContent = 'ON';
           elementos.metricaEstadoHusillo.classList.add('highlight-cyan');
+          const rpmAjustadas = Math.round((estado.revolucionesPorMinuto || 12000) * (estado.modificadorHusillo / 100));
+          elementos.etiquetaRpmEnVivo.textContent = `${rpmAjustadas} RPM`;
         } else {
           elementos.botonAlternarHusillo.classList.remove('active');
           elementos.textoBotonHusillo.textContent = 'Spindle OFF';
           elementos.metricaEstadoHusillo.textContent = 'OFF';
           elementos.metricaEstadoHusillo.classList.remove('highlight-cyan');
+          elementos.etiquetaRpmEnVivo.textContent = '0 RPM';
         }
       }
     }
     actualizarEstadoGiroVisualizador();
 
     if (elementos.etiquetaNombreHerramienta) {
-      elementos.etiquetaNombreHerramienta.textContent = esLapiz ? 'Lápiz' : 'Fresa CNC';
+      elementos.etiquetaNombreHerramienta.textContent = esLapiz ? 'Lápiz' : (esLaser ? 'Diodo Láser' : 'Fresa CNC');
     }
     if (elementos.etiquetaBadgeHerramienta) {
-      elementos.etiquetaBadgeHerramienta.textContent = esLapiz ? 'POSICIÓN HERRAMIENTA (LÁPIZ)' : 'POSICIÓN HERRAMIENTA (FRESA)';
+      elementos.etiquetaBadgeHerramienta.textContent = esLapiz ? 'POSICIÓN HERRAMIENTA (LÁPIZ)' : (esLaser ? 'POSICIÓN HERRAMIENTA (LÁSER)' : 'POSICIÓN HERRAMIENTA (FRESA)');
     }
     if (elementos.textoLegendHerramienta) {
-      elementos.textoLegendHerramienta.textContent = esLapiz ? 'Lápiz Didáctico' : 'Fresa CNC';
+      elementos.textoLegendHerramienta.textContent = esLapiz ? 'Lápiz Didáctico' : (esLaser ? 'Diodo Láser' : 'Fresa CNC');
     }
     if (elementos.iconoLegendHerramienta) {
-      elementos.iconoLegendHerramienta.className = esLapiz ? 'fa-solid fa-pencil legend-symbol icon-tool' : 'fa-solid fa-bore-hole legend-symbol icon-tool';
+      if (esLapiz) {
+        elementos.iconoLegendHerramienta.className = 'fa-solid fa-pencil legend-symbol icon-tool';
+      } else if (esLaser) {
+        elementos.iconoLegendHerramienta.className = 'fa-solid fa-bolt legend-symbol icon-tool text-purple';
+      } else {
+        elementos.iconoLegendHerramienta.className = 'fa-solid fa-bore-hole legend-symbol icon-tool';
+      }
     }
+
+    const elemDone = document.getElementById('legend-line-done');
+    const lblDone = document.getElementById('lbl-legend-done');
+    if (elemDone) {
+      if (esLaser) {
+        elemDone.style.backgroundColor = '#c084fc';
+        elemDone.style.boxShadow = '0 0 6px rgba(192, 132, 252, 0.6)';
+        if (lblDone) lblDone.textContent = 'Ya grabado (Láser)';
+      } else if (esLapiz) {
+        elemDone.style.backgroundColor = '#f59e0b';
+        elemDone.style.boxShadow = '0 0 6px rgba(245, 158, 11, 0.6)';
+        if (lblDone) lblDone.textContent = 'Ya dibujado (Lápiz)';
+      } else {
+        elemDone.style.backgroundColor = '#22c55e';
+        elemDone.style.boxShadow = '0 0 6px rgba(34, 197, 94, 0.6)';
+        if (lblDone) lblDone.textContent = 'Ya cortado (Fresa)';
+      }
+    }
+
     if (elementos.selectorConfigHerramienta) {
       elementos.selectorConfigHerramienta.value = estado.tipoHerramienta;
     }
 
     if (elementos.tarjetaToolFresa && elementos.tarjetaToolLapiz) {
-      if (esLapiz) {
-        elementos.tarjetaToolLapiz.classList.add('active');
-        elementos.tarjetaToolFresa.classList.remove('active');
-      } else {
-        elementos.tarjetaToolFresa.classList.add('active');
-        elementos.tarjetaToolLapiz.classList.remove('active');
+      elementos.tarjetaToolFresa.classList.toggle('active', estado.tipoHerramienta === 'fresa');
+      elementos.tarjetaToolLapiz.classList.toggle('active', estado.tipoHerramienta === 'lapiz');
+      if (elementos.tarjetaToolLaser) {
+        elementos.tarjetaToolLaser.classList.toggle('active', estado.tipoHerramienta === 'laser');
       }
     }
   }
@@ -1551,12 +2130,10 @@ document.addEventListener('DOMContentLoaded', () => {
   function abrirModalSeleccionHerramienta() {
     tipoHerramientaSeleccionada = estado.tipoHerramienta;
     if (elementos.tarjetaToolFresa && elementos.tarjetaToolLapiz) {
-      if (tipoHerramientaSeleccionada === 'lapiz') {
-        elementos.tarjetaToolLapiz.classList.add('active');
-        elementos.tarjetaToolFresa.classList.remove('active');
-      } else {
-        elementos.tarjetaToolFresa.classList.add('active');
-        elementos.tarjetaToolLapiz.classList.remove('active');
+      elementos.tarjetaToolFresa.classList.toggle('active', tipoHerramientaSeleccionada === 'fresa');
+      elementos.tarjetaToolLapiz.classList.toggle('active', tipoHerramientaSeleccionada === 'lapiz');
+      if (elementos.tarjetaToolLaser) {
+        elementos.tarjetaToolLaser.classList.toggle('active', tipoHerramientaSeleccionada === 'laser');
       }
     }
     if (elementos.modalSeleccionHerramienta) {
@@ -1590,6 +2167,7 @@ document.addEventListener('DOMContentLoaded', () => {
       tipoHerramientaSeleccionada = 'fresa';
       elementos.tarjetaToolFresa.classList.add('active');
       elementos.tarjetaToolLapiz.classList.remove('active');
+      if (elementos.tarjetaToolLaser) elementos.tarjetaToolLaser.classList.remove('active');
     });
   }
 
@@ -1598,6 +2176,16 @@ document.addEventListener('DOMContentLoaded', () => {
       tipoHerramientaSeleccionada = 'lapiz';
       elementos.tarjetaToolLapiz.classList.add('active');
       elementos.tarjetaToolFresa.classList.remove('active');
+      if (elementos.tarjetaToolLaser) elementos.tarjetaToolLaser.classList.remove('active');
+    });
+  }
+
+  if (elementos.tarjetaToolLaser) {
+    elementos.tarjetaToolLaser.addEventListener('click', () => {
+      tipoHerramientaSeleccionada = 'laser';
+      elementos.tarjetaToolLaser.classList.add('active');
+      elementos.tarjetaToolFresa.classList.remove('active');
+      elementos.tarjetaToolLapiz.classList.remove('active');
     });
   }
 
@@ -1607,7 +2195,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (elementos.modalSeleccionHerramienta) {
         elementos.modalSeleccionHerramienta.classList.add('hidden');
       }
-      imprimirEnConsola('c-info', `[HERRAMIENTA] Herramienta activa cambiada a: ${estado.tipoHerramienta === 'lapiz' ? 'Lápiz de Grafito (Plotter Didáctico)' : 'Fresa de Corte CNC (Herramienta Actual)'}.`);
+      let nombreLargo = 'Fresa de Corte CNC (Herramienta Actual)';
+      if (estado.tipoHerramienta === 'lapiz') nombreLargo = 'Lápiz de Grafito (Plotter Didáctico)';
+      else if (estado.tipoHerramienta === 'laser') nombreLargo = 'Diodo Láser (Grabado / Corte Óptico)';
+      imprimirEnConsola('c-info', `[HERRAMIENTA] Herramienta activa cambiada a: ${nombreLargo}.`);
       if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
     });
   }
@@ -1638,13 +2229,106 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  elementos.campoBusquedaDiccionario.addEventListener('input', (evento) => {
-    const consulta = evento.target.value.toLowerCase();
+  // ==========================================
+  // LÓGICA INTERACTIVA DEL DICCIONARIO G-CODE
+  // ==========================================
+  let categoriaFiltroDiccionario = 'all';
+
+  function aplicarFiltroDiccionario() {
+    if (!elementos.cuerpoTablaDiccionario) return;
+    const consulta = (elementos.campoBusquedaDiccionario ? elementos.campoBusquedaDiccionario.value : '').toLowerCase().trim();
     const filas = elementos.cuerpoTablaDiccionario.querySelectorAll('tr');
+    let visibles = 0;
+
     filas.forEach(fila => {
-      fila.style.display = fila.textContent.toLowerCase().includes(consulta) ? '' : 'none';
+      const catFila = fila.getAttribute('data-category') || '';
+      const coincideCategoria = (categoriaFiltroDiccionario === 'all') || (catFila === categoriaFiltroDiccionario);
+      const coincideTexto = !consulta || fila.textContent.toLowerCase().includes(consulta);
+
+      if (coincideCategoria && coincideTexto) {
+        fila.style.display = '';
+        visibles++;
+      } else {
+        fila.style.display = 'none';
+      }
     });
-  });
+
+    if (elementos.etiquetaConteoDiccionario) {
+      elementos.etiquetaConteoDiccionario.textContent = visibles;
+    }
+  }
+
+  if (elementos.campoBusquedaDiccionario) {
+    elementos.campoBusquedaDiccionario.addEventListener('input', aplicarFiltroDiccionario);
+  }
+
+  if (elementos.botonesFiltroDiccionario) {
+    elementos.botonesFiltroDiccionario.forEach(btn => {
+      btn.addEventListener('click', () => {
+        elementos.botonesFiltroDiccionario.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        categoriaFiltroDiccionario = btn.getAttribute('data-category') || 'all';
+        aplicarFiltroDiccionario();
+      });
+    });
+  }
+
+  if (elementos.botonCerrarDiccionario) {
+    elementos.botonCerrarDiccionario.addEventListener('click', () => {
+      if (elementos.modalDiccionario) elementos.modalDiccionario.classList.add('hidden');
+    });
+  }
+
+  if (elementos.botonCerrarDiccionarioFooter) {
+    elementos.botonCerrarDiccionarioFooter.addEventListener('click', () => {
+      if (elementos.modalDiccionario) elementos.modalDiccionario.classList.add('hidden');
+    });
+  }
+
+  if (elementos.botonMenuDiccionario) {
+    elementos.botonMenuDiccionario.addEventListener('click', () => {
+      if (elementos.modalDiccionario) {
+        elementos.modalDiccionario.classList.remove('hidden');
+        if (elementos.campoBusquedaDiccionario) {
+          elementos.campoBusquedaDiccionario.focus();
+        }
+        imprimirEnConsola('c-info', '[AYUDA] Abriendo Diccionario Didáctico de Comandos G-Code y GRBL.');
+      }
+    });
+  }
+
+  // ==========================================
+  // LÓGICA INTERACTIVA DE LA GUÍA RÁPIDA CNC
+  // ==========================================
+  if (elementos.botonesNavManual && elementos.panelesManual) {
+    elementos.botonesNavManual.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.getAttribute('data-manual');
+        elementos.botonesNavManual.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        elementos.panelesManual.forEach(panel => {
+          if (panel.id === targetId) {
+            panel.classList.add('active');
+          } else {
+            panel.classList.remove('active');
+          }
+        });
+      });
+    });
+  }
+
+  if (elementos.botonCerrarManual) {
+    elementos.botonCerrarManual.addEventListener('click', () => {
+      if (elementos.modalManual) elementos.modalManual.classList.add('hidden');
+    });
+  }
+
+  if (elementos.botonCerrarManualFooter) {
+    elementos.botonCerrarManualFooter.addEventListener('click', () => {
+      if (elementos.modalManual) elementos.modalManual.classList.add('hidden');
+    });
+  }
 
   elementos.botonCargarDemo.addEventListener('click', () => {
     estado.indiceLineaActiva = 0;
@@ -1680,11 +2364,11 @@ document.addEventListener('DOMContentLoaded', () => {
         estado.segundosEstimadosBase = estimarSegundosBaseDesdeLineas(lineas);
         actualizarMetricasTelemetria();
         actualizarTiempoEstimado();
+        const textoCompleto = lineas.map(l => l.texto).join('\n');
         if (window.visualizadorCNC) {
-          window.visualizadorCNC.cargarTrayectoriaDesdeGCode(contenidoTexto);
+          window.visualizadorCNC.cargarTrayectoriaDesdeGCode(textoCompleto);
           window.visualizadorCNC.ajustarVistaAPieza();
         }
-        const textoCompleto = lineas.map(l => l.texto).join('\n');
         if (window.puenteCNC) window.puenteCNC.analizarGcode(textoCompleto);
         imprimirEnConsola('c-info', `[ARCHIVO] Archivo ${archivo.name} cargado con ${lineas.length} líneas.`);
       }
@@ -1855,30 +2539,42 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnMenuHeightmap = document.getElementById('btn-menu-heightmap');
   if (btnMenuHeightmap) {
     btnMenuHeightmap.addEventListener('click', () => {
+      cargarValoresModalConfiguracion();
       elementos.modalConfiguracion.classList.remove('hidden');
-      const pestana = document.querySelector('.cfg-tab-btn[data-tab="tab-control"]');
+      const pestana = document.querySelector('.cfg-tab-btn[data-target="cfg-tab-heightmap"]');
       if (pestana) pestana.click();
-      imprimirEnConsola('c-info', '[HERRAMIENTAS] Asistente de nivelación y mapa de alturas.');
+      imprimirEnConsola('c-info', '[HERRAMIENTAS] Módulo de Mapa de Alturas.');
     });
   }
 
   const btnMenuCalibration = document.getElementById('btn-menu-calibration');
   if (btnMenuCalibration) {
     btnMenuCalibration.addEventListener('click', () => {
+      cargarValoresModalConfiguracion();
       elementos.modalConfiguracion.classList.remove('hidden');
-      const pestana = document.querySelector('.cfg-tab-btn[data-tab="tab-motores"]');
+      const pestana = document.querySelector('.cfg-tab-btn[data-target="cfg-tab-maquina"]');
       if (pestana) pestana.click();
-      imprimirEnConsola('c-info', '[HERRAMIENTAS] Calibración de pasos por milímetro.');
+      const box = document.getElementById('box-calibracion-pasos');
+      if (box) box.scrollIntoView({ behavior: 'smooth' });
+      imprimirEnConsola('c-info', '[HERRAMIENTAS] Asistente de calibración de pasos por milímetro ($100, $101, $102).');
     });
   }
 
   const btnMenuMacros = document.getElementById('btn-menu-macros');
   if (btnMenuMacros) {
     btnMenuMacros.addEventListener('click', () => {
+      cargarValoresModalConfiguracion();
       elementos.modalConfiguracion.classList.remove('hidden');
-      const pestana = document.querySelector('.cfg-tab-btn[data-tab="tab-macros"]');
+      const pestana = document.querySelector('.cfg-tab-btn[data-target="cfg-tab-macros"]');
       if (pestana) pestana.click();
-      imprimirEnConsola('c-info', '[HERRAMIENTAS] Comandos rápidos y macros.');
+      imprimirEnConsola('c-info', '[HERRAMIENTAS] Comandos rápidos y macros de usuario.');
+    });
+  }
+
+  const btnMenuSelectTool = document.getElementById('btn-menu-select-tool');
+  if (btnMenuSelectTool) {
+    btnMenuSelectTool.addEventListener('click', () => {
+      abrirModalSeleccionHerramienta();
     });
   }
 
@@ -1886,8 +2582,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnMenuManual = document.getElementById('btn-menu-manual');
   if (btnMenuManual) {
     btnMenuManual.addEventListener('click', () => {
-      elementos.modalDiccionario.classList.remove('hidden');
-      imprimirEnConsola('c-info', '[AYUDA] Abriendo guía y diccionario de comandos G-Code.');
+      if (elementos.modalManual) {
+        elementos.modalManual.classList.remove('hidden');
+        imprimirEnConsola('c-info', '[AYUDA] Abriendo Guía Rápida de Operación CNC Didáctica.');
+      }
     });
   }
 
@@ -1902,16 +2600,25 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  [elementos.modalConfiguracion, elementos.modalDiccionario].forEach(modal => {
-    modal.addEventListener('click', (evento) => {
-      if (evento.target === modal) {
-        modal.classList.add('hidden');
-        if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
-      }
-    });
+  [
+    elementos.modalConfiguracion,
+    elementos.modalDiccionario,
+    elementos.modalManual,
+    elementos.modalSeleccionHerramienta,
+    elementos.modalSeguridad
+  ].forEach(modal => {
+    if (modal) {
+      modal.addEventListener('click', (evento) => {
+        if (evento.target === modal) {
+          modal.classList.add('hidden');
+          if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+        }
+      });
+    }
   });
 
   // Render inicial de la aplicación y sincronización de trayectoria
+  aplicarTema(localStorage.getItem('cnc_theme') || 'dark');
   renderizarListaCodigoG();
   actualizarLecturasDRO();
   estado.segundosEstimadosBase = estimarSegundosBaseDesdeLineas(estado.lineasPrograma);

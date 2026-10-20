@@ -114,7 +114,7 @@ def principal():
     app.setOrganizationName("ESCOM - IPN")
 
     ventana = VentanaPrincipalCNC()
-    ventana.show()
+    ventana.showMaximized()
 
     sys.exit(app.exec())
 
