@@ -21,67 +21,70 @@
       <div class="menu-item" id="menu-archivo">
         <button class="menu-btn" type="button">Archivo</button>
         <div class="dropdown-menu">
-          <button class="dropdown-item" id="btn-menu-open-file"><i class="fa-solid fa-folder-open"></i> Abrir Archivo G-Code... <span class="shortcut">Ctrl+O</span></button>
-          <button class="dropdown-item" id="btn-menu-load-sample"><i class="fa-solid fa-file-code"></i> Cargar pieza_01.nc (Demo)</button>
+          <button class="dropdown-item" id="btn-menu-open-file" title="RF-02 / C.U-02-01: Carga y parsea un archivo de código G (.nc, .gcode) desde disco"><i class="fa-solid fa-folder-open"></i> Abrir Archivo G-Code... <span class="shortcut">Ctrl+O</span></button>
+          <button class="dropdown-item" id="btn-menu-load-sample" title="Carga el programa de prueba didáctico de cajera mecanizada (pieza_01.nc)"><i class="fa-solid fa-file-code"></i> Cargar pieza_01.nc (Demo)</button>
           <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="btn-menu-save-gcode"><i class="fa-solid fa-floppy-disk"></i> Guardar G-Code <span class="shortcut">Ctrl+S</span></button>
+          <button class="dropdown-item" id="btn-menu-save-gcode" title="Guarda o exporta el programa de código G actual con sus modificaciones"><i class="fa-solid fa-floppy-disk"></i> Guardar G-Code <span class="shortcut">Ctrl+S</span></button>
           <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="btn-menu-export-log"><i class="fa-solid fa-file-export"></i> Exportar Bitácora de Sesión</button>
+          <button class="dropdown-item" id="btn-menu-historial" title="RF-10 / C.U-06-03: Muestra el historial completo de trabajos, tiempos de ejecución y estado de las piezas"><i class="fa-solid fa-clock-rotate-left"></i> Historial de Trabajos Realizados</button>
+          <button class="dropdown-item" id="btn-menu-export-log" title="RF-10 / C.U-06-04: Exporta el registro de eventos y telemetría de la sesión a archivo"><i class="fa-solid fa-file-export"></i> Exportar Bitácora de Sesión</button>
         </div>
       </div>
 
       <div class="menu-item" id="menu-editar">
         <button class="menu-btn" type="button">Editar</button>
         <div class="dropdown-menu">
-          <button class="dropdown-item" id="btn-menu-clear-gcode"><i class="fa-solid fa-eraser"></i> Limpiar Programa</button>
-          <button class="dropdown-item" id="btn-menu-clear-console"><i class="fa-solid fa-trash-can"></i> Limpiar Consola Serial</button>
+          <button class="dropdown-item" id="btn-menu-clear-gcode" title="Limpia el código G activo y libera la memoria del visualizador"><i class="fa-solid fa-eraser"></i> Limpiar Programa</button>
+          <button class="dropdown-item" id="btn-menu-clear-console" title="RF-08: Limpia el historial textual de la consola serial interactiva"><i class="fa-solid fa-trash-can"></i> Limpiar Consola Serial</button>
         </div>
       </div>
 
       <div class="menu-item" id="menu-maquina">
         <button class="menu-btn" type="button">Máquina</button>
         <div class="dropdown-menu">
-          <button class="dropdown-item" id="btn-menu-homing"><i class="fa-solid fa-house"></i> Ciclo de Homing ($H)</button>
-          <button class="dropdown-item" id="btn-menu-unlock"><i class="fa-solid fa-lock-open"></i> Desbloquear Alarma ($X)</button>
-          <button class="dropdown-item" id="btn-menu-reset-grbl"><i class="fa-solid fa-rotate-right"></i> Reset Software (Ctrl+X)</button>
+          <button class="dropdown-item" id="btn-menu-homing" title="RF-06 / C.U-05-01: Ejecuta la secuencia de búsqueda de finales de carrera físicos ($H)"><i class="fa-solid fa-house"></i> Ciclo de Homing ($H)</button>
+          <button class="dropdown-item" id="btn-menu-unlock" title="Desbloquea el interbloqueo de alarma de seguridad de GRBL ($X)"><i class="fa-solid fa-lock-open"></i> Desbloquear Alarma ($X)</button>
+          <button class="dropdown-item" id="btn-menu-reset-grbl" title="Envía byte de reinicio por software a GRBL (0x18 / Ctrl+X)"><i class="fa-solid fa-rotate-right"></i> Reset Software (Ctrl+X)</button>
           <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="btn-menu-goto-origin"><i class="fa-solid fa-location-crosshairs"></i> Ir a Cero Pieza (G0 X0 Y0 Z0)</button>
+          <button class="dropdown-item" id="btn-menu-goto-origin" title="RF-05 / C.U-05-02: Mueve rápidamente la máquina al origen de trabajo activo (G0 X0 Y0 Z0)"><i class="fa-solid fa-location-crosshairs"></i> Ir a Cero Pieza (G0 X0 Y0 Z0)</button>
         </div>
       </div>
 
       <div class="menu-item" id="menu-herramientas">
         <button class="menu-btn" type="button">Herramientas</button>
         <div class="dropdown-menu">
-          <button class="dropdown-item" id="btn-menu-select-tool"><i class="fa-solid fa-pen-ruler"></i> Tipo de Herramienta (Fresa / Lápiz)...</button>
+          <button class="dropdown-item" id="btn-menu-select-tool" title="Conmuta entre fresa CNC de corte, lápiz de trazado y diodo láser con modelos 3D dedicados"><i class="fa-solid fa-pen-ruler"></i> Tipo de Herramienta (Fresa / Lápiz)...</button>
           <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="btn-menu-heightmap"><i class="fa-solid fa-layer-group"></i> Mapa de Alturas (Auto-Level)</button>
-          <button class="dropdown-item" id="btn-menu-calibration"><i class="fa-solid fa-ruler-combined"></i> Asistente de Calibración Pasos/mm</button>
-          <button class="dropdown-item" id="btn-menu-macros"><i class="fa-solid fa-bolt"></i> Comandos Rápidos de Usuario</button>
+          <button class="dropdown-item" id="btn-menu-heightmap" title="Ajustes de sondeo y compensación de altura de superficie"><i class="fa-solid fa-layer-group"></i> Mapa de Alturas (Auto-Level)</button>
+          <button class="dropdown-item" id="btn-menu-calibration" title="RF-14 / C.U-05-05: Asistente didáctico de cálculo y ajuste de pasos/mm ($100, $101, $102)"><i class="fa-solid fa-ruler-combined"></i> Asistente de Calibración Pasos/mm</button>
+          <button class="dropdown-item" id="btn-menu-macros" title="Atajos para macros G-Code preconfigurados por el operador"><i class="fa-solid fa-bolt"></i> Comandos Rápidos de Usuario</button>
         </div>
       </div>
 
       <div class="menu-item" id="menu-vista">
         <button class="menu-btn" type="button">Vista</button>
         <div class="dropdown-menu">
-          <button class="dropdown-item" id="btn-menu-view-xy"><i class="fa-solid fa-vector-square"></i> Vista XY (Planta)</button>
-          <button class="dropdown-item" id="btn-menu-view-xz"><i class="fa-solid fa-bars-staggered"></i> Vista XZ (Frontal)</button>
-          <button class="dropdown-item" id="btn-menu-view-3d"><i class="fa-solid fa-cube"></i> Vista 3D Isométrica</button>
+          <button class="dropdown-item" id="btn-menu-view-xy" title="RF-04 / C.U-03-01: Proyección ortogonal superior del plano de trabajo XY"><i class="fa-solid fa-vector-square"></i> Vista XY (Planta)</button>
+          <button class="dropdown-item" id="btn-menu-view-xz" title="RF-04: Proyección ortogonal frontal del plano de trabajo XZ"><i class="fa-solid fa-bars-staggered"></i> Vista XZ (Frontal)</button>
+          <button class="dropdown-item" id="btn-menu-view-3d" title="RF-04 / C.U-03-02: Vista 3D isométrica orbital interactiva con rotación y zoom"><i class="fa-solid fa-cube"></i> Vista 3D Isométrica</button>
           <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="btn-menu-toggle-grid"><i class="fa-solid fa-border-all"></i> Alternar Cuadrícula</button>
-          <button class="dropdown-item" id="btn-menu-fullscreen"><i class="fa-solid fa-expand"></i> Pantalla Completa <span class="shortcut">F11</span></button>
+          <button class="dropdown-item" id="btn-menu-toggle-grid" title="Muestra u oculta la cuadrícula milimétrica de referencia de la mesa"><i class="fa-solid fa-border-all"></i> Alternar Cuadrícula</button>
+          <button class="dropdown-item" id="btn-menu-fullscreen" title="Alterna el modo inmersivo de pantalla completa (F11)"><i class="fa-solid fa-expand"></i> Pantalla Completa <span class="shortcut">F11</span></button>
         </div>
       </div>
 
       <div class="menu-item" id="menu-ayuda">
         <button class="menu-btn" type="button">Ayuda</button>
         <div class="dropdown-menu">
-          <button class="dropdown-item" id="btn-menu-gcode-dict"><i class="fa-solid fa-book-bookmark"></i> Diccionario G-Code Interactivo</button>
-          <button class="dropdown-item" id="btn-menu-manual"><i class="fa-solid fa-book-open"></i> Guía Rápida de Operación CNC</button>
+          <button class="dropdown-item" id="btn-menu-tutorial" title="RNF-06 / C.U-06-05: Guía interactiva guiada de 5 pasos para alumnos de nuevo ingreso (MSJ_29)"><i class="fa-solid fa-graduation-cap"></i> Tutorial de Bienvenida (Primer Uso)...</button>
+          <button class="dropdown-item" id="btn-menu-gcode-dict" title="RF-12 / C.U-02-04: Diccionario didáctico con la definición y sintaxis de cada comando G y M"><i class="fa-solid fa-book-bookmark"></i> Diccionario G-Code Interactivo</button>
+          <button class="dropdown-item" id="btn-menu-manual" title="Manual didáctico y guía de operación segura de máquinas CNC"><i class="fa-solid fa-book-open"></i> Guía Rápida de Operación CNC</button>
           <div class="dropdown-divider"></div>
-          <button class="dropdown-item" id="btn-menu-about"><i class="fa-solid fa-circle-info"></i> Acerca de CNC Basic v1.0 (TT ESCOM)</button>
+          <button class="dropdown-item" id="btn-menu-about" title="Créditos del Trabajo Terminal 2026-B072 (ESCOM - IPN)"><i class="fa-solid fa-circle-info"></i> Acerca de CNC Basic v1.0 (TT ESCOM)</button>
         </div>
       </div>
     </nav>
+    <button class="btn-lang-toggle" id="btn-lang-toggle" title="Cambiar Idioma / Switch Language (ES/EN)"><i class="fa-solid fa-language"></i> <span id="lbl-current-lang">ES</span></button>
   </header>
 
   <!-- ================= TOP HEADER STATUS BAR ================= -->
@@ -266,7 +269,7 @@
 
           <div class="viz-tabs">
             <button class="viz-tab active" id="tab-trayectoria"><i class="fa-solid fa-route"></i> Trayectoria</button>
-            <button class="viz-tab" id="tab-herramienta" title="Cambiar tipo de herramienta activa"><i class="fa-solid fa-screwdriver-wrench"></i> Herramienta: <b id="lbl-nombre-herramienta">Fresa CNC</b> <i class="fa-solid fa-caret-down"></i></button>
+            <button class="viz-tab" id="tab-herramienta" title="Cambiar tipo de herramienta activa"><i class="fa-solid fa-screwdriver-wrench"></i> <span id="lbl-tab-tool-prefix">Herramienta:</span> <b id="lbl-nombre-herramienta">Fresa CNC</b> <i class="fa-solid fa-caret-down"></i></button>
           </div>
 
           <div class="loaded-file-indicator">
@@ -515,13 +518,13 @@
 
           <!-- Botones de Acción de Mecanizado -->
           <div class="execution-actions">
-            <button class="btn-start-execution" id="btn-execution-action">
+            <button class="btn-start-execution" id="btn-execution-action" title="RF-02 / C.U-04-03: Inicia la transmisión secuencial y ejecución del programa G-Code cargado.">
               <i class="fa-solid fa-play"></i> START
             </button>
-            <button class="btn-pause-execution hidden" id="btn-execution-pause">
+            <button class="btn-pause-execution hidden" id="btn-execution-pause" title="C.U-04-04: Pausa temporalmente el avance de la herramienta y mantiene la posición física.">
               <i class="fa-solid fa-pause"></i> PAUSA
             </button>
-            <button class="btn-stop-execution hidden" id="btn-execution-stop">
+            <button class="btn-stop-execution hidden" id="btn-execution-stop" title="C.U-04-06: Detiene inmediatamente la ejecución y limpia la cola de comandos pendientes.">
               <i class="fa-solid fa-stop"></i> DETENER
             </button>
           </div>
@@ -726,6 +729,13 @@
                   <option value="3" selected>3 decimales (0.001 mm)</option>
                   <option value="2">2 decimales (0.01 mm)</option>
                   <option value="4">4 decimales (0.0001 mm)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label><i class="fa-solid fa-language"></i> Idioma de la Interfaz / Interface Language (RNF-08):</label>
+                <select class="form-control" id="cfg-language-select">
+                  <option value="es" selected>Español (Spanish)</option>
+                  <option value="en">English (Inglés)</option>
                 </select>
               </div>
             </div>
@@ -1695,52 +1705,34 @@
       <div class="modal-body">
         <p class="tool-modal-instruction">Seleccione la herramienta montada en el cabezal de la máquina CNC:</p>
         <div class="tool-cards-grid">
-          <!-- Tarjeta 1: Fresa de corte CNC (Herramienta actual) -->
+          <!-- Tarjeta 1: Fresa de corte CNC -->
           <div class="tool-select-card active" id="card-tool-fresa" data-tool="fresa">
             <div class="tool-select-indicator"><i class="fa-solid fa-circle-check"></i></div>
-            <div class="tool-badge-pill">CORTE &amp; FRESADO</div>
+            <div class="tool-badge-pill" id="badge-tool-fresa">CORTE &amp; FRESADO</div>
             <div class="tool-preview-box">
               <i class="fa-solid fa-bore-hole tool-preview-icon"></i>
             </div>
-            <h3 class="tool-card-title">Herramienta Actual (Fresa CNC)</h3>
-            <p class="tool-card-desc">Fresa de carburo de tungsteno / V-bit de punta cónica montada en mandril portaherramientas ER11. Diseñada para grabado y corte de PCB, madera y acrílico a altas RPM.</p>
-            <div class="tool-specs-list">
-              <span><i class="fa-solid fa-check text-cyan"></i> Gavilanes helicoidales rotatorios</span>
-              <span><i class="fa-solid fa-check text-cyan"></i> Punta cónica ultra fina para PCB</span>
-              <span><i class="fa-solid fa-check text-cyan"></i> Requiere husillo (Spindle) encendido</span>
-            </div>
+            <h3 class="tool-card-title" id="title-card-tool-fresa">Fresa CNC</h3>
           </div>
 
           <!-- Tarjeta 2: Lápiz -->
           <div class="tool-select-card" id="card-tool-lapiz" data-tool="lapiz">
             <div class="tool-select-indicator"><i class="fa-solid fa-circle-check"></i></div>
-            <div class="tool-badge-pill tool-badge-pencil">DIBUJO DIDÁCTICO</div>
+            <div class="tool-badge-pill tool-badge-pencil" id="badge-tool-lapiz">DIBUJO DIDÁCTICO</div>
             <div class="tool-preview-box tool-preview-pencil">
               <i class="fa-solid fa-pencil tool-preview-icon"></i>
             </div>
-            <h3 class="tool-card-title">Lápiz (Plotter Didáctico)</h3>
-            <p class="tool-card-desc">Lápiz de grafito escolar montado mediante adaptador elástico en el cabezal Z. Ideal para prácticas de laboratorio seguras sobre papel sin desgaste de fresas ni roturas mecánicas.</p>
-            <div class="tool-specs-list">
-              <span><i class="fa-solid fa-check text-gold"></i> Cuerpo hexagonal amarillo tradicional</span>
-              <span><i class="fa-solid fa-check text-gold"></i> Cuello de madera afilada y grafito #2</span>
-              <span><i class="fa-solid fa-check text-gold"></i> Virola metálica y borrador en cabezal</span>
-            </div>
+            <h3 class="tool-card-title" id="title-card-tool-lapiz">Lápiz Didáctico</h3>
           </div>
 
           <!-- Tarjeta 3: Diodo Láser -->
           <div class="tool-select-card" id="card-tool-laser" data-tool="laser">
             <div class="tool-select-indicator"><i class="fa-solid fa-circle-check"></i></div>
-            <div class="tool-badge-pill tool-badge-laser">GRABADO &amp; CORTE LÁSER</div>
+            <div class="tool-badge-pill tool-badge-laser" id="badge-tool-laser">GRABADO &amp; CORTE LÁSER</div>
             <div class="tool-preview-box tool-preview-laser">
               <i class="fa-solid fa-bolt tool-preview-icon"></i>
             </div>
-            <h3 class="tool-card-title">Diodo Láser (Grabado / Corte)</h3>
-            <p class="tool-card-desc">Módulo láser de diodo semiconductor de 450 nm (azul/violeta) con modulación PWM activa (M3/M4/M5). Grabado y corte por fotones sin contacto físico ni desgaste de fresas.</p>
-            <div class="tool-specs-list">
-              <span><i class="fa-solid fa-check text-purple"></i> Diodo colimado de foco ultra fino</span>
-              <span><i class="fa-solid fa-check text-purple"></i> Habilitación y potencia PWM por G-code</span>
-              <span><i class="fa-solid fa-check text-purple"></i> Sin rotura de fresa ni interbloqueo de motor</span>
-            </div>
+            <h3 class="tool-card-title" id="title-card-tool-laser">Diodo Láser</h3>
           </div>
         </div>
       </div>
@@ -1750,6 +1742,208 @@
       </div>
     </div>
   </div>
+
+  <!-- ================= MODAL HISTORIAL DE TRABAJO (RF-10 / C.U-06-03 / C.U-06-04) ================= -->
+  <div class="modal-backdrop hidden" id="modal-historial-backdrop">
+    <div class="modal-dialog modal-large">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <i class="fa-solid fa-clock-rotate-left modal-icon"></i>
+          <h2 class="modal-title">Historial de Trabajo y Registro de Eventos</h2>
+          <span class="modal-subtitle">Registro cronológico de ejecuciones de programas G-Code, duración y estado final</span>
+        </div>
+        <button class="btn-modal-close" id="btn-close-historial-modal"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="modal-body">
+        <!-- KPI Cards Summary -->
+        <div class="kpi-historial-grid">
+          <div class="kpi-card">
+            <span class="kpi-label"><i class="fa-solid fa-play"></i> Total Trabajos</span>
+            <span class="kpi-value" id="kpi-historial-total">0</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label"><i class="fa-solid fa-stopwatch"></i> Tiempo Acumulado</span>
+            <span class="kpi-value" id="kpi-historial-tiempo">00:00:00</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label"><i class="fa-solid fa-circle-check"></i> Tasa de Éxito</span>
+            <span class="kpi-value" id="kpi-historial-exito" style="color: #10b981;">100%</span>
+          </div>
+        </div>
+
+        <!-- Toolbar: Search and Export/Clear -->
+        <div class="historial-toolbar">
+          <input type="text" class="historial-search-input" id="input-search-historial" placeholder="Buscar por nombre de archivo o estado...">
+          <div class="historial-actions-group">
+            <button class="btn-secondary-action" id="btn-export-historial-json" style="padding: 6px 12px; font-size: 11px;"><i class="fa-solid fa-file-code"></i> JSON</button>
+            <button class="btn-secondary-action" id="btn-export-historial-csv" style="padding: 6px 12px; font-size: 11px;"><i class="fa-solid fa-file-csv"></i> CSV</button>
+            <button class="btn-secondary-action" id="btn-clear-historial" style="padding: 6px 12px; font-size: 11px; color: #ef4444;"><i class="fa-solid fa-trash-can"></i> Limpiar</button>
+          </div>
+        </div>
+
+        <!-- Table of Executions -->
+        <div class="table-historial-container">
+          <table class="table-historial">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Fecha y Hora</th>
+                <th>Archivo</th>
+                <th>Herramienta</th>
+                <th>Duración</th>
+                <th>Líneas</th>
+                <th>Resultado</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-historial">
+              <tr>
+                <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">No hay trabajos registrados en el historial de esta estación.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-primary-action" id="btn-close-historial-bottom">Cerrar Historial</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL TUTORIAL INTERACTIVO (RNF-06 / C.U-06-05) ================= -->
+  <div class="modal-backdrop hidden" id="modal-tutorial-backdrop">
+    <div class="modal-dialog modal-large">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <i class="fa-solid fa-graduation-cap modal-icon"></i>
+          <h2 class="modal-title">Tutorial de Bienvenida: Estación de Control CNC</h2>
+          <span class="modal-subtitle">Guía interactiva didáctica paso a paso para la operación segura de máquinas CNC (GRBL v1.1)</span>
+        </div>
+        <button class="btn-modal-close" id="btn-close-tutorial-modal"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="modal-body">
+        <!-- 5-Step Stepper Header -->
+        <div class="tutorial-stepper">
+          <div class="tutorial-step-dot active" data-step="1">1</div>
+          <div class="tutorial-step-line"></div>
+          <div class="tutorial-step-dot" data-step="2">2</div>
+          <div class="tutorial-step-line"></div>
+          <div class="tutorial-step-dot" data-step="3">3</div>
+          <div class="tutorial-step-line"></div>
+          <div class="tutorial-step-dot" data-step="4">4</div>
+          <div class="tutorial-step-line"></div>
+          <div class="tutorial-step-dot" data-step="5">5</div>
+        </div>
+
+        <div class="tutorial-card-body">
+          <!-- Step 1: Conexión Serial -->
+          <div class="tutorial-pane active" id="tutorial-pane-1">
+            <h3><i class="fa-solid fa-network-wired"></i> Paso 1: Conexión Serial con el Controlador GRBL</h3>
+            <p>La estación de control se comunica con el microcontrolador (Arduino Nano / Uno con firmware GRBL v1.1) mediante enlace serial USB a <b>115200 baudios</b> (RF-01).</p>
+            <div class="tutorial-tips-grid">
+              <div class="tutorial-tip-card">
+                <h4><i class="fa-solid fa-plug text-cyan"></i> Detección Automática (Hot-Plug)</h4>
+                <p>El sistema escanea periódicamente los puertos COM disponibles. Al conectar el cable USB del CNC, el enlace se activa automáticamente.</p>
+              </div>
+              <div class="tutorial-tip-card">
+                <h4><i class="fa-solid fa-laptop-code text-cyan"></i> Modo Virtual Didáctico</h4>
+                <p>Si no cuentas con una máquina física conectada, selecciona el <b>Simulador Virtual</b> para practicar todas las funciones del laboratorio con seguridad.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 2: Jogging & Cero Pieza -->
+          <div class="tutorial-pane" id="tutorial-pane-2">
+            <h3><i class="fa-solid fa-arrows-up-down-left-right"></i> Paso 2: Control Manual (Jogging) y Fijación de Origen</h3>
+            <p>Desplaza la herramienta en los ejes X, Y y Z usando el panel táctil o el teclado de la computadora (RF-03, RF-05).</p>
+            <div class="tutorial-tips-grid">
+              <div class="tutorial-tip-card">
+                <h4><i class="fa-solid fa-keyboard text-cyan"></i> Atajos de Teclado</h4>
+                <p>Usa <b>← / →</b> para el Eje X, <b>↑ / ↓</b> para el Eje Y, y <b>RePág / AvPág</b> para subir/bajar el Eje Z. Elige pasos de 0.1, 1, 10 o 100 mm.</p>
+              </div>
+              <div class="tutorial-tip-card">
+                <h4><i class="fa-solid fa-location-crosshairs text-cyan"></i> Cero Pieza (WCS G10 L20 P1)</h4>
+                <p>Coloca la herramienta en la esquina inferior izquierda de tu material y presiona <b>Cero XYZ</b> para establecer las coordenadas de trabajo de la pieza.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 3: Carga de G-Code & Visualizador -->
+          <div class="tutorial-pane" id="tutorial-pane-3">
+            <h3><i class="fa-solid fa-cube"></i> Paso 3: Carga de Archivos G-Code y Visualizador 3D</h3>
+            <p>Importa archivos con extensión <code>.nc</code> o <code>.gcode</code>. El sistema validará la sintaxis y renderizará la trayectoria en el lienzo gráfico (RF-02, RF-04).</p>
+            <div class="tutorial-tips-grid">
+              <div class="tutorial-tip-card">
+                <h4><i class="fa-solid fa-eye text-cyan"></i> Navegación Multivista</h4>
+                <p>Alterna entre vista 3D isométrica, XY (planta) y XZ (frontal). Mantén clic izquierdo y arrastra para rotar, o rueda del ratón para hacer zoom.</p>
+              </div>
+              <div class="tutorial-tip-card">
+                <h4><i class="fa-solid fa-ruler-combined text-cyan"></i> Comprobación de Límites</h4>
+                <p>El sistema calcula las dimensiones X, Y, Z del programa y te alertará si el corte excede el área física de trabajo de tu máquina.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 4: Selección de Herramientas & Husillo -->
+          <div class="tutorial-pane" id="tutorial-pane-4">
+            <h3><i class="fa-solid fa-pen-ruler"></i> Paso 4: Selección de Herramienta y Seguridad</h3>
+            <p>Selecciona la herramienta adecuada según la práctica de laboratorio que vayas a realizar (RF-09, RNF-05).</p>
+            <div class="tutorial-tips-grid">
+              <div class="tutorial-tip-card">
+                <h4><i class="fa-solid fa-pencil text-cyan"></i> Modo Lápiz Didáctico</h4>
+                <p>Recomendado para prácticas iniciales en papel o cartulina. El motor del husillo se bloquea automáticamente al 100% para evitar accidentes mecánicos.</p>
+              </div>
+              <div class="tutorial-tip-card">
+                <h4><i class="fa-solid fa-shield-halved text-cyan"></i> Interbloqueo de Fresa</h4>
+                <p>En modo fresa CNC, el sistema bloquea cortes si el husillo está apagado para evitar la rotura de la fresa y proteger el material.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 5: Modo Simulación Virtual & Ejecución Segura -->
+          <div class="tutorial-pane" id="tutorial-pane-5">
+            <h3><i class="fa-solid fa-laptop-code"></i> Paso 5: Modo Simulación Virtual y Parada de Emergencia</h3>
+            <p>Valida siempre tu programa antes de realizar el corte real con el husillo (RF-07, RF-11).</p>
+            <div class="tutorial-tips-grid">
+              <div class="tutorial-tip-card">
+                <h4><i class="fa-solid fa-play text-cyan"></i> Modo Simulación en Puertos COM</h4>
+                <p>Selecciona el <b>Simulador Virtual</b> en el selector de puertos COM para ensayar la trayectoria y coordenadas sin energizar motores físicos.</p>
+              </div>
+              <div class="tutorial-tip-card">
+                <h4><i class="fa-solid fa-triangle-exclamation text-red"></i> Parada E-STOP (Tecla ESC)</h4>
+                <p>En caso de cualquier anomalía o riesgo, presiona el botón rojo <b>E-STOP</b> o la tecla <b>Escape (ESC)</b> para detener de inmediato todo movimiento.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer tutorial-footer">
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-muted); cursor: pointer;">
+          <input type="checkbox" id="chk-no-mostrar-tutorial"> No mostrar automáticamente al iniciar
+        </label>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-secondary-action" id="btn-prev-tutorial" disabled><i class="fa-solid fa-arrow-left"></i> Anterior</button>
+          <button class="btn-primary-action" id="btn-next-tutorial">Siguiente <i class="fa-solid fa-arrow-right"></i></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= BANNER TOAST DE PRIMER USO (MSJ_29) ================= -->
+  <aside class="toast-welcome-banner hidden" id="toast-welcome-banner" role="alert">
+    <div class="toast-welcome-header">
+      <i class="fa-solid fa-graduation-cap"></i>
+      <h4 class="toast-welcome-title">¿Primera vez en CNC Basic?</h4>
+    </div>
+    <p class="toast-welcome-body">Parece ser tu primera vez en la estación CNC educativa. ¿Deseas iniciar una guía rápida interactiva para aprender a conectar y operar la máquina? (MSJ_29)</p>
+    <div class="toast-welcome-actions">
+      <button class="btn-toast-dismiss" id="btn-dismiss-toast">Más tarde</button>
+      <button class="btn-toast-start" id="btn-start-tutorial-toast">Iniciar Tutorial</button>
+    </div>
+  </aside>
 
   <!-- Hidden File Input for loading G-Code files -->
   <input type="file" id="file-input-gcode" accept=".nc,.gcode,.tap,.ngc" class="hidden">

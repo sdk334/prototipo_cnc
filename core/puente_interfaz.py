@@ -11,6 +11,7 @@ Responsabilidad:
 """
 
 import json
+import os
 from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QTimer
 try:
     from .controlador_grbl import ControladorGRBL
@@ -268,3 +269,42 @@ class PuenteCNC(QObject):
         """Analiza sintácticamente y estima tiempos de un programa G-code."""
         resultado = self.procesador.analizar_programa(contenido_gcode)
         self.senial_analisis_gcode.emit(json.dumps(resultado))
+
+
+    @pyqtSlot(str, result=str)
+    def guardarHistorialDisco(self, datos_json: str) -> str:
+        """RF-10 / C.U-06-03: Persiste el historial de trabajos en un archivo JSON en disco dentro de la carpeta 'historial'."""
+        try:
+            carpeta = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "historial")
+            os.makedirs(carpeta, exist_ok=True)
+            ruta = os.path.join(carpeta, "historial_trabajos.json")
+            with open(ruta, "w", encoding="utf-8") as f:
+                f.write(datos_json)
+            return "OK"
+        except Exception as e:
+            return f"ERROR: {str(e)}"
+
+    @pyqtSlot(result=str)
+    def cargarHistorialDisco(self) -> str:
+        """RF-10 / C.U-06-03: Carga el historial de trabajos persistido desde disco."""
+        try:
+            raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            carpeta = os.path.join(raiz, "historial")
+            ruta = os.path.join(carpeta, "historial_trabajos.json")
+            ruta_antigua = os.path.join(raiz, "historial_trabajos.json")
+
+            if os.path.exists(ruta):
+                with open(ruta, "r", encoding="utf-8") as f:
+                    return f.read()
+            elif os.path.exists(ruta_antigua):
+                with open(ruta_antigua, "r", encoding="utf-8") as f:
+                    datos = f.read()
+                # Migrar automáticamente a la nueva carpeta
+                os.makedirs(carpeta, exist_ok=True)
+                with open(ruta, "w", encoding="utf-8") as f:
+                    f.write(datos)
+                return datos
+            return "[]"
+        except Exception as e:
+            return "[]"
+

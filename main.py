@@ -109,6 +109,9 @@ def principal():
     # Habilitar soporte de alta resolución en pantallas de Windows
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 
+    # Estabilizar el motor Chromium GPU en Windows (previene errores de command_buffer_proxy_impl y WaitForGetOffsetInRange)
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--use-gl=angle --use-angle=d3d11 --disable-gpu-watchdog"
+
     app = QApplication(sys.argv)
     app.setApplicationName("CNC Basic v1.0")
     app.setOrganizationName("ESCOM - IPN")

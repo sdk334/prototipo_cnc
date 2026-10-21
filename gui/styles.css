@@ -2653,10 +2653,11 @@ body.resizing-col * {
 
 .tool-card-title {
   font-family: var(--font-display);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   color: #ffffff;
-  margin: 0;
+  margin: 4px 0 0 0;
+  text-align: center;
 }
 
 .tool-card-desc {
@@ -2865,4 +2866,364 @@ body.resizing-col * {
   color: #e2e8f0;
   line-height: 1.4;
 }
+
+/* ==========================================================================
+/* ==========================================================================
+   16. HISTORIAL, TUTORIAL Y MULTI-IDIOMA (TT FORMAL)
+   ========================================================================== */
+
+/* Language Switcher Button in Header (RNF-08) */
+.btn-lang-toggle {
+  background: rgba(0, 229, 255, 0.1);
+  border: 1px solid rgba(0, 229, 255, 0.35);
+  color: var(--cyan-primary);
+  padding: 4px 9px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-left: auto;
+}
+
+.btn-lang-toggle:hover {
+  background: var(--cyan-primary);
+  color: #0c1c13;
+  box-shadow: 0 0 10px var(--cyan-glow);
+}
+
+/* Toast Banner Bienvenida Primer Uso (MSJ_29) */
+.toast-welcome-banner {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 10000;
+  max-width: 420px;
+  background: linear-gradient(135deg, #0e1e2c, #07121a);
+  border: 1px solid var(--cyan-primary);
+  border-radius: 8px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 20px var(--cyan-glow);
+  padding: 16px;
+  animation: slide-up-toast 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@keyframes slide-up-toast {
+  from { transform: translateY(40px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.toast-welcome-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.toast-welcome-header i {
+  font-size: 20px;
+  color: var(--cyan-primary);
+}
+
+.toast-welcome-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+}
+
+.toast-welcome-body {
+  font-size: 12px;
+  color: #cbd5e1;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.toast-welcome-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btn-toast-start {
+  background: var(--cyan-primary);
+  color: #05141d;
+  font-weight: 700;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-toast-start:hover {
+  background: #33eeff;
+  box-shadow: 0 0 12px var(--cyan-glow);
+}
+
+.btn-toast-dismiss {
+  background: transparent;
+  color: #94a3b8;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.btn-toast-dismiss:hover {
+  color: #fff;
+  border-color: #64748b;
+}
+
+/* Modal Historial de Trabajo (RF-10 / C.U-06-03 / C.U-06-04) */
+.kpi-historial-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.kpi-card {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kpi-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.kpi-value {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--cyan-primary);
+}
+
+.historial-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.historial-search-input {
+  flex: 1;
+  max-width: 320px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid var(--border-color);
+  color: #fff;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.historial-actions-group {
+  display: flex;
+  gap: 8px;
+}
+
+.table-historial-container {
+  max-height: 380px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+}
+
+.table-historial {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+
+.table-historial th {
+  background: rgba(30, 41, 59, 0.9);
+  padding: 10px 12px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: #94a3b8;
+  border-bottom: 1px solid var(--border-color);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.table-historial td {
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  color: #e2e8f0;
+}
+
+.table-historial tbody tr:hover {
+  background: rgba(0, 229, 255, 0.04);
+}
+
+.badge-status {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.badge-status-completed {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.badge-status-simulacion {
+  background: rgba(255, 183, 3, 0.15);
+  color: #ffb703;
+  border: 1px solid rgba(255, 183, 3, 0.35);
+}
+
+.badge-status-stopped {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.badge-status-error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+/* Modal Tutorial / Flujo de Bienvenida (RNF-06 / C.U-06-05) */
+.tutorial-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.tutorial-step-dot {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.8);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 12px;
+  font-family: var(--font-display);
+  transition: all 0.2s ease;
+}
+
+.tutorial-step-dot.active {
+  border-color: var(--cyan-primary);
+  background: rgba(0, 229, 255, 0.2);
+  color: #fff;
+  box-shadow: 0 0 12px var(--cyan-glow);
+}
+
+.tutorial-step-dot.completed {
+  border-color: #10b981;
+  background: #10b981;
+  color: #0c1c13;
+}
+
+.tutorial-step-line {
+  flex: 1;
+  max-width: 40px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.tutorial-card-body {
+  min-height: 280px;
+}
+
+.tutorial-pane {
+  display: none;
+  animation: fadeInPane 0.25s ease;
+}
+
+.tutorial-pane.active {
+  display: block;
+}
+
+@keyframes fadeInPane {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.tutorial-pane h3 {
+  font-family: var(--font-display);
+  font-size: 17px;
+  color: var(--cyan-primary);
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.tutorial-pane p {
+  color: #cbd5e1;
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+
+.tutorial-tips-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.tutorial-tip-card {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.tutorial-tip-card h4 {
+  margin: 0 0 6px 0;
+  font-size: 12.5px;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tutorial-tip-card p {
+  margin: 0;
+  font-size: 11.5px;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.tutorial-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 
