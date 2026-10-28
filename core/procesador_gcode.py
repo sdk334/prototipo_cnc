@@ -13,6 +13,7 @@ Responsabilidad:
 
 import math
 import re
+from .interprete_gcode import Interprete, palabras, TOKEN
 
 # Diccionario didáctico de errores semánticos conforme a la especificación de ESCOM
 DICCIONARIO_ERRORES_GRBL = {
@@ -177,6 +178,13 @@ class ProcesadorGCode:
             return bloque
 
         # Extraer tokens mediante regex
+        try:
+            palabras(limpia)
+        except ValueError as e:
+            if not limpia.startswith('$'):
+                bloque.es_valido = False
+                bloque.mensaje_error = str(e)
+                return bloque
         coincidencias = self.PATRON_TOKEN.findall(limpia)
         if not coincidencias and not limpia.startswith('$'):
             bloque.es_valido = False
@@ -201,130 +209,43 @@ class ProcesadorGCode:
         return bloque
 
     def analizar_programa(self, contenido_gcode: str) -> dict:
-        """
-        Analiza un archivo completo de G-code, calculando estadísticas,
-        dimensiones máximas/mínimas y tiempo estimado de ejecución.
-        """
+        interprete = Interprete()
+        errores, segmentos = [], []
+        limites = [[0., 0., 0.], [0., 0., 0.]]
+        rapido = corte = tiempo = 0.
         lineas = contenido_gcode.splitlines()
-        bloques = []
-        errores = []
-        segmentos = []
-
-        # Estado modal de simulación analítica
-        pos_actual = {"X": 0.0, "Y": 0.0, "Z": 0.0}
-        modo_absoluto = True
-        velocidad_corte_actual = 800.0
-        tiempo_total_segundos = 0.0
-        distancia_total_corte = 0.0
-        distancia_total_rapido = 0.0
-
-        min_coords = {"X": float("inf"), "Y": float("inf"), "Z": float("inf")}
-        max_coords = {"X": float("-inf"), "Y": float("-inf"), "Z": float("-inf")}
-
-        for idx, linea in enumerate(lineas, start=1):
-            bloque = self.parsear_linea(idx, linea)
-            bloques.append(bloque)
-
-            if not bloque.es_valido:
-                errores.append({
-                    "linea": idx,
-                    "texto": bloque.texto_original,
-                    "error": bloque.mensaje_error
-                })
-                continue
-
-            if bloque.es_comentario or not bloque.parametros:
-                continue
-
-            # Actualizar modo modal absoluto o incremental
-            if "G" in bloque.parametros:
-                g_num = int(bloque.parametros["G"])
-                if g_num == 90:
-                    modo_absoluto = True
-                elif g_num == 91:
-                    modo_absoluto = False
-
-            # Actualizar velocidad de avance F
-            if "F" in bloque.parametros:
-                velocidad_corte_actual = max(1.0, bloque.parametros["F"])
-
-            # Calcular nueva posición objetivo
-            pos_nueva = dict(pos_actual)
-            hay_movimiento = False
-
-            for eje in ("X", "Y", "Z"):
-                if eje in bloque.parametros:
-                    hay_movimiento = True
-                    val = bloque.parametros[eje]
-                    if modo_absoluto:
-                        pos_nueva[eje] = val
-                    else:
-                        pos_nueva[eje] += val
-
-                    # Actualizar envolvente volumétrica (Bounding Box)
-                    min_coords[eje] = min(min_coords[eje], pos_nueva[eje])
-                    max_coords[eje] = max(max_coords[eje], pos_nueva[eje])
-
-            if hay_movimiento:
-                dx = pos_nueva["X"] - pos_actual["X"]
-                dy = pos_nueva["Y"] - pos_actual["Y"]
-                dz = pos_nueva["Z"] - pos_actual["Z"]
-                distancia = math.sqrt(dx * dx + dy * dy + dz * dz)
-
-                es_rapido = bloque.comando_principal == "G0"
-                if es_rapido:
-                    distancia_total_rapido += distancia
-                    vel = self.velocidad_rapido_default
+        terminado = False
+        for idx, linea in enumerate(lineas):
+            try:
+                if terminado and self.limpiar_linea(linea) not in ('', '%'):
+                    raise ValueError("Hay instrucciones después del fin de programa.")
+                bloque = interprete.bloque(linea)
+                for inicio, fin, tipo in bloque['segmentos']:
+                    segmentos.append(dict(tipo=tipo, x1=inicio[0], y1=inicio[1], z1=inicio[2],
+                                          x2=fin[0], y2=fin[1], z2=fin[2], linea=idx))
+                    for i in range(3):
+                        limites[0][i] = min(limites[0][i], inicio[i], fin[i])
+                        limites[1][i] = max(limites[1][i], inicio[i], fin[i])
+                if bloque['rapido']:
+                    rapido += bloque['distancia']
                 else:
-                    distancia_total_corte += distancia
-                    vel = velocidad_corte_actual
-
-                # Tiempo en segundos: (distancia mm / velocidad mm/min) * 60
-                if vel > 0:
-                    tiempo_total_segundos += (distancia / vel) * 60.0
-
-                segmentos.append({
-                    "tipo": "G0" if es_rapido else "G1",
-                    "x1": round(pos_actual["X"], 3),
-                    "y1": round(pos_actual["Y"], 3),
-                    "z1": round(pos_actual["Z"], 3),
-                    "x2": round(pos_nueva["X"], 3),
-                    "y2": round(pos_nueva["Y"], 3),
-                    "z2": round(pos_nueva["Z"], 3),
-                    "linea": idx - 1
-                })
-
-                pos_actual = pos_nueva
-
-        # Normalizar límites si no hubo movimiento
-        for eje in ("X", "Y", "Z"):
-            if min_coords[eje] == float("inf"):
-                min_coords[eje] = 0.0
-                max_coords[eje] = 0.0
-
-        minutos = int(tiempo_total_segundos // 60)
-        segundos = int(tiempo_total_segundos % 60)
-        tiempo_formateado = f"{minutos:02d}:{segundos:02d}"
-
-        return {
-            "total_lineas": len(lineas),
-            "lineas_procesadas": len(bloques),
-            "es_valido": len(errores) == 0,
-            "errores": errores,
-            "tiempo_estimado_segundos": round(tiempo_total_segundos, 1),
-            "tiempo_estimado_formato": tiempo_formateado,
-            "distancia_corte_mm": round(distancia_total_corte, 2),
-            "distancia_rapido_mm": round(distancia_total_rapido, 2),
-            "distancia_total_mm": round(distancia_total_corte + distancia_total_rapido, 2),
-            "segmentos": segmentos if len(segmentos) <= 25000 else [],
-            "envolvente": {
-                "min": min_coords,
-                "max": max_coords,
-                "ancho_x": round(max(0.0, max_coords["X"] - min_coords["X"]), 2),
-                "alto_y": round(max(0.0, max_coords["Y"] - min_coords["Y"]), 2),
-                "profundidad_z": round(max(0.0, max_coords["Z"] - min_coords["Z"]), 2)
-            }
-        }
+                    corte += bloque['distancia']
+                vel = self.velocidad_rapido_default if bloque['rapido'] else bloque['feed']
+                tiempo += bloque['distancia'] / vel * 60 + bloque['espera']
+                terminado = any(m in (2, 30) for m in bloque['m'])
+            except ValueError as e:
+                errores.append(dict(linea=idx+1, texto=linea, error=str(e)))
+                break
+        return dict(total_lineas=len(lineas), lineas_procesadas=len(lineas),
+                    es_valido=not errores, errores=errores,
+                    tiempo_estimado_segundos=round(tiempo, 1),
+                    tiempo_estimado_formato=f"{int(tiempo)//60:02d}:{int(tiempo)%60:02d}",
+                    distancia_corte_mm=round(corte, 2), distancia_rapido_mm=round(rapido, 2),
+                    distancia_total_mm=round(corte+rapido, 2), segmentos=segmentos,
+                    envolvente=dict(min=dict(zip('XYZ', limites[0])), max=dict(zip('XYZ', limites[1])),
+                                    ancho_x=limites[1][0]-limites[0][0],
+                                    alto_y=limites[1][1]-limites[0][1],
+                                    profundidad_z=limites[1][2]-limites[0][2]))
 
     @staticmethod
     def traducir_error_grbl(codigo_error: int) -> dict:
@@ -343,3 +264,130 @@ class ProcesadorGCode:
             "explicacion": "El microcontrolador activó una condición de seguridad de parada.",
             "sugerencia": "Presione 'DESBLOQUEAR ($X)' en la barra superior o ejecute el ciclo de referenciado 'Homing ($H)'."
         })
+
+    @staticmethod
+    def reflejar_eje_x(contenido_gcode: str) -> str:
+        """
+        Invierte geométricamente las coordenadas del eje X (efecto espejo / mirror X).
+        Esencial en fresado de circuitos impresos (PCB Bottom Layer) donde las pistas
+        requieren inversión especular horizontal para coincidir con la orientación de los componentes.
+        Invierte X alrededor de la envolvente (X_nuevo = X_max + X_min - X), invierte arcos G2 <-> G3
+        e invierte el parámetro I (I = -I).
+        """
+        lineas = contenido_gcode.splitlines()
+
+        # 1. Determinar X_min y X_max del programa
+        xs = []
+        for l in lineas:
+            l_limpia = re.sub(r'\(.*?\)', '', l).split(';')[0].upper()
+            m = re.search(r'\bX([-+]?\d*\.?\d+)\b', l_limpia)
+            if m:
+                xs.append(float(m.group(1)))
+
+        if not xs:
+            return contenido_gcode
+
+        x_min = min(xs)
+        x_max = max(xs)
+        ancho = x_max + x_min
+
+        lineas_reflejadas = []
+        for l in lineas:
+            partes = l.split(';', 1)
+            code = partes[0]
+            comentario_semi = (';' + partes[1]) if len(partes) > 1 else ''
+
+            # Aislar comentarios entre paréntesis para no alterarlos
+            comentarios_paren = []
+            def guardar_paren(m):
+                comentarios_paren.append(m.group(0))
+                return f'__PAREN_{len(comentarios_paren)-1}__'
+
+            code_sin_paren = re.sub(r'\(.*?\)', guardar_paren, code)
+
+            # Invertir sentido de arcos circulares (G2 <-> G3)
+            def swap_g2_g3(m):
+                g_num = m.group(1).lstrip('0')
+                return 'G3' if g_num == '2' else 'G2'
+
+            code_mod = re.sub(r'\bG0?([23])\b', swap_g2_g3, code_sin_paren, flags=re.IGNORECASE)
+
+            # Reflejar coordenada X
+            def replace_x(m):
+                x_val = float(m.group(1))
+                x_nuevo = round(ancho - x_val, 4)
+                texto_x = f"{x_nuevo:.4f}".rstrip('0').rstrip('.')
+                return f'X{texto_x}'
+
+            code_mod = re.sub(r'\bX([-+]?\d*\.?\d+)\b', replace_x, code_mod, flags=re.IGNORECASE)
+
+            # Invertir vector de centro de arco I
+            def replace_i(m):
+                i_val = float(m.group(1))
+                i_nuevo = round(-i_val, 4)
+                texto_i = f"{i_nuevo:.4f}".rstrip('0').rstrip('.')
+                return f'I{texto_i}'
+
+            code_mod = re.sub(r'\bI([-+]?\d*\.?\d+)\b', replace_i, code_mod, flags=re.IGNORECASE)
+
+            # Restaurar comentarios entre paréntesis
+            for idx_p, c_p in enumerate(comentarios_paren):
+                code_mod = code_mod.replace(f'__PAREN_{idx_p}__', c_p)
+
+            lineas_reflejadas.append(code_mod + comentario_semi)
+
+        return '\n'.join(lineas_reflejadas)
+
+    def ajustar_velocidad_avance(self, contenido_gcode: str, nuevo_feed_corte: float, nuevo_feed_z: float = None) -> str:
+        """
+        Sobrescribe o escala los parámetros de velocidad de avance F en el programa G-code.
+        Ideal para archivos generados por FlatCAM o CAM que vienen con velocidades de avance
+        demasiado lentas (ej. F120 mm/min = 2 mm/s).
+        """
+        lineas = contenido_gcode.splitlines()
+        lineas_modificadas = []
+        feed_corte = max(10.0, float(nuevo_feed_corte))
+        feed_z = max(10.0, float(nuevo_feed_z)) if nuevo_feed_z is not None and nuevo_feed_z > 0 else None
+
+        feeds_en_archivo = []
+        for l in lineas:
+            m = re.search(r'\bF([-+]?\d*\.?\d+)\b', l.split(';')[0])
+            if m:
+                feeds_en_archivo.append(float(m.group(1)))
+
+        feed_min_archivo = min(feeds_en_archivo) if feeds_en_archivo else None
+        feed_max_archivo = max(feeds_en_archivo) if feeds_en_archivo else None
+        umbral_z = (feed_min_archivo + feed_max_archivo) / 2.0 if (feed_min_archivo and feed_max_archivo and feed_max_archivo > feed_min_archivo * 1.5) else 60.0
+
+        for idx_l, l in enumerate(lineas):
+            partes = l.split(';', 1)
+            code = partes[0]
+            comentario_semi = (';' + partes[1]) if len(partes) > 1 else ''
+
+            comentarios_paren = []
+            def guardar_paren(m):
+                comentarios_paren.append(m.group(0))
+                return f'__PAREN_{len(comentarios_paren)-1}__'
+
+            code_sin_paren = re.sub(r'\(.*?\)', guardar_paren, code)
+
+            # Detectar si la línea actual o la siguiente inmediata contiene penetración en Z
+            linea_sig = lineas[idx_l + 1].split(';')[0] if idx_l + 1 < len(lineas) else ''
+            es_z = bool(re.search(r'\bZ[-+]?\d', code_sin_paren, re.I) or re.search(r'^\s*G0?1\s+Z[-+]?\d', linea_sig, re.I))
+
+            def replace_f(m):
+                f_orig = float(m.group(1))
+                if feed_z is not None and (es_z or f_orig <= umbral_z):
+                    f_val = feed_z
+                else:
+                    f_val = feed_corte
+                return f'F{f_val:.1f}'
+
+            code_mod = re.sub(r'\bF([-+]?\d*\.?\d+)\b', replace_f, code_sin_paren, flags=re.IGNORECASE)
+
+            for idx_p, c_p in enumerate(comentarios_paren):
+                code_mod = code_mod.replace(f'__PAREN_{idx_p}__', c_p)
+
+            lineas_modificadas.append(code_mod + comentario_semi)
+
+        return '\n'.join(lineas_modificadas)

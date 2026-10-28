@@ -25,6 +25,8 @@ class PuenteCNC(QObject):
     """Puente de comunicación bidireccional entre la GUI Web y el núcleo Python."""
 
     # Señales emitidas hacia JavaScript
+    senial_linea_confirmada = pyqtSignal(int, bool)
+    senial_resultado_programa = pyqtSignal(str)
     senial_estado = pyqtSignal(str)              # JSON con estado de máquina y coordenadas DRO
     senial_consola = pyqtSignal(str, str)        # (tipo_estilo, mensaje_texto)
     senial_progreso = pyqtSignal(int, int, float, str)  # (linea_act, total, pct, tiempo)
@@ -32,13 +34,19 @@ class PuenteCNC(QObject):
     senial_error_didactico = pyqtSignal(str)     # JSON con error traducido didácticamente
     senial_analisis_gcode = pyqtSignal(str)      # JSON con dimensiones y tiempo estimado
     senial_alerta_seguridad = pyqtSignal(str, str, str)  # (titulo, encabezado, descripcion)
+    senial_pantalla_completa = pyqtSignal(bool)  # Notifica si la ventana está en pantalla completa
 
-    def __init__(self, controlador: ControladorGRBL, procesador: ProcesadorGCode):
+    def __init__(self, controlador: ControladorGRBL, procesador: ProcesadorGCode, ruta_historial=None):
         super().__init__()
         self.controlador = controlador
         self.procesador = procesador
+        raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.ruta_historial = os.path.abspath(os.fspath(ruta_historial)) if ruta_historial is not None else os.path.join(raiz, 'historial', 'historial_trabajos.json')
+        self._ruta_historial_antiguo = os.path.join(raiz, 'historial_trabajos.json') if ruta_historial is None else None
 
         # Vincular callbacks del controlador con señales Qt
+        self.controlador.cb_linea_confirmada = self._al_confirmar_linea
+        self.controlador.cb_resultado_programa = self.senial_resultado_programa.emit
         self.controlador.cb_estado_actualizado = self._al_actualizar_estado
         self.controlador.cb_linea_consola = self._al_recibir_linea_consola
         self.controlador.cb_progreso = self._al_actualizar_progreso
@@ -52,8 +60,10 @@ class PuenteCNC(QObject):
         self.temporizador_hotplug.timeout.connect(self._verificar_cambios_hotplug)
         self.temporizador_hotplug.start(1000)
 
-        # Callback nativo para alternar pantalla completa
+        # Callbacks nativos de gestión de ventana
         self.cb_alternar_pantalla_completa = None
+        self.cb_minimizar_ventana = None
+        self.cb_cerrar_ventana = None
 
     def _emitir_seguro(self, senial, *args):
         """Emite una señal Qt de forma segura evitando excepciones cuando el objeto C++ se destruye."""
@@ -74,20 +84,26 @@ class PuenteCNC(QObject):
             pass
         if hasattr(self, 'controlador') and self.controlador:
             self.controlador.cb_estado = None
+            self.controlador.cb_linea_confirmada = None
+            self.controlador.cb_resultado_programa = None
             self.controlador.cb_estado_actualizado = None
             self.controlador.cb_linea_consola = None
             self.controlador.cb_progreso = None
             self.controlador.cb_evento_error = None
             self.controlador.cb_evento_alarma = None
+            self.controlador.cb_alerta_seguridad = None
             try:
-                self.controlador.detener_programa()
+                if self.controlador.esta_conectado:
+                    self.controlador.parada_emergencia()
+            finally:
                 self.controlador.desconectar()
-            except Exception:
-                pass
 
     # =========================================================================
     # DISPATCHERS DE CALLBACKS DE PYTHON A SEÑALES QT
     # =========================================================================
+
+    def _al_confirmar_linea(self, indice: int, virtual: bool):
+        self._emitir_seguro(self.senial_linea_confirmada, indice, virtual)
 
     def _al_actualizar_estado(self, dict_estado: dict):
         """Convierte el estado de máquina a JSON y lo emite a la GUI web."""
@@ -158,6 +174,18 @@ class PuenteCNC(QObject):
             self.cb_alternar_pantalla_completa()
 
     @pyqtSlot()
+    def minimizarVentana(self):
+        """Minimiza la ventana nativa de la aplicación."""
+        if self.cb_minimizar_ventana:
+            self.cb_minimizar_ventana()
+
+    @pyqtSlot()
+    def cerrarVentana(self):
+        """Cierra la ventana nativa y finaliza la aplicación de forma segura."""
+        if self.cb_cerrar_ventana:
+            self.cb_cerrar_ventana()
+
+    @pyqtSlot()
     def escanearPuertos(self):
         """Escanea los puertos seriales y notifica a la interfaz."""
         puertos = self.controlador.escanear_puertos()
@@ -196,6 +224,14 @@ class PuenteCNC(QObject):
         except Exception as e:
             self._emitir_seguro(self.senial_consola, "c-alarm", f"[ERROR FEED OVERRIDE] {str(e)}")
 
+    @pyqtSlot(float)
+    def establecerSpindleOverride(self, porcentaje: float):
+        """Ajusta el porcentaje de velocidad de husillo / potencia láser entre 10% y 200%."""
+        try:
+            self.controlador.establecer_spindle_override(porcentaje)
+        except Exception as e:
+            self._emitir_seguro(self.senial_consola, "c-alarm", f"[ERROR SPINDLE OVERRIDE] {str(e)}")
+
     @pyqtSlot()
     def paradaEmergencia(self):
         """Activa de inmediato la parada de emergencia E-STOP."""
@@ -231,13 +267,14 @@ class PuenteCNC(QObject):
         """Pone a cero los tres ejes X, Y, Z."""
         self.controlador.poner_cero_todos()
 
-    @pyqtSlot(str)
+    @pyqtSlot(str, result=bool)
     def establecerTipoHerramienta(self, tipo: str):
         """Configura el modo de herramienta en el controlador ('fresa' o 'lapiz')."""
         try:
-            self.controlador.establecer_tipo_herramienta(tipo)
+            return self.controlador.establecer_tipo_herramienta(tipo)
         except Exception as e:
             self._emitir_seguro(self.senial_consola, "c-alarm", f"[ERROR HERRAMIENTA] {str(e)}")
+            return False
 
     @pyqtSlot(bool, int)
     @pyqtSlot(bool)
@@ -259,10 +296,10 @@ class PuenteCNC(QObject):
         """Desbloquea el estado de alarma ($X)."""
         self.controlador.desbloquear_alarma()
 
-    @pyqtSlot(str)
+    @pyqtSlot(str, result=bool)
     def iniciarPrograma(self, contenido_gcode: str):
         """Inicia la ejecución en hardware real del programa G-code cargado."""
-        self.controlador.iniciar_programa(contenido_gcode)
+        return self.controlador.iniciar_programa(contenido_gcode)
 
     @pyqtSlot(str)
     def analizarGcode(self, contenido_gcode: str):
@@ -270,14 +307,37 @@ class PuenteCNC(QObject):
         resultado = self.procesador.analizar_programa(contenido_gcode)
         self.senial_analisis_gcode.emit(json.dumps(resultado))
 
+    @pyqtSlot(str, result=str)
+    def reflejarGcodeX(self, contenido_gcode: str) -> str:
+        """Invierte horizontalmente (efecto espejo en X) el programa G-code para mecanizado PCB Bottom Layer."""
+        try:
+            return self.procesador.reflejar_eje_x(contenido_gcode)
+        except Exception as e:
+            return contenido_gcode
+
+    @pyqtSlot(str, float, float, result=str)
+    @pyqtSlot(str, float, result=str)
+    def ajustarVelocidadGcode(self, contenido_gcode: str, nuevo_feed: float, feed_z: float = 0.0) -> str:
+        """Ajusta o acelera la velocidad de avance F del programa G-code."""
+        try:
+            fz = feed_z if feed_z > 0 else None
+            return self.procesador.ajustar_velocidad_avance(contenido_gcode, nuevo_feed, fz)
+        except Exception:
+            return contenido_gcode
+
+    @pyqtSlot(bool)
+    def establecerPausaM6(self, habilitar: bool):
+        """Habilita o deshabilita la pausa obligatoria de seguridad ante comando M6."""
+        self.controlador.establecer_pausa_m6(habilitar)
+
 
     @pyqtSlot(str, result=str)
     def guardarHistorialDisco(self, datos_json: str) -> str:
         """RF-10 / C.U-06-03: Persiste el historial de trabajos en un archivo JSON en disco dentro de la carpeta 'historial'."""
         try:
-            carpeta = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "historial")
+            carpeta = os.path.dirname(self.ruta_historial)
             os.makedirs(carpeta, exist_ok=True)
-            ruta = os.path.join(carpeta, "historial_trabajos.json")
+            ruta = self.ruta_historial
             with open(ruta, "w", encoding="utf-8") as f:
                 f.write(datos_json)
             return "OK"
@@ -288,15 +348,14 @@ class PuenteCNC(QObject):
     def cargarHistorialDisco(self) -> str:
         """RF-10 / C.U-06-03: Carga el historial de trabajos persistido desde disco."""
         try:
-            raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            carpeta = os.path.join(raiz, "historial")
-            ruta = os.path.join(carpeta, "historial_trabajos.json")
-            ruta_antigua = os.path.join(raiz, "historial_trabajos.json")
+            ruta = self.ruta_historial
+            carpeta = os.path.dirname(ruta)
+            ruta_antigua = self._ruta_historial_antiguo
 
             if os.path.exists(ruta):
                 with open(ruta, "r", encoding="utf-8") as f:
                     return f.read()
-            elif os.path.exists(ruta_antigua):
+            elif ruta_antigua and os.path.exists(ruta_antigua):
                 with open(ruta_antigua, "r", encoding="utf-8") as f:
                     datos = f.read()
                 # Migrar automáticamente a la nueva carpeta

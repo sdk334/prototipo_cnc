@@ -5,17 +5,30 @@
  * y cuadrícula milimétrica/micrométrica adaptativa para inspección de pistas PCB de alta definición.
  */
 
+// Iteración acotada incluso cuando la precisión de Number impide sumar el paso.
+function* valoresCuadricula(inicio, fin, paso, maximo = 256) {
+  const rango = fin - inicio;
+  if (![inicio, fin, paso, rango].every(Number.isFinite) || paso <= 0 || rango < 0) return;
+  const incremento = Math.max(paso, rango / (maximo - 1));
+  const cantidad = Math.min(maximo, Math.floor(rango / incremento) + 1);
+  for (let i = 0; i < cantidad; i++) yield inicio + i * incremento;
+}
+
 class VisualizadorCNC {
   constructor(idLienzo) {
     this.lienzo = document.getElementById(idLienzo);
     if (!this.lienzo) return;
-    this.contexto = this.lienzo.getContext('2d');
+    this.contexto = this.lienzo.getContext('2d', { alpha: false });
+    this._temporizadorResize = null;
+    this._rafResize = null;
 
     // Búfer gráfico de aceleración para la escena estática (mesa, cuadrícula, trayectorias)
     // Garantiza 60 FPS fijos sin caídas de fotogramas durante la animación o corte de la herramienta
     this.lienzoEstatico = document.createElement('canvas');
-    this.contextoEstatico = this.lienzoEstatico.getContext('2d');
+    this.contextoEstatico = this.lienzoEstatico.getContext('2d', { alpha: false });
     this.necesitaRedibujarEstatico = true;
+    this._cacheVisibles = null;
+    this._cacheVisiblesValida = false;
 
     // Parámetros de la cámara y proyección
     this.modoVista = 'XY'; // Opciones: 'XY', 'XZ', 'YZ', '3D'
@@ -91,6 +104,14 @@ class VisualizadorCNC {
     this.iniciarCuboNavegacion();
     this.redimensionarLienzo();
     window.addEventListener('resize', () => this.redimensionarLienzo());
+    this._observadorTamano = new ResizeObserver(() => this.redimensionarLienzo());
+    this._observadorTamano.observe(this.lienzo.parentElement);
+    window.addEventListener('pagehide', () => {
+      this._observadorTamano.disconnect();
+      clearTimeout(this._temporizadorResize);
+      if (this._rafResize !== null) cancelAnimationFrame(this._rafResize);
+      if (this.animacionGiroId) cancelAnimationFrame(this.animacionGiroId);
+    });
   }
 
   // Solicita redibujado sincronizado con la tasa de refresco del monitor (60 FPS / vsync)
@@ -112,33 +133,54 @@ class VisualizadorCNC {
 
   marcarEstaticoSucio() {
     this.necesitaRedibujarEstatico = true;
+    this._cacheVisiblesValida = false;
+    this._progInvalido = true;
     this.actualizarMatrizProyeccion();
   }
 
-  // Ajusta el lienzo a la resolución del dispositivo para máxima nitidez
+  // Estirar el buffer existente mientras se arrastra; reasignarlo al estabilizarse.
   redimensionarLienzo() {
-    const rectangulo = this.lienzo.parentElement.getBoundingClientRect();
-    const proporcionPixeles = window.devicePixelRatio || 1;
-
-    const anchoDevice = Math.max(1, Math.round(rectangulo.width * proporcionPixeles));
-    const altoDevice = Math.max(1, Math.round(rectangulo.height * proporcionPixeles));
-
-    this.lienzo.width = anchoDevice;
-    this.lienzo.height = altoDevice;
-    this.contexto.setTransform(proporcionPixeles, 0, 0, proporcionPixeles, 0, 0);
-
-    if (!this.lienzoEstatico) {
-      this.lienzoEstatico = document.createElement('canvas');
-      this.contextoEstatico = this.lienzoEstatico.getContext('2d');
+    if (!this.anchoPantalla) {
+      this.aplicarTamanoLienzo();
+      return;
     }
-    this.lienzoEstatico.width = anchoDevice;
-    this.lienzoEstatico.height = altoDevice;
-    this.contextoEstatico.setTransform(proporcionPixeles, 0, 0, proporcionPixeles, 0, 0);
+    clearTimeout(this._temporizadorResize);
+    this._temporizadorResize = setTimeout(() => {
+      this._temporizadorResize = null;
+      if (this._rafResize !== null) return;
+      this._rafResize = requestAnimationFrame(() => {
+        this._rafResize = null;
+        this.aplicarTamanoLienzo();
+      });
+    }, 80);
+  }
 
-    this.anchoPantalla = rectangulo.width;
-    this.altoPantalla = rectangulo.height;
+  aplicarTamanoLienzo() {
+    const rectangulo = this.lienzo.parentElement.getBoundingClientRect();
+    const ancho = rectangulo.width, alto = rectangulo.height;
+    if (!Number.isFinite(ancho) || !Number.isFinite(alto) || ancho <= 0 || alto <= 0) return;
+    // Dos buffers: como máximo 32 MiB en total para píxeles RGBA.
+    const escala = Math.min(window.devicePixelRatio || 1, 2, 4096 / ancho, 4096 / alto,
+                            Math.sqrt(4194304 / (ancho * alto)));
+    const anchoDevice = Math.max(1, Math.floor(ancho * escala));
+    const altoDevice = Math.max(1, Math.floor(alto * escala));
+    const cambio = this.anchoPantalla !== ancho || this.altoPantalla !== alto ||
+                   this.lienzo.width !== anchoDevice || this.lienzo.height !== altoDevice;
+    if (!cambio) return;
+    for (const lienzo of [this.lienzo, this.lienzoEstatico]) {
+      if (lienzo.width !== anchoDevice) lienzo.width = anchoDevice;
+      if (lienzo.height !== altoDevice) lienzo.height = altoDevice;
+    }
+    this.contexto.setTransform(anchoDevice / ancho, 0, 0, altoDevice / alto, 0, 0);
+    this.contextoEstatico.setTransform(anchoDevice / ancho, 0, 0, altoDevice / alto, 0, 0);
+    this.anchoPantalla = ancho;
+    this.altoPantalla = alto;
     this.marcarEstaticoSucio();
-    this.solicitarRenderizado();
+    if (this.contexto && typeof this.contexto.save === 'function' && typeof this.renderizar === 'function') {
+      this.renderizar();
+    } else {
+      this.solicitarRenderizado();
+    }
   }
 
   // Control de interacción de ratón (órbita 3D, paneo y zoom enfocado hacia el cursor)
@@ -146,6 +188,7 @@ class VisualizadorCNC {
     this.lienzo.addEventListener('contextmenu', (e) => e.preventDefault());
 
     this.lienzo.addEventListener('mousedown', (evento) => {
+      if (![0, 2].includes(evento.button)) return;
       this.estaArrastrando = true;
       this.ultimoRatonX = evento.clientX;
       this.ultimoRatonY = evento.clientY;
@@ -168,6 +211,7 @@ class VisualizadorCNC {
 
     window.addEventListener('mousemove', (evento) => {
       if (!this.estaArrastrando) return;
+      if (!evento.buttons) { soltarArrastre(); return; }
       const deltaX = evento.clientX - this.ultimoRatonX;
       const deltaY = evento.clientY - this.ultimoRatonY;
       this.ultimoRatonX = evento.clientX;
@@ -188,12 +232,18 @@ class VisualizadorCNC {
       }
     });
 
-    window.addEventListener('mouseup', () => {
-      if (this.estaArrastrando) {
-        this.estaArrastrando = false;
+    const soltarArrastre = () => {
+      this.estaArrastrando = false;
+      this.tipoArrastre = null;
+      if (this.lienzo) {
         this.lienzo.style.cursor = this.modoVista === '3D' ? 'grab' : 'crosshair';
       }
-    });
+    };
+    window.addEventListener('mouseup', soltarArrastre);
+    window.addEventListener('blur', soltarArrastre);
+    window.addEventListener('mouseleave', soltarArrastre);
+    window.addEventListener('resize', soltarArrastre);
+    document.addEventListener('visibilitychange', soltarArrastre);
 
     // Zoom hacia el cursor del ratón (hasta 25,000% para inspección microscópica de pistas)
     this.lienzo.addEventListener('wheel', (evento) => {
@@ -242,6 +292,7 @@ class VisualizadorCNC {
     stage.addEventListener('mousedown', (e) => {
       e.stopPropagation();
       e.preventDefault();
+      if (e.button !== 0) return;
       arrastrandoCubo = true;
       cuboUltimoX = e.clientX;
       cuboUltimoY = e.clientY;
@@ -250,6 +301,7 @@ class VisualizadorCNC {
 
     window.addEventListener('mousemove', (e) => {
       if (!arrastrandoCubo) return;
+      if (!e.buttons) { soltarCubo(); return; }
       const dx = e.clientX - cuboUltimoX;
       const dy = e.clientY - cuboUltimoY;
       cuboUltimoX = e.clientX;
@@ -278,12 +330,12 @@ class VisualizadorCNC {
       this.solicitarRenderizado();
     });
 
-    window.addEventListener('mouseup', () => {
-      if (arrastrandoCubo) {
-        arrastrandoCubo = false;
-        stage.style.cursor = 'grab';
-      }
-    });
+    const soltarCubo = () => {
+      arrastrandoCubo = false;
+      stage.style.cursor = 'grab';
+    };
+    for (const evento of ['mouseup', 'blur', 'mouseleave', 'resize']) window.addEventListener(evento, soltarCubo);
+    document.addEventListener('visibilitychange', soltarCubo);
 
     // Clic en las caras del cubo para orientar vistas estándar
     const caras = cube.querySelectorAll('.viewcube-face');
@@ -508,11 +560,10 @@ class VisualizadorCNC {
 
     if (this.lineaActualEjecucion >= 0) {
       this.actualizarProgresoTrayectoriaDesdePosicion();
-      this.necesitaRedibujarEstatico = true;
     }
 
     // Si la herramienta no está animada (máquina detenida o movimiento manual paso a paso),
-    // aplicamos la posición de inmediato y solicitamos renderizado estático
+    // aplicamos la posición de inmediato y solicitamos renderizado dinámico
     if (!this.herramientaGirando) {
       const dx = Math.abs(this.posicionHerramienta.x - numX);
       const dy = Math.abs(this.posicionHerramienta.y - numY);
@@ -526,10 +577,6 @@ class VisualizadorCNC {
       this.posicionHerramienta.y = numY;
       this.posicionHerramienta.z = numZ;
       this.actualizarIndicadoresPosicionTexto(numX, numY, numZ);
-      if (this.lineaActualEjecucion >= 0) {
-        this.actualizarProgresoTrayectoriaDesdePosicion();
-        this.necesitaRedibujarEstatico = true;
-      }
       this.solicitarRenderizado();
     }
   }
@@ -681,8 +728,18 @@ class VisualizadorCNC {
 
     let posX = 0.0, posY = 0.0, posZ = 0.0;
     let modoAbsoluto = true;
+    let unidad = 1;
+    let feed = 800, tiempo = 0;
+    this.errorGcode = null;
     let modoMovimiento = 'G0';
     const nuevaTrayectoria = [];
+    let terminado = false;
+    const rechazar = mensaje => {
+      this.errorGcode = mensaje;
+      this.trayectoria = [];
+      this.marcarEstaticoSucio();
+      this.solicitarRenderizado();
+    };
 
     let minCorteX = Infinity, maxCorteX = -Infinity;
     let minCorteY = Infinity, maxCorteY = -Infinity;
@@ -690,16 +747,43 @@ class VisualizadorCNC {
 
     for (let idxLinea = 0; idxLinea < lineas.length; idxLinea++) {
       const rawLinea = lineas[idxLinea];
-      const linea = rawLinea.replace(/\(.*?\)/g, '').split(';')[0].trim().toUpperCase();
+      let linea = rawLinea.replace(/\(.*?\)/g, '').split(';')[0].trim().toUpperCase();
       if (!linea) continue;
 
-      if (/\bG90\b/.test(linea)) modoAbsoluto = true;
-      if (/\bG91\b/.test(linea)) modoAbsoluto = false;
-
-      if (/\bG00?\b/.test(linea)) modoMovimiento = 'G0';
-      else if (/\bG0?1\b/.test(linea)) modoMovimiento = 'G1';
-      else if (/\bG0?2\b/.test(linea)) modoMovimiento = 'G2';
-      else if (/\bG0?3\b/.test(linea)) modoMovimiento = 'G3';
+      const tokenRE = /([A-Z])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))/g;
+      const tokens = [...linea.matchAll(tokenRE)].map(m => [m[1], Number(m[2])]);
+      const gs = tokens.filter(([k]) => k === 'G').map(([,v]) => v);
+      const soportados = [0,1,2,3,4,17,20,21,40,49,54,80,90,91,91.1,94];
+      const ms = tokens.filter(([k]) => k === 'M').map(([,v]) => v);
+      const repetidos = [...'XYZIJRFSNT'].some(k => tokens.filter(([letra]) => letra === k).length > 1);
+      const incompatible = [[0,1,2,3,80], [20,21], [90,91], [0,1,2,3,4]].some(grupo => gs.filter(g => grupo.includes(g)).length > 1);
+      if ((terminado && linea !== '%') || (linea !== '%' && linea.replace(tokenRE, '').trim()) || repetidos || incompatible ||
+          gs.some(g => !soportados.includes(g)) || ms.some(m => ![0,1,2,3,4,5,6,7,8,9,30].includes(m)) ||
+          tokens.some(([k,v]) => !'GMXYZIJRFSPNT'.includes(k) || !Number.isFinite(v) || (['F'].includes(k) && v <= 0) ||
+            (['S','T','N'].includes(k) && v < 0))) {
+        rechazar(`Línea ${idxLinea+1}: código inválido o no soportado (plano XY/G54).`);
+        return;
+      }
+      terminado = ms.some(m => [2,30].includes(m));
+      linea = tokens.map(([k,v]) => `${k}${v}`).join(' ');
+      if (gs.includes(90)) modoAbsoluto = true;
+      if (gs.includes(91)) modoAbsoluto = false;
+      if (gs.includes(20)) unidad = 25.4;
+      if (gs.includes(21)) unidad = 1;
+      const palabraF = tokens.find(([k]) => k === 'F');
+      if (palabraF) feed = palabraF[1] * unidad;
+      for (const g of gs) if ([0,1,2,3,80].includes(g)) modoMovimiento = `G${g}`;
+      if (gs.includes(4)) {
+        if (!tokens.some(([k,v]) => k === 'P' && v >= 0) || tokens.some(([k]) => 'XYZ'.includes(k))) {
+          rechazar(`Línea ${idxLinea+1}: G4 requiere P no negativo.`); return;
+        }
+        tiempo += tokens.find(([k]) => k === 'P')[1];
+        continue;
+      }
+      if (tokens.some(([k]) => 'IJR'.includes(k)) && !['G2','G3'].includes(modoMovimiento) ||
+          tokens.some(([k]) => k === 'P') || (modoMovimiento === 'G80' && tokens.some(([k]) => 'XYZ'.includes(k)))) {
+        rechazar(`Línea ${idxLinea+1}: parámetros incompatibles con el modo de movimiento.`); return;
+      }
 
       const matchX = linea.match(/X([-+]?\d*\.?\d+)/);
       const matchY = linea.match(/Y([-+]?\d*\.?\d+)/);
@@ -711,27 +795,28 @@ class VisualizadorCNC {
       let huboCoordenada = false;
 
       if (matchX) {
-        const val = parseFloat(matchX[1]);
+        const val = parseFloat(matchX[1]) * unidad;
         objetivoX = modoAbsoluto ? val : posX + val;
         huboCoordenada = true;
       }
       if (matchY) {
-        const val = parseFloat(matchY[1]);
+        const val = parseFloat(matchY[1]) * unidad;
         objetivoY = modoAbsoluto ? val : posY + val;
         huboCoordenada = true;
       }
       if (matchZ) {
-        const val = parseFloat(matchZ[1]);
+        const val = parseFloat(matchZ[1]) * unidad;
         objetivoZ = modoAbsoluto ? val : posZ + val;
         huboCoordenada = true;
       }
 
-      if (!huboCoordenada) continue;
+      const arcoCompleto = ['G2', 'G3'].includes(modoMovimiento) && tokens.some(([k]) => ['I','J'].includes(k));
+      if (!huboCoordenada && !arcoCompleto) continue;
 
       const dx = objetivoX - posX;
       const dy = objetivoY - posY;
       const dz = objetivoZ - posZ;
-      if (Math.abs(dx) < 0.0001 && Math.abs(dy) < 0.0001 && Math.abs(dz) < 0.0001) {
+      if (!arcoCompleto && Math.abs(dx) < 0.0001 && Math.abs(dy) < 0.0001 && Math.abs(dz) < 0.0001) {
         continue;
       }
 
@@ -744,20 +829,20 @@ class VisualizadorCNC {
         let arcoValido = false;
 
         if (matchI || matchJ) {
-          const i = matchI ? parseFloat(matchI[1]) : 0;
-          const j = matchJ ? parseFloat(matchJ[1]) : 0;
+          const i = matchI ? parseFloat(matchI[1]) * unidad : 0;
+          const j = matchJ ? parseFloat(matchJ[1]) * unidad : 0;
           cx = posX + i;
           cy = posY + j;
           radio = Math.hypot(i, j);
-          arcoValido = radio > 0.001;
+          arcoValido = radio > 0.000001 && !matchR && Math.abs(Math.hypot(objetivoX-cx, objetivoY-cy)-radio) <= Math.max(.005, .001*radio);
         } else if (matchR) {
-          radio = parseFloat(matchR[1]);
+          radio = parseFloat(matchR[1]) * unidad;
           const dXm = (objetivoX - posX) / 2;
           const dYm = (objetivoY - posY) / 2;
           const distMitad = Math.hypot(dXm, dYm);
           if (Math.abs(radio) >= distMitad && distMitad > 0.0001) {
             const h = Math.sqrt(Math.max(0, radio * radio - distMitad * distMitad));
-            const signo = (modoMovimiento === 'G2' ? 1 : -1) * (radio < 0 ? -1 : 1);
+            const signo = (modoMovimiento === 'G2' ? -1 : 1) * (radio < 0 ? -1 : 1);
             cx = posX + dXm - signo * (dYm / distMitad) * h;
             cy = posY + dYm + signo * (dXm / distMitad) * h;
             radio = Math.abs(radio);
@@ -776,6 +861,7 @@ class VisualizadorCNC {
           }
 
           const deltaAngulo = anguloFin - anguloInicio;
+          tiempo += Math.hypot(radio * deltaAngulo, dz) / feed * 60;
           const pasos = Math.max(8, Math.min(64, Math.ceil(Math.abs(deltaAngulo) / (Math.PI / 16))));
           let pPrevX = posX, pPrevY = posY, pPrevZ = posZ;
 
@@ -805,21 +891,12 @@ class VisualizadorCNC {
             pPrevZ = arcZ;
           }
         } else {
-          nuevaTrayectoria.push({
-            tipo: 'G1',
-            x1: posX, y1: posY, z1: posZ,
-            x2: objetivoX, y2: objetivoY, z2: objetivoZ,
-            linea: idxLinea
-          });
-          minCorteX = Math.min(minCorteX, posX, objetivoX);
-          maxCorteX = Math.max(maxCorteX, posX, objetivoX);
-          minCorteY = Math.min(minCorteY, posY, objetivoY);
-          maxCorteY = Math.max(maxCorteY, posY, objetivoY);
-          minCorteZ = Math.min(minCorteZ, posZ, objetivoZ);
-          maxCorteZ = Math.max(maxCorteZ, posZ, objetivoZ);
+          rechazar(`Línea ${idxLinea+1}: arco inválido.`);
+          return;
         }
       } else {
         const tipo = modoMovimiento === 'G0' ? 'G0' : 'G1';
+        tiempo += Math.hypot(dx, dy, dz) / (tipo === 'G0' ? 2500 : feed) * 60;
         nuevaTrayectoria.push({
           tipo,
           x1: posX, y1: posY, z1: posZ,
@@ -842,6 +919,7 @@ class VisualizadorCNC {
       posZ = objetivoZ;
     }
 
+    this.tiempoEstimadoSegundos = tiempo;
     this.trayectoria = nuevaTrayectoria;
     this.totalLineasGcode = lineas.length;
     this.lineaActualEjecucion = -1;
@@ -875,12 +953,12 @@ class VisualizadorCNC {
 
   // Establece directamente los segmentos vectoriales
   establecerSegmentosTrayectoria(segmentos, envolvente = null) {
-    if (Array.isArray(segmentos) && segmentos.length > 0) {
+    if (Array.isArray(segmentos)) {
       this.trayectoria = segmentos.map((seg, idx) => ({
         ...seg,
         linea: (seg.linea !== undefined) ? seg.linea : idx
       }));
-      this.totalLineasGcode = this.trayectoria.length;
+      this.totalLineasGcode = Math.max(0, ...this.trayectoria.map(s => s.linea + 1));
       this.lineaActualEjecucion = -1;
       this.indiceSegmentoActivo = -1;
       this.progresoSegmentoActivo = 0.0;
@@ -928,7 +1006,7 @@ class VisualizadorCNC {
     const ctx = this.contexto;
 
     // Medición y actualización en tiempo real de FPS reales
-    const ahoraFps = performance.now();
+    const ahoraFps = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
     if (!this._ultimoCalculoFps) this._ultimoCalculoFps = ahoraFps;
     if (!this._contadorCuadros) this._contadorCuadros = 0;
     this._contadorCuadros++;
@@ -957,7 +1035,12 @@ class VisualizadorCNC {
     ctx.drawImage(this.lienzoEstatico, 0, 0);
     ctx.restore();
 
-    // 3. Renderizado de capas dinámicas (herramienta girando con punta fina y alertas)
+    // 3. Renderizado de capa dinámica en vivo (únicamente tramos transitados sobre el fondo estático)
+    if (this.lineaActualEjecucion >= 0 && this.indiceSegmentoActivo >= 0) {
+      this.dibujarProgresoEjecucion(ctx);
+    }
+
+    // 4. Renderizado de capas dinámicas (herramienta girando con punta fina y alertas)
     if (this.mostrarRetículaHerramienta !== false) {
       this.dibujarRetículaHerramienta(ctx);
     }
@@ -996,14 +1079,14 @@ class VisualizadorCNC {
       ctx.beginPath();
       const inicioSecX = Math.floor(xMin / secundario) * secundario;
       const finSecX = Math.ceil(xMax / secundario) * secundario;
-      for (let x = inicioSecX; x <= finSecX; x += secundario) {
+      for (const x of valoresCuadricula(inicioSecX, finSecX, secundario)) {
         const px = centroPantallaX + (x - cx) * escala;
         ctx.moveTo(px, 0);
         ctx.lineTo(px, this.altoPantalla);
       }
       const inicioSecY = Math.floor(yMin / secundario) * secundario;
       const finSecY = Math.ceil(yMax / secundario) * secundario;
-      for (let y = inicioSecY; y <= finSecY; y += secundario) {
+      for (const y of valoresCuadricula(inicioSecY, finSecY, secundario)) {
         const py = centroPantallaY - (y - cy) * escala;
         ctx.moveTo(0, py);
         ctx.lineTo(this.anchoPantalla, py);
@@ -1013,12 +1096,12 @@ class VisualizadorCNC {
       // 2. Líneas principales
       ctx.strokeStyle = '#1b232e';
       ctx.beginPath();
-      for (let x = inicioX; x <= finX; x += principal) {
+      for (const x of valoresCuadricula(inicioX, finX, principal)) {
         const px = centroPantallaX + (x - cx) * escala;
         ctx.moveTo(px, 0);
         ctx.lineTo(px, this.altoPantalla);
       }
-      for (let y = inicioY; y <= finY; y += principal) {
+      for (const y of valoresCuadricula(inicioY, finY, principal)) {
         const py = centroPantallaY - (y - cy) * escala;
         ctx.moveTo(0, py);
         ctx.lineTo(this.anchoPantalla, py);
@@ -1030,13 +1113,13 @@ class VisualizadorCNC {
       ctx.font = '10px "JetBrains Mono", monospace';
       ctx.textAlign = 'left';
       const formatoCota = principal < 0.1 ? 3 : (principal < 1 ? 2 : (principal < 10 ? 1 : 0));
-      for (let x = inicioX; x <= finX; x += principal) {
+      for (const x of valoresCuadricula(inicioX, finX, principal)) {
         const px = centroPantallaX + (x - cx) * escala;
         if (px >= 20 && px <= this.anchoPantalla - 40) {
           ctx.fillText(`${x.toFixed(formatoCota)} mm`, px + 4, this.altoPantalla - 50);
         }
       }
-      for (let y = inicioY; y <= finY; y += principal) {
+      for (const y of valoresCuadricula(inicioY, finY, principal)) {
         const py = centroPantallaY - (y - cy) * escala;
         if (py >= 20 && py <= this.altoPantalla - 60) {
           ctx.fillText(`${y.toFixed(formatoCota)} mm`, 14, py - 4);
@@ -1054,7 +1137,7 @@ class VisualizadorCNC {
 
       ctx.strokeStyle = '#181e26';
       ctx.beginPath();
-      for (let x = inicioX; x <= finX; x += principal) {
+      for (const x of valoresCuadricula(inicioX, finX, principal)) {
         const px = centroPantallaX + (x - cx) * escala;
         ctx.moveTo(px, 0);
         ctx.lineTo(px, this.altoPantalla);
@@ -1081,14 +1164,14 @@ class VisualizadorCNC {
         ctx.strokeStyle = '#18222e';
         ctx.beginPath();
         const lineasMaximas = 60;
-        const pasoReal = (maxX - minX) / principal > lineasMaximas ? principal * 2 : principal;
-        for (let x = minX; x <= maxX; x += pasoReal) {
+        const pasoReal = Math.max(principal, Math.max(maxX - minX, maxY - minY) / lineasMaximas);
+        for (const x of valoresCuadricula(minX, maxX, pasoReal)) {
           const p1 = this.convertirAPantalla(x, minY, 0);
           const p2 = this.convertirAPantalla(x, maxY, 0);
           ctx.moveTo(p1.x, p1.y);
           ctx.lineTo(p2.x, p2.y);
         }
-        for (let y = minY; y <= maxY; y += pasoReal) {
+        for (const y of valoresCuadricula(minY, maxY, pasoReal)) {
           const p1 = this.convertirAPantalla(minX, y, 0);
           const p2 = this.convertirAPantalla(maxX, y, 0);
           ctx.moveTo(p1.x, p1.y);
@@ -1157,8 +1240,9 @@ class VisualizadorCNC {
       ctx.strokeStyle = 'rgba(46, 204, 113, 0.28)';
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
-      ctx.fillRect(p1.x, p2.y, ancho, alto);
-      ctx.strokeRect(p1.x, p2.y, ancho, alto);
+      const vertices=[{x:p1.x,y:p2.y},{x:p2.x,y:p2.y},{x:p2.x,y:p1.y},p1];
+      this.rellenarPoligonoVisible(ctx, vertices);
+      this.trazarAristasVisibles(ctx, vertices);
       ctx.restore();
     } else if (this.modoVista === '3D') {
       // Bloque tridimensional de material a mecanizar
@@ -1173,14 +1257,8 @@ class VisualizadorCNC {
       ctx.strokeStyle = 'rgba(46, 204, 113, 0.35)';
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(c1.x, c1.y);
-      ctx.lineTo(c2.x, c2.y);
-      ctx.lineTo(c3.x, c3.y);
-      ctx.lineTo(c4.x, c4.y);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
+      this.rellenarPoligonoVisible(ctx, [c1,c2,c3,c4]);
+      this.trazarAristasVisibles(ctx, [c1,c2,c3,c4]);
 
       // Aristas de profundidad hacia abajo (corte negativo minZ)
       const b1 = this.convertirAPantalla(limites.minX, limites.minY, minZ);
@@ -1189,16 +1267,8 @@ class VisualizadorCNC {
       const b4 = this.convertirAPantalla(limites.minX, limites.maxY, minZ);
 
       ctx.strokeStyle = 'rgba(46, 204, 113, 0.18)';
-      ctx.beginPath();
-      ctx.moveTo(c1.x, c1.y); ctx.lineTo(b1.x, b1.y);
-      ctx.moveTo(c2.x, c2.y); ctx.lineTo(b2.x, b2.y);
-      ctx.moveTo(c3.x, c3.y); ctx.lineTo(b3.x, b3.y);
-      ctx.moveTo(c4.x, c4.y); ctx.lineTo(b4.x, b4.y);
-
-      ctx.moveTo(b1.x, b1.y); ctx.lineTo(b2.x, b2.y);
-      ctx.lineTo(b3.x, b3.y); ctx.lineTo(b4.x, b4.y);
-      ctx.closePath();
-      ctx.stroke();
+      for (const arista of [[c1,b1], [c2,b2], [c3,b3], [c4,b4]]) this.trazarAristasVisibles(ctx, arista, false);
+      this.trazarAristasVisibles(ctx, [b1,b2,b3,b4]);
 
       ctx.restore();
     }
@@ -1244,7 +1314,7 @@ class VisualizadorCNC {
       } else {
         this.actualizarProgresoTrayectoriaDesdePosicion();
       }
-      this.marcarEstaticoSucio();
+      this.solicitarRenderizado();
     }
   }
 
@@ -1259,7 +1329,7 @@ class VisualizadorCNC {
         this.progresoSegmentoActivo = 0.0;
       }
       this.actualizarProgresoTrayectoriaDesdePosicion();
-      this.marcarEstaticoSucio();
+      this.solicitarRenderizado();
     }
   }
 
@@ -1268,12 +1338,11 @@ class VisualizadorCNC {
     this.lineaActualEjecucion = -1;
     this.indiceSegmentoActivo = -1;
     this.progresoSegmentoActivo = 0.0;
-    this.marcarEstaticoSucio();
+    this.solicitarRenderizado();
   }
 
   // Determina con precisión física qué tramos de la trayectoria ya fueron efectivamente
-  // transitados por la punta física de la herramienta, impidiendo rigurosamente que la línea
-  // se ilumine antes de que el cabezal pase físicamente por ella.
+  // transitados por la punta física de la herramienta, garantizando avance sincrónico sin bloqueos
   actualizarProgresoTrayectoriaDesdePosicion() {
     if (!this.trayectoria || this.trayectoria.length === 0) return;
     if (this.lineaActualEjecucion === undefined || this.lineaActualEjecucion < 0) return;
@@ -1286,6 +1355,8 @@ class VisualizadorCNC {
       this.progresoSegmentoActivo = 0.0;
     }
 
+    // El índice avanza únicamente según la posición física reportada de la punta. La línea confirmada
+    // (ok de GRBL) va adelantada por el búfer del planificador, por lo que no se usa para iluminar el trayecto.
     let idx = this.indiceSegmentoActivo;
     if (idx >= n) {
       this.indiceSegmentoActivo = n;
@@ -1293,23 +1364,22 @@ class VisualizadorCNC {
       return;
     }
 
-    // Ventana hacia adelante para encontrar el segmento físico activo
-    const lookahead = Math.min(n, idx + 25);
+    // 2. Ventana de búsqueda acotada para proyectar la punta física de la herramienta
+    const lookahead = Math.min(n, idx + 60);
     let mejorIdx = idx;
     let mejorU = this.progresoSegmentoActivo || 0.0;
     let menorDistSq = Infinity;
 
     for (let i = idx; i < lookahead; i++) {
       const seg = this.trayectoria[i];
+
       const vx = seg.x2 - seg.x1;
       const vy = seg.y2 - seg.y1;
       const vz = seg.z2 - seg.z1;
       const lenSq = vx * vx + vy * vy + vz * vz;
 
       if (lenSq < 0.00001) {
-        if (i === idx) {
-          idx++;
-        }
+        if (i === idx) idx++;
         continue;
       }
 
@@ -1328,19 +1398,15 @@ class VisualizadorCNC {
       const ddz = posH.z - pz;
       const distSq = ddx * ddx + ddy * ddy + ddz * ddz;
 
-      // Si la herramienta está cercana a la línea del segmento (< 0.75 mm de desviación)
-      if (distSq < 0.6) {
-        if (distSq < menorDistSq) {
-          menorDistSq = distSq;
-          mejorIdx = i;
-          mejorU = uClamp;
-        }
-        // Si está en el cuerpo del segmento (entre 2% y 98%), es el segmento activo definitivo
-        if (u >= 0.02 && u <= 0.98) {
-          mejorIdx = i;
-          mejorU = u;
-          break;
-        }
+      if (distSq < menorDistSq) {
+        menorDistSq = distSq;
+        mejorIdx = i;
+        mejorU = uClamp;
+      }
+      if (u >= 0.02 && u <= 0.98 && distSq < 1.0) {
+        mejorIdx = i;
+        mejorU = u;
+        break;
       }
     }
 
@@ -1350,7 +1416,7 @@ class VisualizadorCNC {
       const dfx = posH.x - segActual.x2;
       const dfy = posH.y - segActual.y2;
       const dfz = posH.z - segActual.z2;
-      if ((dfx * dfx + dfy * dfy + dfz * dfz) < 1.0) {
+      if ((dfx * dfx + dfy * dfy + dfz * dfz) < 1.5) {
         mejorIdx = idx + 1;
         mejorU = 0.0;
       }
@@ -1365,53 +1431,83 @@ class VisualizadorCNC {
     }
   }
 
+  rellenarPoligonoVisible(ctx, puntos) {
+    // A gran aumento solo importan pistas y contornos: evitar repintar dos
+    // superficies translúcidas de pantalla completa en cada movimiento.
+    if (this.zoom > 12) return;
+    if (puntos.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) return;
+    let poligono = puntos;
+    for (const [eje, limite, signo] of [['x', -10, 1], ['x', this.anchoPantalla+10, -1],
+                                       ['y', -10, 1], ['y', this.altoPantalla+10, -1]]) {
+      const salida = [];
+      for (let i=0; i<poligono.length; i++) {
+        const a=poligono[i], b=poligono[(i+1)%poligono.length];
+        const dentroA=(a[eje]-limite)*signo>=0, dentroB=(b[eje]-limite)*signo>=0;
+        if (dentroA) salida.push(a);
+        if (dentroA !== dentroB) {
+          const t=(limite-a[eje])/(b[eje]-a[eje]);
+          salida.push({x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t});
+        }
+      }
+      poligono=salida;
+      if (!poligono.length) return;
+    }
+    poligono = poligono.map(p => ({
+      x: Math.max(-10, Math.min(this.anchoPantalla+10, p.x)),
+      y: Math.max(-10, Math.min(this.altoPantalla+10, p.y))
+    }));
+    ctx.beginPath();
+    ctx.moveTo(poligono[0].x,poligono[0].y);
+    for (const p of poligono.slice(1)) ctx.lineTo(p.x,p.y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  trazarAristasVisibles(ctx, puntos, cerrar = true) {
+    ctx.beginPath();
+    for (let i=0; i<puntos.length-(cerrar ? 0 : 1); i++) {
+      const arista=this.recortarSegmentoPantalla(puntos[i], puntos[(i+1)%puntos.length]);
+      if (!arista) continue;
+      ctx.moveTo(arista[0].x,arista[0].y);
+      ctx.lineTo(arista[1].x,arista[1].y);
+    }
+    ctx.stroke();
+  }
+
+  recortarSegmentoPantalla(p1, p2) {
+    if (![p1.x, p1.y, p2.x, p2.y].every(Number.isFinite)) return null;
+    const dx = p2.x-p1.x, dy = p2.y-p1.y;
+    let t0 = 0, t1 = 1;
+    for (const [p, q] of [[-dx, p1.x+10], [dx, this.anchoPantalla+10-p1.x],
+                           [-dy, p1.y+10], [dy, this.altoPantalla+10-p1.y]]) {
+      if (p === 0) { if (q < 0) return null; continue; }
+      const t = q/p;
+      if (p < 0) t0 = Math.max(t0, t); else t1 = Math.min(t1, t);
+      if (t0 > t1) return null;
+    }
+    return [{x:p1.x+dx*t0, y:p1.y+dy*t0}, {x:p1.x+dx*t1, y:p1.y+dy*t1}];
+  }
+
   // Trazado de trayectorias en alta velocidad a 60 FPS con detalle adaptativo a máximo zoom
-  // y diferenciación en vivo del recorrido ya ejecutado vs pendiente
-  dibujarTrayectorias(ctx) {
+  // Dibuja la trayectoria base completa (G0 rápido, corte G1/G2/G3 y límites) en el búfer estático
+  dibujarTrayectoriasBase(ctx) {
     if (!this.trayectoria || this.trayectoria.length === 0) return;
     ctx.save();
 
     const n = this.trayectoria.length;
+    if (!this._cacheVisiblesValida || !this._cacheVisibles || this._cacheVisibles.length !== n) {
+      this._cacheVisibles = this.trayectoria.map(seg => this.recortarSegmentoPantalla(
+        this.convertirAPantalla(seg.x1, seg.y1, seg.z1), this.convertirAPantalla(seg.x2, seg.y2, seg.z2)));
+      this._cacheVisiblesValida = true;
+    }
+    const visibles = this._cacheVisibles;
     const maxX = this.limitesMaquina.maxX;
     const maxY = this.limitesMaquina.maxY;
     const es3D = (this.modoVista === '3D');
-    const idxActivo = (this.indiceSegmentoActivo !== undefined && this.indiceSegmentoActivo >= 0) ? this.indiceSegmentoActivo : -1;
-    const progActivo = (this.progresoSegmentoActivo !== undefined) ? this.progresoSegmentoActivo : 0.0;
-    const enEjecucion = (this.lineaActualEjecucion >= 0 && idxActivo >= 0);
-
-    const colorRecorrido = this.obtenerColorRecorrido();
-    const colorPendiente = this.obtenerColorPendiente();
+    const colorPendiente = this.colorCortePersonalizado || '#00e5ff';
     const baseLineWidth = Math.min(3.2, Math.max(1.4, 1.8 * Math.pow(this.zoom, 0.12)));
 
-    // 1. Trazado rápido G0 (líneas discontinuas grises)
-    // 1a. G0 transitados (desvanecidos para despejar el campo visual)
-    if (enEjecucion) {
-      ctx.strokeStyle = 'rgba(115, 128, 144, 0.28)';
-      ctx.lineWidth = Math.min(2.0, Math.max(0.8, 1.0 * Math.pow(this.zoom, 0.1)));
-      ctx.setLineDash([3, 4]);
-      ctx.beginPath();
-      let hayG0Done = false;
-      let prevX = null, prevY = null, prevZ = null;
-      for (let i = 0; i < n; i++) {
-        const seg = this.trayectoria[i];
-        if (seg.tipo === 'G0' && i < idxActivo) {
-          const esCont = (prevX === seg.x1 && prevY === seg.y1 && prevZ === seg.z1);
-          if (!esCont) {
-            const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
-            ctx.moveTo(p1.x, p1.y);
-          }
-          const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
-          ctx.lineTo(p2.x, p2.y);
-          prevX = seg.x2; prevY = seg.y2; prevZ = seg.z2;
-          hayG0Done = true;
-        } else {
-          prevX = null;
-        }
-      }
-      if (hayG0Done) ctx.stroke();
-    }
-
-    // 1b. G0 pendientes (color configurable)
+    // 1. Trazado rápido G0 base (líneas discontinuas grises)
     ctx.strokeStyle = this.colorRapidoPersonalizado || '#738090';
     ctx.lineWidth = Math.min(2.5, Math.max(1.0, 1.2 * Math.pow(this.zoom, 0.1)));
     ctx.setLineDash([4, 4]);
@@ -1420,22 +1516,16 @@ class VisualizadorCNC {
     let prevG0X = null, prevG0Y = null, prevG0Z = null;
 
     for (let i = 0; i < n; i++) {
+      if (!visibles[i]) continue;
       const seg = this.trayectoria[i];
       if (seg.tipo === 'G0') {
-        const esPend = (!enEjecucion || i >= idxActivo);
-        if (esPend) {
-          const esContinuo = (prevG0X === seg.x1 && prevG0Y === seg.y1 && prevG0Z === seg.z1);
-          if (!esContinuo) {
-            const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
-            ctx.moveTo(p1.x, p1.y);
-          }
-          const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
-          ctx.lineTo(p2.x, p2.y);
-          prevG0X = seg.x2; prevG0Y = seg.y2; prevG0Z = seg.z2;
-          hayG0 = true;
-        } else {
-          prevG0X = null;
+        const [p1, p2] = visibles[i];
+        if (prevG0X !== seg.x1 || prevG0Y !== seg.y1 || prevG0Z !== seg.z1) {
+          ctx.moveTo(p1.x, p1.y);
         }
+        ctx.lineTo(p2.x, p2.y);
+        prevG0X = seg.x2; prevG0Y = seg.y2; prevG0Z = seg.z2;
+        hayG0 = true;
       } else {
         prevG0X = null;
       }
@@ -1444,15 +1534,16 @@ class VisualizadorCNC {
 
     // 2. Líneas verticales indicadoras de descenso de fresa (plunges) en 3D
     if (es3D && n < 3000) {
-      ctx.strokeStyle = enEjecucion ? 'rgba(0, 229, 255, 0.22)' : 'rgba(0, 229, 255, 0.35)';
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
       ctx.lineWidth = 1;
       ctx.setLineDash([2, 2]);
       ctx.beginPath();
       for (let i = 0; i < n; i++) {
+        if (!visibles[i]) continue;
         const seg = this.trayectoria[i];
         if (seg.tipo !== 'G0' && Math.abs(seg.z2 - seg.z1) > 0.05 && seg.z2 < 0) {
           const pTop = this.convertirAPantalla(seg.x2, seg.y2, 0);
-          const pBot = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
+          const [, pBot] = visibles[i];
           ctx.moveTo(pTop.x, pTop.y);
           ctx.lineTo(pBot.x, pBot.y);
         }
@@ -1462,107 +1553,39 @@ class VisualizadorCNC {
 
     ctx.setLineDash([]);
 
-    // 3. Trayectorias de corte G1/G2/G3 agrupadas con reutilización de vértices
-    // 3a. Segmentos PENDIENTES (por donde aún no pasa la herramienta) - Color cian / guía de ruta
+    // 3. Trayectorias de corte G1/G2/G3 base (Cian / pendiente)
     ctx.lineWidth = baseLineWidth;
     ctx.strokeStyle = colorPendiente;
     ctx.beginPath();
-    let hayG1Pend = false;
-    let prevPendX = null, prevPendY = null, prevPendZ = null;
+    let hayG1 = false;
+    let prevG1X = null, prevG1Y = null, prevG1Z = null;
 
     for (let i = 0; i < n; i++) {
+      if (!visibles[i]) continue;
       const seg = this.trayectoria[i];
       if (seg.tipo !== 'G0') {
         const esOOB = (seg.x1 < 0 || seg.x1 > maxX || seg.x2 < 0 || seg.x2 > maxX ||
                        seg.y1 < 0 || seg.y1 > maxY || seg.y2 < 0 || seg.y2 > maxY);
         if (esOOB) {
-          prevPendX = null;
+          prevG1X = null;
           continue;
         }
 
-        if (!enEjecucion || i > idxActivo) {
-          const esCont = (prevPendX === seg.x1 && prevPendY === seg.y1 && prevPendZ === seg.z1);
-          if (!esCont) {
-            const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
-            ctx.moveTo(p1.x, p1.y);
-          }
-          const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
-          ctx.lineTo(p2.x, p2.y);
-          prevPendX = seg.x2; prevPendY = seg.y2; prevPendZ = seg.z2;
-          hayG1Pend = true;
-        } else if (i === idxActivo && progActivo < 0.999) {
-          // Porción restante del segmento activo desde la posición de la herramienta hasta el final
-          const midX = seg.x1 + (seg.x2 - seg.x1) * progActivo;
-          const midY = seg.y1 + (seg.y2 - seg.y1) * progActivo;
-          const midZ = seg.z1 + (seg.z2 - seg.z1) * progActivo;
-          const pMid = this.convertirAPantalla(midX, midY, midZ);
-          const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
-          ctx.moveTo(pMid.x, pMid.y);
-          ctx.lineTo(p2.x, p2.y);
-          prevPendX = seg.x2; prevPendY = seg.y2; prevPendZ = seg.z2;
-          hayG1Pend = true;
-        } else {
-          prevPendX = null;
+        const [p1, p2] = visibles[i];
+        const esCont = (prevG1X === seg.x1 && prevG1Y === seg.y1 && prevG1Z === seg.z1);
+        if (!esCont) {
+          ctx.moveTo(p1.x, p1.y);
         }
+        ctx.lineTo(p2.x, p2.y);
+        prevG1X = seg.x2; prevG1Y = seg.y2; prevG1Z = seg.z2;
+        hayG1 = true;
       } else {
-        prevPendX = null;
+        prevG1X = null;
       }
     }
-    if (hayG1Pend) ctx.stroke();
+    if (hayG1) ctx.stroke();
 
-    // 3b. Segmentos RECORRIDOS (por donde YA PASÓ físicamente la herramienta) - Color vivo de herramienta
-    if (enEjecucion) {
-      ctx.lineWidth = baseLineWidth * 1.25;
-      ctx.strokeStyle = colorRecorrido;
-      ctx.beginPath();
-      let hayG1Done = false;
-      let prevDoneX = null, prevDoneY = null, prevDoneZ = null;
-
-      for (let i = 0; i < n; i++) {
-        const seg = this.trayectoria[i];
-        if (seg.tipo !== 'G0') {
-          const esOOB = (seg.x1 < 0 || seg.x1 > maxX || seg.x2 < 0 || seg.x2 > maxX ||
-                         seg.y1 < 0 || seg.y1 > maxY || seg.y2 < 0 || seg.y2 > maxY);
-          if (esOOB) {
-            prevDoneX = null;
-            continue;
-          }
-
-          if (i < idxActivo) {
-            const esCont = (prevDoneX === seg.x1 && prevDoneY === seg.y1 && prevDoneZ === seg.z1);
-            if (!esCont) {
-              const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
-              ctx.moveTo(p1.x, p1.y);
-            }
-            const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
-            ctx.lineTo(p2.x, p2.y);
-            prevDoneX = seg.x2; prevDoneY = seg.y2; prevDoneZ = seg.z2;
-            hayG1Done = true;
-          } else if (i === idxActivo && progActivo > 0.001) {
-            // Porción recorrida del segmento activo desde el inicio hasta la punta exacta de la herramienta
-            const midX = seg.x1 + (seg.x2 - seg.x1) * progActivo;
-            const midY = seg.y1 + (seg.y2 - seg.y1) * progActivo;
-            const midZ = seg.z1 + (seg.z2 - seg.z1) * progActivo;
-            const esCont = (prevDoneX === seg.x1 && prevDoneY === seg.y1 && prevDoneZ === seg.z1);
-            if (!esCont) {
-              const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
-              ctx.moveTo(p1.x, p1.y);
-            }
-            const pMid = this.convertirAPantalla(midX, midY, midZ);
-            ctx.lineTo(pMid.x, pMid.y);
-            prevDoneX = midX; prevDoneY = midY; prevDoneZ = midZ;
-            hayG1Done = true;
-          } else {
-            prevDoneX = null;
-          }
-        } else {
-          prevDoneX = null;
-        }
-      }
-      if (hayG1Done) ctx.stroke();
-    }
-
-    // 3d. Segmentos FUERA de los límites (Rojo de alerta)
+    // 4. Segmentos FUERA de los límites (Rojo de alerta)
     ctx.strokeStyle = '#dc2626';
     ctx.lineWidth = baseLineWidth;
     ctx.beginPath();
@@ -1570,17 +1593,17 @@ class VisualizadorCNC {
     let prevOOBX = null, prevOOBY = null, prevOOBZ = null;
 
     for (let i = 0; i < n; i++) {
+      if (!visibles[i]) continue;
       const seg = this.trayectoria[i];
       if (seg.tipo !== 'G0') {
         const esOOB = (seg.x1 < 0 || seg.x1 > maxX || seg.x2 < 0 || seg.x2 > maxX ||
                        seg.y1 < 0 || seg.y1 > maxY || seg.y2 < 0 || seg.y2 > maxY);
         if (esOOB) {
+          const [p1, p2] = visibles[i];
           const esContinuo = (prevOOBX === seg.x1 && prevOOBY === seg.y1 && prevOOBZ === seg.z1);
           if (!esContinuo) {
-            const p1 = this.convertirAPantalla(seg.x1, seg.y1, seg.z1);
             ctx.moveTo(p1.x, p1.y);
           }
-          const p2 = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
           ctx.lineTo(p2.x, p2.y);
           prevOOBX = seg.x2; prevOOBY = seg.y2; prevOOBZ = seg.z2;
           hayG1OOB = true;
@@ -1593,12 +1616,13 @@ class VisualizadorCNC {
     }
     if (hayG1OOB) ctx.stroke();
 
-    // 4. Si el usuario hace zoom a fondo (> 1200%), dibujar nodos/vértices G-code con culling ultra-rápido
+    // 5. Nodos/vértices G-code con zoom extremo (> 1200%)
     if (this.zoom > 12.0 && n < 25000) {
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
       const radioNodo = Math.min(3.0, Math.max(1.2, Math.sqrt(this.zoom / 14)));
       for (let i = 0; i < n; i++) {
+        if (!visibles[i]) continue;
         const seg = this.trayectoria[i];
         if (seg.tipo !== 'G0') {
           const p = this.convertirAPantalla(seg.x2, seg.y2, seg.z2);
@@ -1612,6 +1636,128 @@ class VisualizadorCNC {
     }
 
     ctx.restore();
+  }
+
+  // Alias compatible
+  dibujarTrayectorias(ctx) {
+    this.dibujarTrayectoriasBase(ctx);
+  }
+
+  // Capa dinámica de progreso en vivo. Los segmentos ya transitados se acumulan de forma
+  // incremental en un búfer offscreen (solo se dibujan los segmentos nuevos), por lo que el costo
+  // por fotograma ya no crece con el tamaño del programa (antes era O(n) en cada frame).
+  dibujarProgresoEjecucion(ctx) {
+    if (!this.trayectoria || this.trayectoria.length === 0) return;
+    const visibles = this._cacheVisibles;
+    if (!visibles) return;
+    const n = this.trayectoria.length;
+    const idxActivo = Math.min(n, Math.max(0, this.indiceSegmentoActivo !== undefined ? this.indiceSegmentoActivo : -1));
+    if (idxActivo < 0) return;
+    const progActivo = Math.max(0.0, Math.min(1.0, this.progresoSegmentoActivo || 0.0));
+    const maxX = this.limitesMaquina.maxX;
+    const maxY = this.limitesMaquina.maxY;
+    const colorRecorrido = this.obtenerColorRecorrido();
+    const baseLineWidth = Math.min(3.2, Math.max(1.4, 1.8 * Math.pow(this.zoom, 0.12)));
+
+    // Búfer acumulado de segmentos completados
+    if (!this._progCanvas) {
+      this._progCanvas = document.createElement('canvas');
+      this._progCtx = this._progCanvas.getContext('2d');
+      this._progInvalido = true;
+    }
+    const pc = this._progCanvas;
+    const pctx = this._progCtx;
+    if (pc.width !== this.lienzoEstatico.width || pc.height !== this.lienzoEstatico.height) {
+      pc.width = this.lienzoEstatico.width;
+      pc.height = this.lienzoEstatico.height;
+      this._progInvalido = true;
+    }
+    if (this._progInvalido || idxActivo < this._progIdx || this._progColor !== colorRecorrido) {
+      pctx.setTransform(1, 0, 0, 1, 0, 0);
+      pctx.clearRect(0, 0, pc.width, pc.height);
+      this._progIdx = 0;
+      this._progInvalido = false;
+      this._progColor = colorRecorrido;
+    }
+    if (idxActivo > this._progIdx) {
+      pctx.setTransform(pc.width / this.anchoPantalla, 0, 0, pc.height / this.altoPantalla, 0, 0);
+      const desde = this._progIdx;
+
+      // 1. G0 recorridos (desvanecidos)
+      pctx.strokeStyle = 'rgba(115, 128, 144, 0.35)';
+      pctx.lineWidth = Math.min(2.0, Math.max(0.8, 1.0 * Math.pow(this.zoom, 0.1)));
+      pctx.setLineDash([3, 4]);
+      pctx.beginPath();
+      let hayG0 = false;
+      let pgx = null, pgy = null, pgz = null;
+      for (let i = desde; i < idxActivo; i++) {
+        if (!visibles[i]) continue;
+        const seg = this.trayectoria[i];
+        if (seg.tipo === 'G0') {
+          const [p1, p2] = visibles[i];
+          if (pgx !== seg.x1 || pgy !== seg.y1 || pgz !== seg.z1) pctx.moveTo(p1.x, p1.y);
+          pctx.lineTo(p2.x, p2.y);
+          pgx = seg.x2; pgy = seg.y2; pgz = seg.z2;
+          hayG0 = true;
+        } else {
+          pgx = null;
+        }
+      }
+      if (hayG0) pctx.stroke();
+
+      // 2. G1/G2/G3 recorridos (color vivo según herramienta activa)
+      pctx.setLineDash([]);
+      pctx.lineWidth = baseLineWidth * 1.25;
+      pctx.strokeStyle = colorRecorrido;
+      pctx.beginPath();
+      let hayG1 = false;
+      let pdx = null, pdy = null, pdz = null;
+      for (let i = desde; i < idxActivo; i++) {
+        if (!visibles[i]) continue;
+        const seg = this.trayectoria[i];
+        if (seg.tipo === 'G0') { pdx = null; continue; }
+        const esOOB = (seg.x1 < 0 || seg.x1 > maxX || seg.x2 < 0 || seg.x2 > maxX ||
+                       seg.y1 < 0 || seg.y1 > maxY || seg.y2 < 0 || seg.y2 > maxY);
+        if (esOOB) { pdx = null; continue; }
+        const [p1, p2] = visibles[i];
+        if (!(pdx === seg.x1 && pdy === seg.y1 && pdz === seg.z1)) pctx.moveTo(p1.x, p1.y);
+        pctx.lineTo(p2.x, p2.y);
+        pdx = seg.x2; pdy = seg.y2; pdz = seg.z2;
+        hayG1 = true;
+      }
+      if (hayG1) pctx.stroke();
+      this._progIdx = idxActivo;
+    }
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(pc, 0, 0);
+    ctx.restore();
+
+    // 3. Fracción del segmento activo (único cálculo por fotograma)
+    if (idxActivo < n && progActivo > 0.001 && visibles[idxActivo]) {
+      const seg = this.trayectoria[idxActivo];
+      if (seg.tipo !== 'G0') {
+        const esOOB = (seg.x1 < 0 || seg.x1 > maxX || seg.x2 < 0 || seg.x2 > maxX ||
+                       seg.y1 < 0 || seg.y1 > maxY || seg.y2 < 0 || seg.y2 > maxY);
+        if (!esOOB) {
+          const [p1] = visibles[idxActivo];
+          const pMid = this.convertirAPantalla(
+            seg.x1 + (seg.x2 - seg.x1) * progActivo,
+            seg.y1 + (seg.y2 - seg.y1) * progActivo,
+            seg.z1 + (seg.z2 - seg.z1) * progActivo);
+          ctx.save();
+          ctx.setLineDash([]);
+          ctx.lineWidth = baseLineWidth * 1.25;
+          ctx.strokeStyle = colorRecorrido;
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(pMid.x, pMid.y);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
   }
 
   // Punto de origen de coordenadas de trabajo (0,0,0)
@@ -1668,7 +1814,12 @@ class VisualizadorCNC {
         return;
       }
 
-      const dt = Math.min(50, tiempoActual - tiempoPrevio);
+      if (document.querySelector('.modal-backdrop:not(.hidden)')) {
+        this.animacionGiroId = requestAnimationFrame(pasoAnimacion);
+        return;
+      }
+
+      const dt = Math.min(100, Math.max(1, tiempoActual - tiempoPrevio));
       tiempoPrevio = tiempoActual;
 
       const factorFrame = dt / 16.67;
@@ -1682,14 +1833,13 @@ class VisualizadorCNC {
       const distSq = dx * dx + dy * dy + dz * dz;
 
       if (distSq > 0.000001) {
-        const factorLerp = Math.min(1.0, Math.max(0.20, dt * 0.024));
+        const factorLerp = Math.min(1.0, Math.max(0.18, dt * 0.035));
         this.posicionHerramienta.x += dx * factorLerp;
         this.posicionHerramienta.y += dy * factorLerp;
         this.posicionHerramienta.z += dz * factorLerp;
         this.actualizarIndicadoresPosicionTexto(this.posicionHerramienta.x, this.posicionHerramienta.y, this.posicionHerramienta.z);
         if (this.lineaActualEjecucion >= 0) {
           this.actualizarProgresoTrayectoriaDesdePosicion();
-          this.necesitaRedibujarEstatico = true;
         }
       }
 
@@ -2583,12 +2733,12 @@ class VisualizadorCNC {
 
       // 1. Superficie de la mesa física mecanizable
       ctx.fillStyle = 'rgba(12, 17, 24, 0.75)';
-      ctx.fillRect(p0.x, pMax.y, ancho, alto);
+      this.rellenarPoligonoVisible(ctx, [{x:p0.x,y:pMax.y},{x:pMax.x,y:pMax.y},{x:pMax.x,y:p0.y},p0]);
 
       // 2. Borde perimetral de la mesa
       ctx.lineWidth = hayDesb ? 2.5 : 1.5;
       ctx.strokeStyle = hayDesb ? 'rgba(220, 38, 38, 0.95)' : 'rgba(0, 229, 255, 0.7)';
-      ctx.strokeRect(p0.x, pMax.y, ancho, alto);
+      this.trazarAristasVisibles(ctx, [{x:p0.x,y:pMax.y},{x:pMax.x,y:pMax.y},{x:pMax.x,y:p0.y},p0]);
 
       // 3. Marcas de escuadra técnica en las 4 esquinas de la mesa
       const tamBracket = Math.min(16, Math.max(6, 12 * Math.sqrt(this.zoom)));
@@ -2630,11 +2780,11 @@ class VisualizadorCNC {
 
       // Volumen útil de la máquina hacia arriba (+Z)
       ctx.fillStyle = 'rgba(12, 17, 24, 0.65)';
-      ctx.fillRect(p0.x, pMax.y, ancho, alto);
+      this.rellenarPoligonoVisible(ctx, [{x:p0.x,y:pMax.y},{x:pMax.x,y:pMax.y},{x:pMax.x,y:p0.y},p0]);
 
       ctx.lineWidth = hayDesb ? 2.5 : 1.5;
       ctx.strokeStyle = hayDesb ? 'rgba(220, 38, 38, 0.95)' : 'rgba(0, 229, 255, 0.7)';
-      ctx.strokeRect(p0.x, pMax.y, ancho, alto);
+      this.trazarAristasVisibles(ctx, [{x:p0.x,y:pMax.y},{x:pMax.x,y:pMax.y},{x:pMax.x,y:p0.y},p0]);
 
       // Línea sólida de la cama de la máquina en Z = 0
       ctx.strokeStyle = '#00e5ff';
@@ -2669,36 +2819,19 @@ class VisualizadorCNC {
 
       // Superficie física de la mesa sobre el plano Z = 0 (Base donde descansa la pieza)
       ctx.fillStyle = 'rgba(14, 20, 28, 0.85)';
-      ctx.beginPath();
-      ctx.moveTo(c1.x, c1.y);
-      ctx.lineTo(c2.x, c2.y);
-      ctx.lineTo(c3.x, c3.y);
-      ctx.lineTo(c4.x, c4.y);
-      ctx.closePath();
-      ctx.fill();
+      this.rellenarPoligonoVisible(ctx, [c1,c2,c3,c4]);
 
       // Perímetro sólido de la mesa en Z = 0
       ctx.lineWidth = hayDesb ? 2.5 : 2.0;
       ctx.strokeStyle = hayDesb ? 'rgba(220, 38, 38, 0.95)' : 'rgba(0, 229, 255, 0.85)';
-      ctx.stroke();
+      this.trazarAristasVisibles(ctx, [c1,c2,c3,c4]);
 
       // Columnas guía y volumen de trabajo que asciende hacia ARRIBA (+maxZ)
       ctx.strokeStyle = hayDesb ? 'rgba(220, 38, 38, 0.45)' : 'rgba(0, 229, 255, 0.35)';
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      // Aristas verticales de altura (desde la mesa Z=0 hasta el techo Z=+maxZ)
-      ctx.moveTo(c1.x, c1.y); ctx.lineTo(t1.x, t1.y);
-      ctx.moveTo(c2.x, c2.y); ctx.lineTo(t2.x, t2.y);
-      ctx.moveTo(c3.x, c3.y); ctx.lineTo(t3.x, t3.y);
-      ctx.moveTo(c4.x, c4.y); ctx.lineTo(t4.x, t4.y);
-      // Marco perimetral del techo (+maxZ)
-      ctx.moveTo(t1.x, t1.y);
-      ctx.lineTo(t2.x, t2.y);
-      ctx.lineTo(t3.x, t3.y);
-      ctx.lineTo(t4.x, t4.y);
-      ctx.closePath();
-      ctx.stroke();
+      for (const arista of [[c1,t1], [c2,t2], [c3,t3], [c4,t4]]) this.trazarAristasVisibles(ctx, arista, false);
+      this.trazarAristasVisibles(ctx, [t1,t2,t3,t4]);
       ctx.setLineDash([]);
 
       // Rótulos de la mesa base y de la altura máxima Z con fondo protector

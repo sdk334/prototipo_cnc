@@ -8,7 +8,7 @@ Responsabilidad:
 - Gestión de conexión física por puerto serial USB con PySerial a 115200 baudios.
 - Hilo daemon de sondeo en tiempo real mediante consulta '?' cada 200 ms.
 - Analizador de sintaxis de telemetría de GRBL v1.1 (WPos, MPos, FS, Ov, Bf, Pn).
-- Protocolo de transmisión de G-code con control de flujo por conteo de caracteres (Character-Counting).
+- Transmisión serializada de G-code con confirmación y barreras de finalización física.
 - Inyección inmediata de comandos en tiempo real (0x18 Soft Reset, ! Feed Hold, ~ Cycle Start).
 - Movimiento manual seguro de ejes mediante directivas $J= de GRBL v1.1.
 - Modo emulador virtual didáctico para pruebas académicas en laboratorios sin máquina física.
@@ -20,6 +20,8 @@ import time
 import math
 import threading
 from collections import deque
+from .interprete_gcode import Interprete, palabras, limpiar, quitar_motor, TOKEN
+from .procesador_gcode import ProcesadorGCode
 from typing import Callable, Optional, List, Dict, Any
 
 try:
@@ -43,6 +45,8 @@ class ControladorGRBL:
         self.modo_lapiz: bool = False
         self.modo_laser: bool = False
         self.tipo_herramienta: str = "fresa"
+        self.pausa_m6: bool = True
+        self.herramienta_activa: str = "T1"
 
         # Estado en tiempo real parseado del controlador
         self.estado_maquina: Dict[str, Any] = {
@@ -51,6 +55,7 @@ class ControladorGRBL:
             "modo_lapiz": False,
             "modo_laser": False,
             "tipo_herramienta": "fresa",
+            "herramienta": "T1",
             "wpos": [0.0, 0.0, 0.0],
             "mpos": [0.0, 0.0, 0.0],
             "wco": [0.0, 0.0, 0.0],
@@ -62,12 +67,21 @@ class ControladorGRBL:
             "override_spindle": 100,
             "pines_limite": "",
             "buffer_planificador": 15,
-            "buffer_rx_libre": 128,
-            "modo_lapiz": False
+            "buffer_rx_libre": 128
         }
 
         # Estructuras para streaming de G-code
-        self._bloque_lock = threading.Lock()
+        self._bloque_lock = threading.RLock()
+        self._serial_write_lock = threading.Lock()
+        self._pendientes_respuesta = deque()
+        self._cola_manual = deque()
+        self._evento_sesion = threading.Event()
+        self._hilo_virtual = None
+        self._esperando_fin = False
+        self._cambio_m6 = False
+        self._cambio_listo = False
+        self._bloqueo_corte = False
+        self._plan_programa = []
         self._cola_lineas: List[str] = []
         self._cola_bytes_en_transito = deque()
         self._total_lineas_programa: int = 0
@@ -82,6 +96,15 @@ class ControladorGRBL:
         self._detener_hilos: bool = False
 
         # Funciones de retorno (callbacks)
+        self.cb_linea_confirmada = None
+        self.cb_resultado_programa = None
+        self._objetivo_feed_override = None
+        self._override_feed_pendiente = None
+        self._objetivo_spindle_override = None
+        self._override_spindle_pendiente = None
+        self.spindle_override = 1.0
+        self.feed_override = 1.0
+        self._spindle_solicitado = 0.
         self.cb_estado_actualizado: Optional[Callable[[Dict[str, Any]], None]] = None
         self.cb_linea_consola: Optional[Callable[[str, str], None]] = None
         self.cb_progreso: Optional[Callable[[int, int, float, str], None]] = None
@@ -173,12 +196,12 @@ class ControladorGRBL:
 
     def conectar(self, puerto: str, baudrate: int = 115200) -> bool:
         """Establece conexión con el puerto especificado o activa el simulador."""
-        if self.esta_conectado:
-            self.desconectar()
+        self.desconectar()
 
         self.nombre_puerto = puerto
         self.baudrate = baudrate
         self._detener_hilos = False
+        self._evento_sesion = threading.Event()
 
         if puerto == "SIMULADOR_VIRTUAL":
             self.modo_virtual = True
@@ -194,7 +217,7 @@ class ControladorGRBL:
             return False
 
         try:
-            # Abrir puerto serie con timeout de lectura no bloqueante
+            # Abrir puerto serie con timeout y parámetros optimizados para drivers USB de Windows
             self.puerto_serial = serial.Serial(
                 port=puerto,
                 baudrate=baudrate,
@@ -202,7 +225,9 @@ class ControladorGRBL:
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
                 timeout=0.1,
-                write_timeout=0.5
+                write_timeout=2.0,
+                rtscts=False,
+                dsrdtr=False
             )
 
             # Esperar inicialización del microcontrolador (reinicio por DTR)
@@ -224,7 +249,9 @@ class ControladorGRBL:
 
             # Solicitar reporte de estado inmediato y configuración
             try:
-                self.puerto_serial.write(b'?\n$I\n$G\n')
+                self.enviar_tiempo_real(b'?')
+                if self.modo_lapiz:
+                    self.enviar_directo('M5\n')
             except Exception:
                 pass
             return True
@@ -236,20 +263,38 @@ class ControladorGRBL:
             return False
 
     def desconectar(self):
-        """Cierra la conexión serial y detiene todos los hilos en segundo plano."""
+        """Detiene la sesión y espera a sus trabajadores antes de reutilizar el puerto."""
+        if self.esta_conectado and self._en_ejecucion_gcode:
+            self.parada_emergencia()
         self._detener_hilos = True
-        self.esta_conectado = False
+        self._evento_sesion.set()
         self._en_ejecucion_gcode = False
-
-        if self.puerto_serial and self.puerto_serial.is_open:
+        self._en_pausa_gcode = False
+        puerto = self.puerto_serial
+        self.esta_conectado = False
+        if puerto and puerto.is_open:
             try:
-                self.puerto_serial.close()
+                puerto.close()
             except Exception:
                 pass
+        for hilo in (self._hilo_lectura, self._hilo_sondeo, self._hilo_virtual):
+            if hilo and hilo is not threading.current_thread():
+                hilo.join(timeout=3)
+                if hilo.is_alive():
+                    raise RuntimeError("El trabajador serial no terminó; reconexión bloqueada.")
         self.puerto_serial = None
-
-        self.estado_maquina["estado"] = "DESCONECTADO"
-        self._notificar_consola("c-system", "[DESCONECTADO] Conexión serial finalizada.")
+        with self._bloque_lock:
+            self._pendientes_respuesta.clear()
+            self._cola_manual.clear()
+            self._objetivo_feed_override = self._override_feed_pendiente = None
+            self._objetivo_spindle_override = self._override_spindle_pendiente = None
+            self.spindle_override = 1.0
+            self.feed_override = 1.0
+            self._cola_bytes_en_transito.clear()
+            self._esperando_fin = False
+            self._cambio_m6 = self._cambio_listo = False
+        self.estado_maquina['estado'] = 'DESCONECTADO'
+        self._notificar_consola('c-system', '[DESCONECTADO] Conexión serial finalizada.')
         if self.cb_estado_actualizado:
             self.cb_estado_actualizado(dict(self.estado_maquina))
 
@@ -267,14 +312,16 @@ class ControladorGRBL:
 
     def _bucle_lectura_serial(self):
         """Hilo de escucha continua que procesa respuestas entrantes de GRBL."""
+        evento = self._evento_sesion
+        puerto = self.puerto_serial
         buffer_linea = bytearray()
 
-        while not self._detener_hilos and self.esta_conectado:
+        while not evento.is_set() and self.esta_conectado:
             if not self.puerto_serial or not self.puerto_serial.is_open:
                 break
 
             try:
-                caracteres = self.puerto_serial.read(64)
+                caracteres = puerto.read(64)
                 if not caracteres:
                     continue
 
@@ -292,18 +339,23 @@ class ControladorGRBL:
                     self._notificar_consola("c-alarm", f"[ERROR DE LECTURA] {str(e)}")
                 break
 
-        self.esta_conectado = False
+        if not evento.is_set():
+            self.esta_conectado = False
+            self._en_ejecucion_gcode = False
+            self.estado_maquina['estado'] = 'DESCONECTADO'
+            if self.cb_estado_actualizado:
+                self.cb_estado_actualizado(dict(self.estado_maquina))
 
     def _bucle_sondeo_estado(self):
         """Hilo de sondeo que consulta el estado enviando '?' cada 200 ms (especificación TT)."""
-        while not self._detener_hilos and self.esta_conectado:
+        evento = self._evento_sesion
+        while not evento.is_set() and self.esta_conectado:
             try:
                 if self.puerto_serial and self.puerto_serial.is_open:
-                    # Enviar el carácter de tiempo real '?' directamente
-                    self.puerto_serial.write(b'?')
+                    self._escribir_serial(b'?')
             except Exception:
                 pass
-            time.sleep(0.2)  # Rigurosamente 200 ms conforme al Capítulo 5 del TT
+            evento.wait(0.2)
 
     # =========================================================================
     # PARSER DE TELEMETRÍA Y RESPUESTAS DE GRBL
@@ -336,6 +388,7 @@ class ControladorGRBL:
 
         # 4. Reporte de Alarma (ej. ALARM:1)
         if linea.startswith("ALARM:"):
+            self._cancelar_por_error(linea)
             self.estado_maquina["estado"] = "ALARM"
             self._notificar_consola("c-alarm", linea)
             try:
@@ -369,6 +422,7 @@ class ControladorGRBL:
         self.estado_maquina["estado"] = estado_nombre
         self.estado_maquina["subestado"] = subestado
 
+        self.estado_maquina["pines_limite"] = ""
         campos = campos_str.split('|')
         for campo in campos:
             partes = campo.split(':', 1)
@@ -406,6 +460,7 @@ class ControladorGRBL:
                     self.estado_maquina["feed_real"] = vals[0]
                     self.estado_maquina["spindle_real"] = vals[1]
                     self.estado_maquina["spindle_encendido"] = vals[1] > 0
+                    if vals[1] > 0: self._spindle_solicitado = vals[1]
 
             elif clave == "F":
                 vals = [float(x) for x in self._regex_coords.findall(valor)]
@@ -422,11 +477,28 @@ class ControladorGRBL:
                 vals = [int(x) for x in re.findall(r"\d+", valor)]
                 if len(vals) >= 3:
                     self.estado_maquina["override_feed"] = vals[0]
+                    if self._override_feed_pendiente is not None and vals[0] != self._override_feed_pendiente:
+                        self._override_feed_pendiente = None
+                    self._ajustar_feed_override()
                     self.estado_maquina["override_rapid"] = vals[1]
                     self.estado_maquina["override_spindle"] = vals[2]
+                    if self._override_spindle_pendiente is not None and vals[2] != self._override_spindle_pendiente:
+                        self._override_spindle_pendiente = None
+                    self._ajustar_spindle_override()
 
             elif clave == "Pn":
                 self.estado_maquina["pines_limite"] = valor
+
+        if any(c.startswith('MPos:') for c in campos):
+            self.estado_maquina['wpos'] = [round(m-w, 3) for m, w in zip(self.estado_maquina['mpos'], self.estado_maquina['wco'])]
+        elif any(c.startswith('WPos:') for c in campos):
+            self.estado_maquina['mpos'] = [round(w+o, 3) for w, o in zip(self.estado_maquina['wpos'], self.estado_maquina['wco'])]
+        if self._esperando_fin and estado_nombre == 'IDLE':
+            self._esperando_fin = False
+            self._en_ejecucion_gcode = False
+            if self.cb_progreso:
+                self.cb_progreso(self._total_lineas_programa, self._total_lineas_programa, 100., self._tiempo_programa())
+            self._notificar_consola('c-system', '[PROGRAMA] Movimiento finalizado; máquina en reposo.')
 
         # Notificar al frontend mediante callback
         if self.cb_estado_actualizado:
@@ -443,6 +515,12 @@ class ControladorGRBL:
         with self._bloque_lock:
             self._cola_lineas.clear()
             self._cola_bytes_en_transito.clear()
+            self._pendientes_respuesta.clear()
+            self._cola_manual.clear()
+            self._objetivo_feed_override = self._override_feed_pendiente = None
+            self._objetivo_spindle_override = self._override_spindle_pendiente = None
+            self._esperando_fin = False
+            self._cambio_m6 = self._cambio_listo = False
 
         if self.modo_virtual:
             self.estado_maquina["estado"] = "ALARM"
@@ -455,11 +533,8 @@ class ControladorGRBL:
             return
 
         if self.puerto_serial and self.puerto_serial.is_open:
-            try:
-                self.puerto_serial.write(b'\x18')
+            if self.enviar_tiempo_real(b'\x18'):
                 self._notificar_consola("c-alarm", "[E-STOP] Señal de reinicio inmediato (0x18) enviada a GRBL.")
-            except Exception as e:
-                self._notificar_consola("c-alarm", f"[ERROR E-STOP] {str(e)}")
 
     def pausar(self):
         """Envía el comando '!' (Feed Hold) para pausar el movimiento con desaceleración segura."""
@@ -470,14 +545,18 @@ class ControladorGRBL:
             return
 
         if self.puerto_serial and self.puerto_serial.is_open:
-            try:
-                self.puerto_serial.write(b'!')
+            if self.enviar_tiempo_real(b'!'):
                 self._notificar_consola("c-info", "[PAUSA] Señal Feed Hold (!) enviada.")
-            except Exception as e:
-                self._notificar_consola("c-alarm", f"[ERROR PAUSA] {str(e)}")
 
     def reanudar(self):
         """Envía el comando '~' (Cycle Start) para continuar el mecanizado."""
+        if self._cambio_m6 and not self._cambio_listo:
+            self._notificar_consola('c-warn', '[M6] Espere la confirmación de parada del husillo.')
+            return
+        if self._bloqueo_corte and not self.estado_maquina.get('spindle_encendido'):
+            self._notificar_consola('c-warn', '[SEGURIDAD] Encienda el husillo antes de continuar.')
+            return
+        self._cambio_m6 = self._cambio_listo = self._bloqueo_corte = False
         self._en_pausa_gcode = False
         if self.modo_virtual:
             self.estado_maquina["estado"] = "RUN"
@@ -485,11 +564,11 @@ class ControladorGRBL:
             return
 
         if self.puerto_serial and self.puerto_serial.is_open:
-            try:
-                self.puerto_serial.write(b'~')
+            if self.enviar_tiempo_real(b'~'):
                 self._notificar_consola("c-ok", "[REANUDAR] Señal Cycle Start (~) enviada.")
-            except Exception as e:
-                self._notificar_consola("c-alarm", f"[ERROR REANUDAR] {str(e)}")
+
+        # Reanudar alimentación de líneas en cola si estaban detenidas por pausa o cambio de herramienta
+        self._alimentar_buffer_gcode()
 
     def desbloquear_alarma(self):
         """Envía el comando '$X' para desbloquear el estado de alarma de GRBL."""
@@ -548,6 +627,16 @@ class ControladorGRBL:
 
     def mover_jog(self, eje: str, paso: float, velocidad: float):
         """Ejecuta un movimiento manual incremental según la directiva $J= de GRBL v1.1."""
+        estado_actual = self.estado_maquina.get('estado', 'IDLE')
+        if self._en_ejecucion_gcode:
+            self._notificar_consola('c-warn', '[BLOQUEO] No se permite Jog durante el mecanizado de un programa.')
+            return
+        if estado_actual == 'ALARM':
+            self._notificar_consola('c-alarm', '[BLOQUEO] Máquina en ALARMA. Desbloquee con $X antes de mover con Jog.')
+            return
+        if estado_actual not in ('IDLE', 'JOG'):
+            self._notificar_consola('c-warn', f'[BLOQUEO] Jog requiere máquina en reposo o jog previo (estado actual: {estado_actual}).')
+            return
         eje = eje.upper()
         if eje not in ("X", "Y", "Z"):
             return
@@ -564,35 +653,113 @@ class ControladorGRBL:
             if self.cb_estado_actualizado:
                 self.cb_estado_actualizado(dict(self.estado_maquina))
 
-            def fin_jog():
-                time.sleep(0.25)
-                if self.estado_maquina.get("estado") == "JOG":
-                    self.estado_maquina["estado"] = "IDLE"
-                    if self.cb_estado_actualizado:
-                        self.cb_estado_actualizado(dict(self.estado_maquina))
+            self._tiempo_ultimo_jog = time.time()
+            evento = self._evento_sesion
+            def fin_jog(tiempo_llamada):
+                if evento.wait(.25):
+                    return
+                if evento is self._evento_sesion and self.estado_maquina.get("estado") == "JOG":
+                    if time.time() - getattr(self, '_tiempo_ultimo_jog', 0) >= 0.24:
+                        self.estado_maquina["estado"] = "IDLE"
+                        if self.cb_estado_actualizado:
+                            self.cb_estado_actualizado(dict(self.estado_maquina))
 
-            threading.Thread(target=fin_jog, daemon=True).start()
+            threading.Thread(target=fin_jog, args=(self._tiempo_ultimo_jog,), daemon=True).start()
             return
 
         self.enviar_directo(f"{cmd}\n")
         self._notificar_consola("c-ok", f"> {cmd}")
 
     def establecer_feed_override(self, porcentaje: float):
-        """Ajusta el multiplicador dinámico de velocidad de avance (10% a 250%)."""
-        pct = max(10.0, min(250.0, float(porcentaje)))
-        self.feed_override = pct / 100.0
-        self.estado_maquina["override_feed"] = int(pct)
-        if self.cb_estado_actualizado:
-            self.cb_estado_actualizado(dict(self.estado_maquina))
+        """Aplica el objetivo virtual o converge con reportes Ov del firmware físico."""
+        limite_max = 2000 if self.modo_virtual else 200
+        pct = max(10, min(limite_max, int(round(float(porcentaje)))))
+        if self.modo_virtual:
+            self.feed_override = pct / 100.
+            self.estado_maquina['override_feed'] = pct
+            if self.cb_estado_actualizado:
+                self.cb_estado_actualizado(dict(self.estado_maquina))
+            return
+        if not self.esta_conectado:
+            return
+        with self._bloque_lock:
+            self._objetivo_feed_override = pct
+            self._ajustar_feed_override()
 
-        if not self.modo_virtual and self.esta_conectado:
-            # En GRBL v1.1 real, los códigos de tiempo real modifican el feed override:
-            if round(pct) == 100:
-                self.enviar_tiempo_real(0x90)
+    def _ajustar_feed_override(self):
+        # GRBL guarda los incrementos como flags: repetirlos en un paquete puede
+        # colapsarlos. Esperar un Ov distinto antes de enviar otro incremento.
+        with self._bloque_lock:
+            if self.modo_virtual or not self.esta_conectado or self._objetivo_feed_override is None or self._override_feed_pendiente is not None:
+                return
+            actual = self.estado_maquina['override_feed']
+            delta = self._objetivo_feed_override - actual
+            if delta == 0:
+                self._objetivo_feed_override = None
+                return
+            if self._objetivo_feed_override == 100:
+                comando = 0x90
+            elif delta >= 10: comando = 0x91
+            elif delta <= -10: comando = 0x92
+            elif delta > 0: comando = 0x93
+            else: comando = 0x94
+            self._override_feed_pendiente = actual
+            if self.enviar_tiempo_real(bytes([comando])):
+                self.enviar_tiempo_real(b'?')
+            else:
+                self._override_feed_pendiente = None
+                self._objetivo_feed_override = None
+
+    def establecer_spindle_override(self, porcentaje: float):
+        """Ajusta el porcentaje de velocidad del husillo o potencia láser entre 10% y 200%."""
+        pct = max(10, min(200, int(round(float(porcentaje)))))
+        if self.modo_virtual:
+            self.spindle_override = pct / 100.
+            self.estado_maquina['override_spindle'] = pct
+            if self.estado_maquina.get('spindle_encendido'):
+                self.estado_maquina['spindle_real'] = round(self._spindle_solicitado * self.spindle_override, 1)
+            if self.cb_estado_actualizado:
+                self.cb_estado_actualizado(dict(self.estado_maquina))
+            return
+        if not self.esta_conectado:
+            return
+        with self._bloque_lock:
+            self._objetivo_spindle_override = pct
+            self._ajustar_spindle_override()
+
+    def _ajustar_spindle_override(self):
+        # GRBL v1.1 comandos de tiempo real de husillo:
+        # 0x99: Reset a 100%, 0x9A: +10%, 0x9B: -10%, 0x9C: +1%, 0x9D: -1%
+        with self._bloque_lock:
+            if self.modo_virtual or not self.esta_conectado or self._objetivo_spindle_override is None or self._override_spindle_pendiente is not None:
+                return
+            actual = self.estado_maquina.get('override_spindle', 100)
+            delta = self._objetivo_spindle_override - actual
+            if delta == 0:
+                self._objetivo_spindle_override = None
+                return
+            if self._objetivo_spindle_override == 100:
+                comando = 0x99
+            elif delta >= 10: comando = 0x9A
+            elif delta <= -10: comando = 0x9B
+            elif delta > 0: comando = 0x9C
+            else: comando = 0x9D
+            self._override_spindle_pendiente = actual
+            if self.enviar_tiempo_real(bytes([comando])):
+                self.enviar_tiempo_real(b'?')
+            else:
+                self._override_spindle_pendiente = None
+                self._objetivo_spindle_override = None
 
     def establecer_tipo_herramienta(self, tipo: str):
         """Configura el tipo de herramienta activa ('fresa', 'lapiz' o 'laser')."""
+        if self._en_ejecucion_gcode or self._pendientes_respuesta:
+            self._notificar_consola('c-warn', '[BLOQUEO] Detenga el programa y espere los comandos pendientes antes de cambiar la herramienta.')
+            return False
         tipo_normalizado = str(tipo).strip().lower()
+        if tipo_normalizado == 'lapiz' and self.esta_conectado and not self.modo_virtual:
+            if not self.enviar_directo('M5\n'):
+                return False
         if tipo_normalizado == "lapiz":
             self.modo_lapiz = True
             self.modo_laser = False
@@ -611,14 +778,9 @@ class ControladorGRBL:
         self.estado_maquina["tipo_herramienta"] = self.tipo_herramienta
 
         if self.modo_lapiz:
-            # En modo lápiz, el husillo queda inmediatamente apagado
-            self.estado_maquina["spindle_encendido"] = False
-            self.estado_maquina["spindle_real"] = 0.0
-            if not self.modo_virtual and self.esta_conectado:
-                try:
-                    self.enviar_directo("M5\n")
-                except Exception:
-                    pass
+            if self.modo_virtual:
+                self.estado_maquina['spindle_encendido'] = False
+                self.estado_maquina['spindle_real'] = 0.
             self._notificar_consola(
                 "c-info",
                 "[HERRAMIENTA] Modo LÁPIZ activado: El husillo motorizado no se encenderá durante el trabajo."
@@ -637,6 +799,30 @@ class ControladorGRBL:
 
         if self.cb_estado_actualizado:
             self.cb_estado_actualizado(dict(self.estado_maquina))
+        return True
+
+    def establecer_pausa_m6(self, habilitar: bool):
+        """Habilita o deshabilita la pausa obligatoria de seguridad ante comando M6."""
+        self.pausa_m6 = bool(habilitar)
+        estado_str = "habilitada" if self.pausa_m6 else "deshabilitada"
+        self._notificar_consola("c-info", f"[AJUSTES] Pausa segura ante comando M6 {estado_str}.")
+
+    def _analizar_y_filtrar_herramienta(self, linea: str) -> tuple:
+        """
+        Interpreta y filtra los códigos T{n} (selección de herramienta) y M6/M06 (cambio de herramienta).
+        El firmware nativo de GRBL v1.1 en microcontroladores ATmega328P no implementa internamente
+        estos comandos (retornando error:20 'Comando G no soportado'). Como estándar en emisores CNC
+        (Candle, UGS, bCNC), estos códigos son gestionados en la capa del host.
+
+        Retorna:
+            (linea_filtrada, herramienta_detectada, hubo_m6)
+        """
+        tokens = palabras(linea)
+        t = next((int(v) for k, v in tokens if k == 'T'), None)
+        m6 = any(k == 'M' and v == 6 for k, v in tokens)
+        codigo = limpiar(linea)
+        codigo = TOKEN.sub(lambda m: '' if m[1] == 'T' or (m[1] == 'M' and float(m[2]) == 6) else m[0], codigo)
+        return codigo.strip(), str(t) if t is not None else None, m6
 
     def controlar_spindle(self, encendido: bool, rpm: int):
         """Enciende (M3 S...) o apaga (M5) el husillo/láser respetando los interbloqueos de seguridad."""
@@ -666,17 +852,28 @@ class ControladorGRBL:
                 self.cb_alerta_seguridad(titulo, encabezado, desc)
             return
 
+        # Ajuste de potencia durante el mecanizado: se aplica mediante real-time Spindle Override
+        if esta_mecanizando and encendido and int(rpm) > 0:
+            if self.modo_laser:
+                pct = max(10, min(100, int(round((int(rpm) / 1000.0) * 100))))
+                self.establecer_spindle_override(pct)
+                return
+            else:
+                base = self._spindle_solicitado if self._spindle_solicitado > 0 else 12000.0
+                pct = max(10, min(200, int(round((int(rpm) / base) * 100))))
+                self.establecer_spindle_override(pct)
+                return
+
         rpm = max(0, int(rpm))
         if encendido and rpm > 0:
             cmd = f"M3 S{rpm}"
-            self.estado_maquina["spindle_encendido"] = True
-            self.estado_maquina["spindle_real"] = float(rpm)
+
         else:
             cmd = "M5"
-            self.estado_maquina["spindle_encendido"] = False
-            self.estado_maquina["spindle_real"] = 0.0
 
         if self.modo_virtual:
+            self.estado_maquina["spindle_encendido"] = encendido and rpm > 0
+            self.estado_maquina["spindle_real"] = float(rpm) if encendido else 0.0
             etiqueta = "[DIODO LÁSER]" if self.modo_laser else ""
             self._notificar_consola("c-ok", f"> {cmd} {etiqueta}".strip())
             if self.cb_estado_actualizado:
@@ -690,160 +887,251 @@ class ControladorGRBL:
     # =========================================================================
 
     def enviar_comando(self, comando: str):
-        """Envía un comando textual a la máquina y lo muestra en consola."""
         comando = comando.strip()
         if not comando:
-            return
-
-        if self.modo_lapiz and re.search(r"^\s*M0?[34]\b", comando.upper()):
-            self._notificar_consola(
-                "c-warn",
-                f"[MODO LÁPIZ] Comando '{comando}' omitido -> El código G contiene encendido de motor (M3/M4), pero el husillo no se encenderá por estar en modo lápiz."
-            )
-            return
-
-        esta_mecanizando = self._en_ejecucion_gcode or self.estado_maquina.get("estado") in ("RUN", "HOLD")
-        if not self.modo_lapiz and not self.modo_laser and esta_mecanizando and re.search(r"^\s*M0?5\b", comando.upper()):
-            titulo = "COMANDO M5 BLOQUEADO"
-            encabezado = "Apagado manual de husillo no permitido"
-            desc = "El comando M5 fue rechazado porque el mecanizado está activo. Detenga o pause el programa antes de apagar el husillo."
-            self._notificar_consola("c-alarm", f"[BLOQUEO DE SEGURIDAD] {desc}")
-            if self.cb_alerta_seguridad:
-                self.cb_alerta_seguridad(titulo, encabezado, desc)
-            return
-
-        self._notificar_consola("c-ok", f"> {comando}")
-
-        if self.modo_virtual:
-            self._simular_respuesta_comando(comando)
-            return
-
-        self.enviar_directo(f"{comando}\n")
-
-    def enviar_directo(self, texto_con_salto: str):
-        """Transmite una cadena formateada con salto de línea por el puerto serial físico."""
-        if not self.puerto_serial or not self.puerto_serial.is_open:
-            return
+            return False
+        if '\n' in comando or '\r' in comando:
+            self._notificar_consola('c-error', '[BLOQUEO] Envíe un solo bloque por comando.')
+            return False
         try:
-            self.puerto_serial.write(texto_con_salto.encode('utf-8'))
-        except Exception as e:
-            self._notificar_consola("c-alarm", f"[ERROR DE TRANSMISIÓN] {str(e)}")
+            tokens = [] if comando.startswith('$') else palabras(comando)
+            ms = [v for k, v in tokens if k == 'M']
+            if self.modo_lapiz:
+                comando = quitar_motor(comando) if tokens else comando
+                tokens = palabras(comando) if tokens else tokens
+            if self._en_ejecucion_gcode:
+                # Solo se permite recuperar el giro durante una pausa segura.
+                recuperacion = self._en_pausa_gcode and not self._pendientes_respuesta and not (self._cambio_m6 and not self._cambio_listo)
+                es_husillo = tokens and all(k in 'MS' for k, _ in tokens)
+                if not (recuperacion and es_husillo):
+                    self._notificar_consola('c-warn', '[BLOQUEO] Comando manual rechazado durante el programa.')
+                    return False
+                if 5 in ms and not self._cambio_listo:
+                    return False
+            if any(m == 6 for m in ms):
+                self._notificar_consola('c-warn', '[M6] Ejecute el cambio de herramienta desde un programa para sincronizar la parada.')
+                return False
+            filtrada, t, _ = self._analizar_y_filtrar_herramienta(comando) if tokens else (comando, None, False)
+            if t:
+                self.herramienta_activa = 'T'+t
+                self.estado_maquina['herramienta'] = self.herramienta_activa
+            if not filtrada:
+                return True
+            if self.modo_virtual:
+                self._simular_respuesta_comando(filtrada)
+                return True
+            return self.enviar_directo(filtrada+'\n')
+        except ValueError as e:
+            self._notificar_consola('c-error', str(e))
+            return False
 
-    def enviar_tiempo_real(self, byte_cmd: Any):
+    def _escribir_serial(self, datos: bytes) -> bool:
+        """Transmite bytes por el puerto serial de forma atómica y protegida por cerrojo entre hilos."""
+        if not self.puerto_serial or not self.puerto_serial.is_open:
+            return False
+        with self._serial_write_lock:
+            try:
+                escritos = self.puerto_serial.write(datos)
+                if escritos != len(datos):
+                    raise IOError('Escritura serial incompleta.')
+                return True
+            except Exception as e:
+                self._notificar_consola("c-alarm", f"[ERROR DE TRANSMISIÓN] {str(e)}")
+                return False
+
+    def enviar_directo(self, texto_con_salto: str, clase='manual') -> bool:
+        texto = texto_con_salto.strip()
+        if not texto or '\n' in texto or '\r' in texto:
+            return False
+        try:
+            datos = (texto+'\n').encode('ascii')
+        except UnicodeEncodeError:
+            self._notificar_consola('c-error', 'El comando debe ser ASCII.')
+            return False
+        if len(datos) > 80:
+            self._notificar_consola('c-error', 'El bloque supera 79 caracteres útiles.')
+            return False
+        with self._bloque_lock:
+            if clase == 'manual' and self._pendientes_respuesta and not self._en_ejecucion_gcode:
+                if len(self._cola_manual) < 20:
+                    self._cola_manual.append(texto)
+                return True
+            if self._pendientes_respuesta or (clase == 'manual' and self._en_ejecucion_gcode and not self._en_pausa_gcode):
+                self._notificar_consola('c-warn', '[SERIAL] Espere la respuesta del comando anterior.')
+                return False
+            self._pendientes_respuesta.append((clase, texto))
+            if not self._escribir_serial(datos):
+                self._pendientes_respuesta.pop()
+                return False
+            return True
+
+    def enviar_tiempo_real(self, byte_cmd: Any) -> bool:
         """Transmite un comando de tiempo real (single-byte) sin salto de línea a GRBL."""
-        if not self.puerto_serial or not self.puerto_serial.is_open:
-            return
-        try:
-            if isinstance(byte_cmd, int):
-                datos = bytes([byte_cmd])
-            elif isinstance(byte_cmd, bytes):
-                datos = byte_cmd
-            elif isinstance(byte_cmd, str):
-                datos = byte_cmd.encode('latin-1')
-            else:
-                return
-            self.puerto_serial.write(datos)
-        except Exception as e:
-            self._notificar_consola("c-alarm", f"[ERROR TIEMPO REAL] {str(e)}")
+        if isinstance(byte_cmd, int):
+            datos = bytes([byte_cmd])
+        elif isinstance(byte_cmd, bytes):
+            datos = byte_cmd
+        elif isinstance(byte_cmd, str):
+            datos = byte_cmd.encode('latin-1')
+        else:
+            return False
+        return self._escribir_serial(datos)
 
     # =========================================================================
-    # STREAMING DE ARCHIVOS G-CODE (CHARACTER-COUNTING BUFFER)
+    # STREAMING DE ARCHIVOS G-CODE CON CONFIRMACIÓN SERIALIZADA
     # =========================================================================
 
     def iniciar_programa(self, contenido_gcode: str):
-        """Inicia la transmisión controlada de un programa de código G completo."""
-        lineas = [l.strip() for l in contenido_gcode.splitlines() if l.strip()]
-        if not lineas:
-            return
-
         with self._bloque_lock:
+            if not self.esta_conectado or self._en_ejecucion_gcode or self._pendientes_respuesta or self._cola_manual or self.estado_maquina.get('estado') != 'IDLE':
+                self._notificar_consola('c-error', '[PROGRAMA] Requiere conexión en reposo y sin comandos pendientes.')
+                return False
+            analisis = ProcesadorGCode().analizar_programa(contenido_gcode)
+            if not analisis['es_valido']:
+                self._notificar_consola('c-error', '[PROGRAMA] '+str(analisis['errores'][0]))
+                return False
+            lineas = contenido_gcode.splitlines()
+            if not any(limpiar(l) and limpiar(l) != '%' for l in lineas):
+                return False
+            plan = []
+            interprete = Interprete(self.estado_maquina['wpos'])
+            try:
+                for linea in lineas:
+                    limpia = limpiar(linea)
+                    if limpia == '%': limpia = ''
+                    if self.modo_lapiz: limpia = quitar_motor(limpia)
+                    bloque = interprete.bloque(limpia)
+                    filtrada, t, m6 = self._analizar_y_filtrar_herramienta(limpia)
+                    if len((filtrada+'\n').encode('ascii')) > 80:
+                        raise ValueError('Bloque mayor de 79 caracteres útiles.')
+                    if m6 and (bloque['segmentos'] or any(k not in ('T', 'M', 'N') or (k == 'M' and v != 6) for k, v in bloque['tokens'])):
+                        raise ValueError('Separe M6 de los movimientos en otro bloque.')
+                    plan.append((filtrada, t, m6, bloque))
+            except (ValueError, UnicodeEncodeError) as e:
+                self._notificar_consola('c-error', '[PROGRAMA] '+str(e))
+                return False
             self._cola_lineas = lineas
+            self._plan_programa = plan
             self._total_lineas_programa = len(lineas)
             self._linea_actual_enviada = 0
-            self._cola_bytes_en_transito.clear()
             self._en_ejecucion_gcode = True
             self._en_pausa_gcode = False
+            self._esperando_fin = False
+            self._cambio_m6 = self._cambio_listo = self._bloqueo_corte = False
             self._tiempo_inicio_ejecucion = time.time()
-
-        self._notificar_consola("c-system", f"[PROGRAMA] Iniciando transmisión de {self._total_lineas_programa} líneas.")
-
-        if self.modo_lapiz:
-            contiene_arranque_motor = any(re.search(r"\bM0?[34]\b", l.upper()) for l in lineas)
-            if contiene_arranque_motor:
-                self._notificar_consola(
-                    "c-warn",
-                    "[MODO LÁPIZ] El código G contiene códigos de encendido de motor (M3/M4), pero el husillo NO se encenderá por estar en modo lápiz."
-                )
-        elif self.modo_laser:
-            self._notificar_consola(
-                "c-info",
-                "[MODO LÁSER] Transmisión con diodo láser habilitado: modulación óptica PWM (M3/M4/M5) activa."
-            )
-
         if self.modo_virtual:
-            threading.Thread(target=self._bucle_ejecucion_virtual, daemon=True).start()
-            return
+            self._hilo_virtual = threading.Thread(target=self._bucle_ejecucion_virtual, daemon=True)
+            self._hilo_virtual.start()
+        else:
+            # Establecer los mismos modos iniciales que usa el intérprete.
+            if not self.enviar_directo('G21G90G17G54G94G91.1G0\n', 'inicio'):
+                self._cancelar_por_error('No se pudo establecer el estado modal inicial.')
+                return False
+        return True
 
-        # Llenar el búfer inicial de 128 bytes
-        self._alimentar_buffer_gcode()
+    def _tiempo_programa(self):
+        segundos = int(time.time()-self._tiempo_inicio_ejecucion)
+        return f'{segundos//60:02d}:{segundos%60:02d}'
+
+    def _alertar(self, titulo, descripcion):
+        self._notificar_consola('c-warn', descripcion)
+        if self.cb_alerta_seguridad:
+            self.cb_alerta_seguridad(titulo, titulo, descripcion)
+
+    def _cancelar_por_error(self, mensaje):
+        self.parada_emergencia()
+        self.estado_maquina['estado'] = 'ALARM'
+        if self.cb_estado_actualizado:
+            self.cb_estado_actualizado(dict(self.estado_maquina))
+        self._notificar_consola('c-error', '[PROGRAMA FALLIDO] '+mensaje)
+        if self.cb_resultado_programa:
+            self.cb_resultado_programa('Error')
 
     def _alimentar_buffer_gcode(self):
-        """Envía líneas respetando el límite de 127 bytes del búfer de recepción en hardware."""
+        # Una sola línea pendiente: las respuestas manuales y del programa nunca se mezclan.
         with self._bloque_lock:
-            if not self._en_ejecucion_gcode or self._en_pausa_gcode:
+            if not self._en_ejecucion_gcode or self._en_pausa_gcode or self._pendientes_respuesta or self._esperando_fin:
                 return
-
-            bytes_ocupados = sum(self._cola_bytes_en_transito)
-
-            while self._linea_actual_enviada < len(self._cola_lineas):
-                linea = self._cola_lineas[self._linea_actual_enviada]
-
-                # En modo lápiz, reemplazar M3/M4 por comentario inocuo para GRBL
-                if self.modo_lapiz and re.search(r"\bM0?[34]\b", linea.upper()):
-                    linea_a_enviar = "(M3 omitido modo lapiz)"
-                    self._notificar_consola(
-                        "c-warn",
-                        f"[MODO LÁPIZ] Línea {self._linea_actual_enviada + 1}: '{linea}' -> El código G contiene encendido de motor (M3/M4), pero no se encenderá por estar en modo lápiz."
-                    )
-                else:
-                    linea_a_enviar = linea
-
-                tam_linea = len(linea_a_enviar) + 1  # Incluye el carácter '\n'
-
-                if bytes_ocupados + tam_linea <= self.TAMANO_BUFFER_RX:
-                    # Enviar línea por serial
-                    self.enviar_directo(f"{linea_a_enviar}\n")
-                    self._cola_bytes_en_transito.append(tam_linea)
-                    bytes_ocupados += tam_linea
+            while self._linea_actual_enviada < len(self._plan_programa):
+                texto, t, m6, bloque = self._plan_programa[self._linea_actual_enviada]
+                if t:
+                    self.herramienta_activa = 'T'+t
+                    self.estado_maquina['herramienta'] = self.herramienta_activa
+                if m6 and self.pausa_m6:
+                    self._cambio_m6 = True
+                    self._en_pausa_gcode = True
                     self._linea_actual_enviada += 1
-                else:
-                    break
+                    # G4 P0 espera al planificador; después se confirma M5 antes de avisar.
+                    if not self.enviar_directo('G4 P0\n', 'm6_barrera'):
+                        self._cancelar_por_error('No se pudo sincronizar M6.')
+                    return
+                arranca = any(m in (3, 4) for m in bloque['m']) and bloque['p'].get('S', self._spindle_solicitado) > 0
+                corta = bloque['segmentos'] and not bloque['rapido']
+                apagado = 5 in bloque['m'] or bloque['p'].get('S', 1) == 0
+                if corta and not self.modo_lapiz and not self.modo_laser and (apagado or not (arranca or self.estado_maquina['spindle_encendido'])):
+                    self._bloqueo_corte = self._en_pausa_gcode = True
+                    self.pausar()
+                    self._alertar('CORTE CON HUSILLO APAGADO', 'Encienda el husillo antes de continuar; el movimiento no se ha enviado.')
+                    return
+                self._linea_actual_enviada += 1
+                if texto:
+                    if not self.enviar_directo(texto+'\n', 'programa'):
+                        self._cancelar_por_error('No se pudo transmitir el bloque.')
+                    return
+            if not self.enviar_directo('G4 P0\n', 'fin_barrera'):
+                self._cancelar_por_error('No se pudo confirmar el final físico.')
 
     def _gestionar_confirmacion_buffer(self, exito: bool):
-        """Llamado cuando GRBL responde 'ok' o 'error:', liberando espacio en el búfer."""
         with self._bloque_lock:
-            if self._cola_bytes_en_transito:
-                self._cola_bytes_en_transito.popleft()
-
-            if not self._en_ejecucion_gcode:
+            if not self._pendientes_respuesta:
                 return
-
-            lineas_confirmadas = self._linea_actual_enviada - len(self._cola_bytes_en_transito)
-            pct = min(100.0, (lineas_confirmadas / max(1, self._total_lineas_programa)) * 100.0)
-
-            segundos = int(time.time() - self._tiempo_inicio_ejecucion)
-            tiempo_str = f"{segundos // 60:02d}:{segundos % 60:02d}"
-
-            if self.cb_progreso:
-                self.cb_progreso(lineas_confirmadas, self._total_lineas_programa, round(pct, 1), tiempo_str)
-
-            # Verificar si ha concluido la totalidad del archivo
-            if lineas_confirmadas >= self._total_lineas_programa:
-                self._en_ejecucion_gcode = False
-                self._notificar_consola("c-system", f"[PROGRAMA] Ejecución finalizada en {tiempo_str}.")
-
-        # Enviar más líneas disponibles
+            clase, texto = self._pendientes_respuesta.popleft()
+            if not exito:
+                self._cola_manual.clear()
+                if self._en_ejecucion_gcode:
+                    self._cancelar_por_error('GRBL rechazó: '+texto)
+                return
+            self._actualizar_husillo(texto)
+            if clase == 'manual' and self._cola_manual:
+                siguiente = self._cola_manual.popleft()
+                self.enviar_directo(siguiente+'\n')
+                self._notificar_consola("c-ok", f"> {siguiente}")
+                return
+            if clase == 'm6_barrera':
+                if not self.enviar_directo('M5\n', 'm6_apagado'):
+                    self._cancelar_por_error('No se pudo apagar el husillo para M6.')
+                return
+            if clase == 'm6_apagado':
+                self._cambio_listo = True
+                self._alertar('CAMBIO DE HERRAMIENTA (M6)', f'Planificador detenido y M5 confirmado. Monte {self.herramienta_activa} y presione Continuar.')
+                return
+            if clase == 'fin_barrera':
+                self._esperando_fin = True
+                self.enviar_tiempo_real(b'?')
+                return
+            if self._en_ejecucion_gcode and clase == 'programa' and self.cb_linea_confirmada:
+                self.cb_linea_confirmada(self._linea_actual_enviada - 1, False)
+            if self._en_ejecucion_gcode and clase == 'programa' and self.cb_progreso:
+                actual = self._linea_actual_enviada
+                self.cb_progreso(actual, self._total_lineas_programa, min(99., actual/self._total_lineas_programa*100), self._tiempo_programa())
         self._alimentar_buffer_gcode()
+
+    def _actualizar_husillo(self, texto):
+        try:
+            p = dict(palabras(texto))
+            ms = [v for k, v in palabras(texto) if k == 'M']
+        except ValueError:
+            return
+        if 'S' in p: self._spindle_solicitado = p['S']
+        ov = getattr(self, 'spindle_override', 1.0)
+        if any(m in (3, 4) for m in ms):
+            self.estado_maquina['spindle_encendido'] = self._spindle_solicitado > 0
+            self.estado_maquina['spindle_real'] = self._spindle_solicitado * ov
+        elif 'S' in p and self.estado_maquina.get('spindle_encendido'):
+            self.estado_maquina['spindle_real'] = self._spindle_solicitado * ov
+        if 5 in ms or p.get('S', 1) == 0:
+            self.estado_maquina['spindle_encendido'] = False
+        if 5 in ms: self.estado_maquina['spindle_real'] = 0.
 
     # =========================================================================
     # EMULADOR VIRTUAL DIDÁCTICO (FALLBACK ACADÉMICO)
@@ -851,17 +1139,20 @@ class ControladorGRBL:
 
     def _iniciar_hilos_virtuales(self):
         """Inicia el ciclo de telemetría del simulador didáctico."""
+        evento = self._evento_sesion
         def bucle_sim():
-            while not self._detener_hilos and self.esta_conectado and self.modo_virtual:
+            while not evento.is_set() and self.esta_conectado and self.modo_virtual:
                 if self.cb_estado_actualizado:
                     self.cb_estado_actualizado(dict(self.estado_maquina))
-                time.sleep(0.2)
-
-        threading.Thread(target=bucle_sim, daemon=True).start()
+                evento.wait(.2)
+        self._hilo_sondeo = threading.Thread(target=bucle_sim, daemon=True)
+        self._hilo_sondeo.start()
 
     def _simular_respuesta_comando(self, cmd: str):
         """Responde a comandos en el simulador virtual reproduciendo la sintaxis de GRBL."""
         c = cmd.upper()
+        if not c.startswith('$'):
+            self._actualizar_husillo(c)
         if c == "$$":
             self._notificar_consola("c-grbl", "$100=250.000 (x:step/mm)\n$101=250.000 (y:step/mm)\n$102=250.000 (z:step/mm)\n$110=2500.000 (x:max rate)\n$111=2500.000 (y:max rate)\n$112=800.000 (z:max rate)")
             self._notificar_consola("c-ok", "ok")
@@ -902,213 +1193,102 @@ class ControladorGRBL:
             if self.modo_laser:
                 self._notificar_consola("c-ok", "[DIODO LÁSER APAGADO]")
             self._notificar_consola("c-ok", "ok")
+        elif re.search(r"^\s*T(\d+)\b", c):
+            m = re.search(r"^\s*T(\d+)\b", c)
+            t_num = m.group(1)
+            self.herramienta_activa = f"T{t_num}"
+            self.estado_maquina["herramienta"] = f"T{t_num}"
+            self._notificar_consola("c-info", f"[HERRAMIENTA] Herramienta T{t_num} seleccionada.")
+            self._notificar_consola("c-ok", "ok")
+        elif re.search(r"^\s*M0?6\b", c):
+            if self.pausa_m6:
+                self.estado_maquina["estado"] = "HOLD"
+                self.estado_maquina["spindle_encendido"] = False
+                self.estado_maquina["spindle_real"] = 0.0
+                self._notificar_consola("c-warn", f"[CAMBIO DE HERRAMIENTA] Comando M6 procesado: Pausa de seguridad para cambio a {self.herramienta_activa}.")
+            else:
+                self._notificar_consola("c-info", f"[CAMBIO DE HERRAMIENTA] Comando M6 procesado con éxito.")
+            self._notificar_consola("c-ok", "ok")
         else:
             self._notificar_consola("c-ok", "ok")
 
     def _bucle_ejecucion_virtual(self):
-        """
-        Simula la ejecución paso a paso de un archivo G-code en el emulador virtual,
-        con interpolación geométrica continua y actualización de coordenadas en tiempo real
-        para que la punta de la herramienta se desplace visiblemente por el lienzo gráfico.
-        """
-        with self._bloque_lock:
-            lineas = list(self._cola_lineas)
-            total = len(lineas)
-
-        if total == 0:
-            self._en_ejecucion_gcode = False
-            return
-
-        self.estado_maquina["estado"] = "RUN"
-        velocidad_avance_actual = 800.0  # mm/min por defecto
-        modo_movimiento_actual = "G0"
-        fue_cancelado = False
-
-        ultimo_tiempo_estado = 0.0
-        ultimo_tiempo_progreso = 0.0
-        ultimo_tiempo_consola = 0.0
-
+        """Ejecuta los mismos segmentos y modos validados para el hardware."""
+        evento = self._evento_sesion
+        self.estado_maquina['estado'] = 'RUN'
+        ultimo_estado_emitido = 0.0
+        ultimo_progreso_emitido = 0.0
         try:
-            for idx, linea in enumerate(lineas, start=1):
-                if not self._en_ejecucion_gcode or self._detener_hilos:
-                    fue_cancelado = True
-                    break
-
-                while self._en_pausa_gcode and self._en_ejecucion_gcode:
-                    time.sleep(0.1)
-
-                if not self._en_ejecucion_gcode or self._detener_hilos:
-                    fue_cancelado = True
-                    break
-
-                linea_limpia = re.sub(r"\(.*?\)", "", linea).split(";")[0].strip().upper()
-
-                # Notificar a la consola serial con moderación para no saturar el DOM ni el canal Qt
-                tiempo_ahora = time.time()
-                if (tiempo_ahora - ultimo_tiempo_consola) >= 0.12 or idx == 1 or idx == total or linea_limpia.startswith("M"):
-                    ultimo_tiempo_consola = tiempo_ahora
-                    self._notificar_consola("c-ok", f"{idx}: {linea}")
-
-                # Detectar comando modal F (velocidad de avance)
-                match_f = re.search(r"F(\d+(?:\.\d+)?)", linea_limpia)
-                if match_f:
-                    velocidad_avance_actual = max(1.0, float(match_f.group(1)))
-
-                # Detectar encendido / apagado de husillo / diodo láser (M3/M03 y M5/M05)
-                if re.search(r"\bM0?[34]\b", linea_limpia):
-                    if self.modo_lapiz:
-                        self.estado_maquina["spindle_encendido"] = False
-                        self.estado_maquina["spindle_real"] = 0.0
-                        self._notificar_consola(
-                            "c-warn",
-                            f"[MODO LÁPIZ] Línea {idx}: '{linea.strip()}' -> El código G contiene encendido de motor (M3/M4), pero el husillo no se encenderá por estar en modo lápiz."
-                        )
-                    else:
-                        self.estado_maquina["spindle_encendido"] = True
-                        match_s = re.search(r"S(\d+(?:\.\d+)?)", linea_limpia)
-                        def_s = 1000.0 if self.modo_laser else 12000.0
-                        self.estado_maquina["spindle_real"] = float(match_s.group(1)) if match_s else def_s
-                elif re.search(r"\bM0?5\b", linea_limpia):
-                    self.estado_maquina["spindle_encendido"] = False
-                    self.estado_maquina["spindle_real"] = 0.0
-
-                # Modal de movimiento
-                if re.search(r"\bG00?\b", linea_limpia):
-                    modo_movimiento_actual = "G0"
-                elif re.search(r"\bG0?1\b", linea_limpia):
-                    modo_movimiento_actual = "G1"
-                elif re.search(r"\bG0?[23]\b", linea_limpia):
-                    modo_movimiento_actual = "G1"
-
-                # Posición actual de inicio del segmento
-                x_ini = float(self.estado_maquina["wpos"][0])
-                y_ini = float(self.estado_maquina["wpos"][1])
-                z_ini = float(self.estado_maquina["wpos"][2])
-
-                # Coordenadas objetivo extraídas de la línea
-                match_x = re.search(r"X([-+]?\d*\.?\d+)", linea_limpia)
-                match_y = re.search(r"Y([-+]?\d*\.?\d+)", linea_limpia)
-                match_z = re.search(r"Z([-+]?\d*\.?\d+)", linea_limpia)
-
-                x_fin = float(match_x.group(1)) if match_x else x_ini
-                y_fin = float(match_y.group(1)) if match_y else y_ini
-                z_fin = float(match_z.group(1)) if match_z else z_ini
-
-                # Distancia euclidiana en mm
-                dx = x_fin - x_ini
-                dy = y_fin - y_ini
-                dz = z_fin - z_ini
-                distancia = math.sqrt(dx * dx + dy * dy + dz * dz)
-
-                es_rapido = (modo_movimiento_actual == "G0")
-                override_mult = getattr(self, "feed_override", 1.0)
-                vel_base = 2500.0 if es_rapido else velocidad_avance_actual
-                vel = vel_base * override_mult
-                self.estado_maquina["feed_real"] = vel
-
-                if distancia > 0.01:
-                    # INTERBLOQUEO: Solo aplica a FRESA mecánica para evitar rotura de herramienta al cortar sin giro.
-                    # En modo lápiz y diodo láser no hay husillo rotatorio que fracturar.
-                    if not self.modo_lapiz and not self.modo_laser and modo_movimiento_actual in ("G1", "G2", "G3") and not self.estado_maquina.get("spindle_encendido", False):
-                        self._en_pausa_gcode = True
-                        self.estado_maquina["estado"] = "HOLD"
-                        titulo = "CORTE CON HUSILLO APAGADO"
-                        encabezado = "Mecanizado pausado automáticamente por seguridad"
-                        desc = f"Se detectó comando de corte ({linea_limpia}) con el husillo apagado. El mecanizado ha sido pausado para evitar la rotura de la fresa."
-                        self._notificar_consola("c-alarm", f"[SEGURIDAD CRÍTICA] {desc}")
-                        if self.cb_alerta_seguridad:
-                            self.cb_alerta_seguridad(titulo, encabezado, desc)
-                        if self.cb_estado_actualizado:
+            for idx, (texto, t, m6, bloque) in enumerate(self._plan_programa):
+                if evento.is_set() or not self._en_ejecucion_gcode:
+                    return
+                if t:
+                    self.herramienta_activa = 'T'+t
+                    self.estado_maquina['herramienta'] = self.herramienta_activa
+                if m6 and self.pausa_m6:
+                    self._en_pausa_gcode = self._cambio_m6 = self._cambio_listo = True
+                    self.estado_maquina['estado'] = 'HOLD'
+                    self._actualizar_husillo('M5')
+                    self._alertar('CAMBIO DE HERRAMIENTA (M6)', f'Simulación detenida. Monte {self.herramienta_activa} y presione Continuar.')
+                while self._en_pausa_gcode and self._en_ejecucion_gcode and not evento.wait(.02):
+                    pass
+                if evento.is_set() or not self._en_ejecucion_gcode:
+                    return
+                self._actualizar_husillo(texto)
+                if bloque['segmentos'] and not bloque['rapido'] and not (self.modo_lapiz or self.modo_laser or self.estado_maquina['spindle_encendido']):
+                    self._bloqueo_corte = self._en_pausa_gcode = True
+                    self.estado_maquina['estado'] = 'HOLD'
+                    self._alertar('CORTE CON HUSILLO APAGADO', 'Encienda el husillo antes de continuar.')
+                while self._en_pausa_gcode and self._en_ejecucion_gcode and not evento.wait(.02):
+                    pass
+                if evento.is_set() or not self._en_ejecucion_gcode:
+                    return
+                vel = 2500. if bloque['rapido'] else bloque['feed']
+                for inicio, fin, tipo in bloque['segmentos']:
+                    distancia = math.dist(inicio, fin)
+                    duracion = distancia / vel * 60
+                    pasos = max(1, math.ceil(min(2., duracion)/.035))
+                    override = max(.1, getattr(self, 'feed_override', 1.))
+                    dt_paso = min(.035, duracion/pasos) / override
+                    for paso in range(1, pasos+1):
+                        while self._en_pausa_gcode and self._en_ejecucion_gcode and not evento.wait(.02):
+                            pass
+                        if evento.is_set() or not self._en_ejecucion_gcode:
+                            return
+                        self.estado_maquina['wpos'] = [a+(b-a)*paso/pasos for a, b in zip(inicio, fin)]
+                        self.estado_maquina['mpos'] = [w+o for w, o in zip(self.estado_maquina['wpos'], self.estado_maquina['wco'])]
+                        self.estado_maquina['feed_real'] = vel*override
+                        ahora = time.time()
+                        if self.cb_estado_actualizado and (paso == pasos or ahora - ultimo_estado_emitido >= 0.030):
                             self.cb_estado_actualizado(dict(self.estado_maquina))
-
-                        while self._en_pausa_gcode and self._en_ejecucion_gcode:
-                            time.sleep(0.1)
-
-                        if not self._en_ejecucion_gcode or self._detener_hilos:
-                            fue_cancelado = True
-                            break
-
-                    # Duración física del movimiento (con límites pedagógicos adecuados)
-                    tiempo_fisico = distancia / (vel / 60.0) if vel > 0 else 0.1
-                    tiempo_segmento = max(0.035, min(2.0, tiempo_fisico))
-                    dt = 0.035  # Paso de interpolación (~28 FPS)
-                    pasos = max(1, int(tiempo_segmento / dt))
-
-                    for paso in range(1, pasos + 1):
-                        if not self._en_ejecucion_gcode or self._detener_hilos:
-                            fue_cancelado = True
-                            break
-                        while self._en_pausa_gcode and self._en_ejecucion_gcode:
-                            time.sleep(0.1)
-
-                        fraccion = paso / pasos
-                        self.estado_maquina["wpos"][0] = round(x_ini + dx * fraccion, 3)
-                        self.estado_maquina["wpos"][1] = round(y_ini + dy * fraccion, 3)
-                        self.estado_maquina["wpos"][2] = round(z_ini + dz * fraccion, 3)
-                        self.estado_maquina["mpos"] = list(self.estado_maquina["wpos"])
-
-                        # Re-evaluar override en tiempo real
-                        ov_actual = getattr(self, "feed_override", 1.0)
-                        self.estado_maquina["feed_real"] = vel_base * ov_actual
-
-                        ahora_e = time.time()
-                        if (ahora_e - ultimo_tiempo_estado) >= 0.030 or paso == pasos:
-                            ultimo_tiempo_estado = ahora_e
-                            if self.cb_estado_actualizado:
-                                self.cb_estado_actualizado(dict(self.estado_maquina))
-
-                        # dt adaptativo según el override para acelerar o frenar de inmediato
-                        time.sleep(max(0.008, dt / max(0.1, ov_actual)))
-                else:
-                    # Comandos sin movimiento físico (M3, M5, G21, G90, etc.)
-                    ahora_e = time.time()
-                    if (ahora_e - ultimo_tiempo_estado) >= 0.030 or idx == total:
-                        ultimo_tiempo_estado = ahora_e
-                        if self.cb_estado_actualizado:
-                            self.cb_estado_actualizado(dict(self.estado_maquina))
-                    time.sleep(0.02)
-
-                pct = round((idx / total) * 100.0, 1)
-                segundos = int(time.time() - self._tiempo_inicio_ejecucion)
-                tiempo_str = f"{segundos // 60:02d}:{segundos % 60:02d}"
-
+                            ultimo_estado_emitido = ahora
+                        if evento.wait(dt_paso):
+                            return
+                if not bloque['segmentos'] and not bloque['espera']:
+                    if evento.is_set():
+                        return
+                if bloque['espera']:
+                    override = max(.1, getattr(self, 'feed_override', 1.))
+                    if evento.wait(bloque['espera'] / override):
+                        return
+                self._linea_actual_enviada = idx+1
+                if texto and not m6 and self.cb_linea_confirmada:
+                    self.cb_linea_confirmada(idx, True)
                 ahora_p = time.time()
-                if (ahora_p - ultimo_tiempo_progreso) >= 0.040 or idx == total:
-                    ultimo_tiempo_progreso = ahora_p
-                    if self.cb_progreso:
-                        try:
-                            self.cb_progreso(idx, total, pct, tiempo_str)
-                        except (RuntimeError, AttributeError):
-                            self._hilo_virtual_activo = False
-                            break
-
-        except Exception as e:
-            if "wrapped C/C++ object" in str(e) or not getattr(self, '_hilo_virtual_activo', True):
+                es_ultima = (idx + 1 >= self._total_lineas_programa)
+                if self.cb_progreso and (es_ultima or ahora_p - ultimo_progreso_emitido >= 0.040):
+                    self.cb_progreso(idx+1, self._total_lineas_programa, min(99., (idx+1)/self._total_lineas_programa*100), self._tiempo_programa())
+                    ultimo_progreso_emitido = ahora_p
+            if self._en_ejecucion_gcode and not evento.is_set():
                 self._en_ejecucion_gcode = False
-                return
-            try:
-                self._notificar_consola("c-alarm", f"[ERROR EJECUCIÓN] {str(e)}")
-            except Exception:
-                pass
-            fue_cancelado = True
-
-        self._en_ejecucion_gcode = False
-        self.estado_maquina["feed_real"] = 0.0
-
-        if not fue_cancelado and self.estado_maquina.get("estado") != "ALARM":
-            self.estado_maquina["estado"] = "IDLE"
-            if self.cb_estado_actualizado:
-                try:
+                self.estado_maquina['estado'] = 'IDLE'
+                self.estado_maquina['feed_real'] = 0.
+                if self.cb_estado_actualizado:
                     self.cb_estado_actualizado(dict(self.estado_maquina))
-                except Exception:
-                    pass
-            self._notificar_consola("c-system", "[PROGRAMA] Simulación virtual finalizada exitosamente.")
-        else:
-            if self.cb_estado_actualizado:
-                try:
-                    self.cb_estado_actualizado(dict(self.estado_maquina))
-                except Exception:
-                    pass
+                if self.cb_progreso:
+                    self.cb_progreso(self._total_lineas_programa, self._total_lineas_programa, 100., self._tiempo_programa())
+        except Exception as e:
+            self._cancelar_por_error(str(e))
 
     # =========================================================================
     # AUXILIARES DE NOTIFICACIÓN

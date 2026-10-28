@@ -1,0 +1,32 @@
+<!doctype html><html><body><pre id="resultado">PENDIENTE</pre>
+<iframe src="../gui/index.html" onload="probar(this)"></iframe>
+<script>
+async function probar(frame) {
+  const w = frame.contentWindow;
+  try {
+    const d = w.document;
+    if (!w.visualizadorCNC) throw new Error('No se inicializó el visualizador');
+    const input = d.getElementById('file-input-gcode');
+    const dt = new w.DataTransfer();
+    dt.items.add(new w.File(['; <img src=x onerror="window.__inyeccionPrueba=true">\nG20G91G0X1\nX1'], 'prueba.nc'));
+    input.files = dt.files;
+    input.dispatchEvent(new w.Event('change', {bubbles:true}));
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const texto = d.getElementById('gcode-lines-container').textContent;
+    if (!texto.includes('<img')) throw new Error('El comentario no se muestra como texto');
+    if (w.__inyeccionPrueba) throw new Error('Se ejecutó HTML inyectado');
+    const fin = w.visualizadorCNC.trayectoria.at(-1).x2;
+    if (Math.abs(fin-50.8) > 1e-6) throw new Error('Trayectoria incorrecta: '+fin);
+    d.querySelector('[data-feed-pct="200"]').click();
+    d.getElementById('btn-execution-action').click();
+    // Tres bloques a 200 % deben terminar en ~600 ms; un reloj fijo tarda 1200 ms.
+    await new Promise(resolve => setTimeout(resolve, 900));
+    const dro = Number(d.getElementById('dro-val-x').textContent);
+    if (Math.abs(dro-50.8) > 1e-6) throw new Error('DRO incorrecto tras ejecutar: '+dro);
+    if (d.getElementById('lbl-progress-percent').textContent !== '100.0%') throw new Error('Progreso incorrecto');
+    document.getElementById('resultado').textContent = 'BROWSER_SMOKE_OK: carga, DOM seguro, trayectoria y ejecución de 50.8 mm';
+  } catch (error) {
+    document.getElementById('resultado').textContent = 'BROWSER_SMOKE_FAIL: '+error.stack;
+  }
+}
+</script></body></html>

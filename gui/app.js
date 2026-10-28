@@ -8,11 +8,10 @@
  * - Control de Jog manual mediante directiva $J= de GRBL v1.1.
  * - Streaming de programas G-Code con control de flujo por conteo de caracteres.
  * - Despacho de comandos en tiempo real (E-STOP, Feed Hold, Cycle Start).
- * - Modo fallback didáctico automático si se ejecuta en navegador web estándar.
  */
 
 // Fallback global de consola para evitar ReferenceError bajo cualquier circunstancia
-window.imprimirEnConsola = function(claseCss, mensaje) {
+window.imprimirEnConsola = function (claseCss, mensaje) {
   const el = document.getElementById('console-output');
   if (el) {
     const renglon = document.createElement('div');
@@ -49,6 +48,11 @@ document.addEventListener('DOMContentLoaded', () => {
     segundosEstimadosBase: 37, // Duración base estimada a 100%
     velocidadAvanceNominal: 800, // mm/min base
     indiceLineaActiva: 0,
+    lineasConfirmadas: new Map(),
+    lineasSeleccionadas: new Set(),
+    ultimoIndiceSeleccionado: null,
+    indiceLineaEnEdicion: -1,
+    pilaDeshacerGcode: [],
     lineasPrograma: [
       { texto: "G21 ; Unidades metricas en milimetros" },
       { texto: "G90 ; Posicionamiento absoluto" },
@@ -143,6 +147,14 @@ document.addEventListener('DOMContentLoaded', () => {
     visorGcodeViewport: document.getElementById('gcode-list-viewport'),
     contenedorLineasGcode: document.getElementById('gcode-lines-container'),
     etiquetaLineasGcode: document.getElementById('lbl-gcode-count'),
+    botonGcodeAddLine: document.getElementById('btn-gcode-add-line'),
+    botonGcodeEditLine: document.getElementById('btn-gcode-edit-line'),
+    botonGcodeDeleteLines: document.getElementById('btn-gcode-delete-lines'),
+    botonGcodeDeleteRange: document.getElementById('btn-gcode-delete-range'),
+    botonGcodeFullEditor: document.getElementById('btn-gcode-full-editor'),
+    menuContextualGcode: document.getElementById('gcode-context-menu'),
+    modalDeleteRange: document.getElementById('modal-delete-range-backdrop'),
+    modalGcodeEditor: document.getElementById('modal-gcode-editor-backdrop'),
     botonLimpiarConsolaRapido: document.getElementById('btn-quick-clean-console'),
     pestañaBotonGcode: document.getElementById('tab-btn-gcode'),
     pestañaBotonConsola: document.getElementById('tab-btn-console'),
@@ -196,6 +208,19 @@ document.addEventListener('DOMContentLoaded', () => {
     encabezadoSeguridad: document.getElementById('lbl-seguridad-encabezado'),
     descripcionSeguridad: document.getElementById('lbl-seguridad-descripcion'),
     accionSeguridad: document.getElementById('lbl-seguridad-accion'),
+    // Modal de Mecanizado Finalizado
+    modalFinMecanizado: document.getElementById('modal-fin-mecanizado-backdrop'),
+    botonCerrarFin: document.getElementById('btn-close-fin-modal'),
+    botonAceptarFin: document.getElementById('btn-aceptar-fin'),
+    botonVerHistorialFin: document.getElementById('btn-ver-historial-fin'),
+    lblFinTitulo: document.getElementById('lbl-fin-titulo'),
+    lblFinSubtitulo: document.getElementById('lbl-fin-subtitulo'),
+    lblFinEncabezado: document.getElementById('lbl-fin-encabezado'),
+    lblFinDescripcion: document.getElementById('lbl-fin-descripcion'),
+    lblFinTiempoReal: document.getElementById('lbl-fin-tiempo-real'),
+    lblFinArchivo: document.getElementById('lbl-fin-archivo'),
+    lblFinLineas: document.getElementById('lbl-fin-lineas'),
+    lblFinHerramienta: document.getElementById('lbl-fin-herramienta'),
     // Pestañas y Selección de Herramienta
     botonTabTrayectoria: document.getElementById('tab-trayectoria'),
     botonTabHerramienta: document.getElementById('tab-herramienta'),
@@ -223,6 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Historial (RF-10)
     modalHistorial: document.getElementById('modal-historial-backdrop'),
     botonMenuHistorial: document.getElementById('btn-menu-historial'),
+    botonAbrirHistorial: document.getElementById('btn-menu-historial'),
     botonCerrarHistorial: document.getElementById('btn-close-historial-modal'),
     botonCerrarHistorialBottom: document.getElementById('btn-close-historial-bottom'),
     tbodyHistorial: document.getElementById('tbody-historial'),
@@ -260,6 +286,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Suscribirse a señales de telemetría y eventos de Python
         configurarSuscripcionesPuente(window.puenteCNC);
+        HistorialManager.cargarDisco();
 
         // Solicitar escaneo inmediato de puertos serie reales
         window.puenteCNC.escanearPuertos();
@@ -267,6 +294,12 @@ document.addEventListener('DOMContentLoaded', () => {
         // Sincronizar herramienta guardada con el controlador Python
         if (typeof window.puenteCNC.establecerTipoHerramienta === 'function') {
           window.puenteCNC.establecerTipoHerramienta(estado.tipoHerramienta);
+        }
+
+        // Sincronizar ajuste de pausa segura M6 con el controlador Python
+        if (typeof window.puenteCNC.establecerPausaM6 === 'function') {
+          const pauseM6 = localStorage.getItem('cnc_pause_m6') !== 'false';
+          window.puenteCNC.establecerPausaM6(pauseM6);
         }
       });
     } else {
@@ -276,6 +309,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function configurarSuscripcionesPuente(puente) {
+    puente.senial_linea_confirmada.connect(registrarLineaConfirmada);
+    puente.senial_resultado_programa.connect(resultado => {
+      if (estado.enEjecucion) detenerMecanizado(resultado, false);
+      establecerEstadoOperativo('ALARM');
+    });
     // 1. Recepción de puertos seriales disponibles (solo actualiza DOM si hubo cambios reales)
     puente.senial_puertos.connect((jsonPuertos) => {
       try {
@@ -353,10 +391,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Actualización de métricas del DOM sincronizada con el refresco del monitor (elimina layout thrashing)
         if (!animFrameEstado) {
-          animFrameEstado = requestAnimationFrame(() => {
+          animFrameEstado = setTimeout(() => {
             animFrameEstado = null;
             if (!datosEstadoPendiente) return;
             const d = datosEstadoPendiente;
+            if (Number.isFinite(d.override_feed)) mostrarFeedOverride(d.override_feed);
+            if (Number.isFinite(d.override_spindle)) {
+              estado.modificadorHusillo = d.override_spindle;
+              if (elementos.deslizadorModificadorHusillo && document.activeElement !== elementos.deslizadorModificadorHusillo) {
+                if (estado.tipoHerramienta === 'laser') {
+                  elementos.deslizadorModificadorHusillo.value = Math.min(100, d.override_spindle);
+                } else {
+                  elementos.deslizadorModificadorHusillo.value = d.override_spindle;
+                }
+              }
+            }
 
             actualizarLecturasDRO();
             establecerEstadoOperativo(d.estado);
@@ -455,7 +504,7 @@ document.addEventListener('DOMContentLoaded', () => {
               elementos.etiquetaEstadoLimites.textContent = txtLimites;
               elementos.puntoIndicadorLimites.className = d.pines_limite ? 'indicator-dot dot-connected' : 'indicator-dot dot-off';
             }
-          });
+          }, 50);
         }
       } catch (e) {
         console.error('Error al procesar estado de telemetría:', e);
@@ -476,14 +525,14 @@ document.addEventListener('DOMContentLoaded', () => {
       estado.indiceLineaActiva = Math.max(0, lineaActual - 1);
 
       if (!animFrameProgreso) {
-        animFrameProgreso = requestAnimationFrame(() => {
+        animFrameProgreso = setTimeout(() => {
           animFrameProgreso = null;
           if (!datosProgresoPendiente) return;
           const { lineaActual: act, totalLineas: tot, porcentaje: pct, tiempo: t } = datosProgresoPendiente;
 
           elementos.metricaNumeroLinea.textContent = `${act} / ${tot}`;
           elementos.barraProgresoRelleno.style.width = `${pct}%`;
-          elementos.etiquetaPorcentajeProgreso.textContent = `${pct}%`;
+          elementos.etiquetaPorcentajeProgreso.textContent = formatearPorcentajeProgreso(pct);
           elementos.metricaTiempoTranscurrido.textContent = t;
           elementos.telemetriaTiempoTranscurrido.textContent = t;
 
@@ -493,10 +542,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
           resaltarLineaGcodeActiva();
 
-          if (act >= tot) {
+          if (pct === 100 && act >= tot) {
             detenerMecanizado('Completado');
           }
-        });
+        }, 50);
       }
     });
 
@@ -508,8 +557,9 @@ document.addEventListener('DOMContentLoaded', () => {
           estado.segundosEstimadosBase = r.tiempo_estimado_segundos;
         }
         document.getElementById('tele-vertices').textContent = r.total_lineas;
-        if (r.segmentos && r.segmentos.length > 0 && window.visualizadorCNC) {
-          window.visualizadorCNC.establecerSegmentosTrayectoria(r.segmentos, r.envolvente);
+        if (r.segmentos && window.visualizadorCNC) {
+          window.visualizadorCNC.errorGcode = r.es_valido ? null : JSON.stringify(r.errores);
+          window.visualizadorCNC.establecerSegmentosTrayectoria(r.es_valido ? r.segmentos : [], r.envolvente);
         }
         actualizarTiempoEstimado();
         imprimirEnConsola('c-info', `[ANÁLISIS] Tiempo base (100%): ${r.tiempo_estimado_formato} | Distancia corte: ${r.distancia_corte_mm} mm`);
@@ -532,7 +582,33 @@ document.addEventListener('DOMContentLoaded', () => {
     // 7. Alertas de seguridad e interbloqueos de la máquina
     if (puente.senial_alerta_seguridad) {
       puente.senial_alerta_seguridad.connect((titulo, encabezado, descripcion) => {
-        mostrarAlertaSeguridadHusillo(titulo, encabezado, descripcion);
+        const esM6 = (titulo && (titulo.includes('M6') || titulo.includes('HERRAMIENTA'))) ||
+          (descripcion && (descripcion.includes('M6') || descripcion.includes('herramienta')));
+
+        if (esM6) {
+          estado.enEjecucion = true;
+          estado.enPausa = true;
+          establecerEstadoOperativo('HOLD');
+          if (elementos.botonIniciarMecanizado) elementos.botonIniciarMecanizado.classList.add('hidden');
+          if (elementos.botonPausarMecanizado) {
+            elementos.botonPausarMecanizado.classList.remove('hidden');
+            elementos.botonPausarMecanizado.disabled = false;
+            elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-play"></i> CONTINUAR';
+          }
+          if (elementos.botonDetenerMecanizado) elementos.botonDetenerMecanizado.classList.remove('hidden');
+
+          const accionM6 = '<b>Acción requerida:</b> Monte la herramienta indicada en la pinza y presione el botón <b>CONTINUAR</b> en el panel de control para seguir con el mecanizado.';
+          mostrarAlertaSeguridadHusillo(titulo, encabezado, descripcion, accionM6);
+        } else {
+          mostrarAlertaSeguridadHusillo(titulo, encabezado, descripcion);
+        }
+      });
+    }
+
+    // 8. Sincronización nativa de pantalla completa
+    if (puente.senial_pantalla_completa) {
+      puente.senial_pantalla_completa.connect((esFs) => {
+        actualizarEstadoPantallaCompleta(esFs);
       });
     }
   }
@@ -540,6 +616,16 @@ document.addEventListener('DOMContentLoaded', () => {
   function conectarPuertoSeleccionado() {
     const puerto = elementos.selectorPuertoCom.value;
     if (!puerto) return;
+    estado.puertoComSeleccionado = puerto;
+
+    const esVirtual = (puerto === 'SIMULADOR_VIRTUAL' || !window.puenteCNC);
+    if (elementos.deslizadorVelocidadJog) {
+      const maxVal = esVirtual ? 2000 : 200;
+      elementos.deslizadorVelocidadJog.max = maxVal;
+      elementos.deslizadorVelocidadJog.title = esVirtual
+        ? 'Velocidad de Simulación y Override (10% a 2000%)'
+        : 'Modificador de velocidad y tiempo estimado (10% a 200%)';
+    }
 
     const baud = parseInt(localStorage.getItem('cnc_baudrate'), 10) || 115200;
     if (window.puenteCNC) {
@@ -634,8 +720,24 @@ document.addEventListener('DOMContentLoaded', () => {
       } else if (nuevoEstado === 'RUN' || nuevoEstado === 'JOG') {
         elementos.puntoIndicadorEstado.classList.add('dot-run');
         elementos.botonParoEmergencia.classList.remove('alarm-active');
+        if (estado.enEjecucion && estado.enPausa) {
+          estado.enPausa = false;
+          if (elementos.botonPausarMecanizado) {
+            elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-pause"></i> PAUSA';
+          }
+        }
       } else if (nuevoEstado === 'HOLD') {
         elementos.puntoIndicadorEstado.classList.add('dot-connected');
+        if (estado.enEjecucion) {
+          estado.enPausa = true;
+          if (elementos.botonIniciarMecanizado) elementos.botonIniciarMecanizado.classList.add('hidden');
+          if (elementos.botonPausarMecanizado) {
+            elementos.botonPausarMecanizado.classList.remove('hidden');
+            elementos.botonPausarMecanizado.disabled = false;
+            elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-play"></i> CONTINUAR';
+          }
+          if (elementos.botonDetenerMecanizado) elementos.botonDetenerMecanizado.classList.remove('hidden');
+        }
       } else {
         elementos.puntoIndicadorEstado.classList.add('dot-off');
       }
@@ -648,9 +750,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const esLapiz = (estado.tipoHerramienta === 'lapiz');
     const esLaser = (estado.tipoHerramienta === 'laser');
     const debeGirar = !esLapiz && (
-                      (estado.enEjecucion && !estado.enPausa && estado.husilloActivo) ||
-                      (estado.estadoOperativo === 'RUN' && estado.husilloActivo) ||
-                      estado.husilloActivo);
+      (estado.enEjecucion && !estado.enPausa && estado.husilloActivo) ||
+      (estado.estadoOperativo === 'RUN' && estado.husilloActivo) ||
+      estado.husilloActivo);
 
     if (elementos.iconoVentiladorHusillo) {
       if (debeGirar && !esLaser) {
@@ -674,8 +776,13 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    let factorSentido = 1;
+    if (eje === 'X' && localStorage.getItem('cnc_invert_jog_x') === 'true') {
+      factorSentido = -1;
+    }
+
     const paso = Number(estado.incrementoPaso) || 0.1;
-    const desplazamiento = paso * sentido;
+    const desplazamiento = paso * sentido * factorSentido;
     const avanceCalculado = Math.round(estado.velocidadAvanceNominal * (estado.porcentajeVelocidadManual / 100));
 
     if (window.puenteCNC) {
@@ -711,9 +818,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   elementos.deslizadorVelocidadJog.addEventListener('input', (evento) => {
-    estado.porcentajeVelocidadManual = parseInt(evento.target.value, 10) || 100;
-    elementos.etiquetaVelocidadJog.textContent = `${estado.porcentajeVelocidadManual}%`;
-    actualizarTiempoEstimado();
+    aplicarFeedOverride(evento.target.value);
   });
 
   // Valida si la máquina está en condiciones de aceptar comandos de puesta a cero
@@ -796,9 +901,9 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    const estaMecanizando = estado.enEjecucion || 
-                            estado.estadoOperativo === 'RUN' || 
-                            (estado.estadoOperativo === 'HOLD' && estado.enEjecucion);
+    const estaMecanizando = estado.enEjecucion ||
+      estado.estadoOperativo === 'RUN' ||
+      (estado.estadoOperativo === 'HOLD' && estado.enEjecucion);
 
     // INTERBLOQUEO DE SEGURIDAD CNC: Prohibido apagar el husillo mientras se mecaniza con FRESA
     if (estado.tipoHerramienta === 'fresa' && estado.husilloActivo && estaMecanizando) {
@@ -871,6 +976,10 @@ document.addEventListener('DOMContentLoaded', () => {
   elementos.botonAlternarHusillo.addEventListener('click', alternarHusillo);
 
   elementos.entradaRpmHusillo.addEventListener('change', (evento) => {
+    const estaMecanizando = estado.enEjecucion ||
+      estado.estadoOperativo === 'RUN' ||
+      (estado.estadoOperativo === 'HOLD' && estado.enEjecucion);
+
     if (estado.tipoHerramienta === 'laser') {
       let nuevoPct = parseInt(evento.target.value, 10);
       if (isNaN(nuevoPct)) nuevoPct = 100;
@@ -882,7 +991,15 @@ document.addEventListener('DOMContentLoaded', () => {
         elementos.deslizadorModificadorHusillo.value = nuevoPct;
       }
       const pwmS = Math.round((nuevoPct / 100) * 1000);
-      if (estado.husilloActivo) {
+      if (estaMecanizando) {
+        elementos.etiquetaRpmEnVivo.textContent = `${nuevoPct}% Luz (S${pwmS})`;
+        elementos.metricaEstadoHusillo.textContent = `${nuevoPct}% LUZ`;
+        if (window.puenteCNC && typeof window.puenteCNC.establecerSpindleOverride === 'function') {
+          window.puenteCNC.establecerSpindleOverride(nuevoPct);
+        } else if (window.puenteCNC) {
+          window.puenteCNC.controlarSpindle(true, pwmS);
+        }
+      } else if (estado.husilloActivo) {
         elementos.etiquetaRpmEnVivo.textContent = `${nuevoPct}% Luz (S${pwmS})`;
         elementos.metricaEstadoHusillo.textContent = `${nuevoPct}% LUZ`;
         if (window.puenteCNC) {
@@ -897,10 +1014,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     let nuevaRpm = parseInt(evento.target.value, 10) || 0;
-    const estaMecanizando = estado.enEjecucion || 
-                            estado.estadoOperativo === 'RUN' || 
-                            (estado.estadoOperativo === 'HOLD' && estado.enEjecucion);
-
     if (estaMecanizando && nuevaRpm <= 0) {
       nuevaRpm = Math.max(1000, estado.revolucionesPorMinuto || 12000);
       evento.target.value = nuevaRpm;
@@ -913,6 +1026,18 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    if (estaMecanizando) {
+      const base = estado.rpmProgramadas || estado.revolucionesPorMinuto || 12000;
+      const pct = Math.max(10, Math.min(200, Math.round((nuevaRpm / base) * 100)));
+      estado.modificadorHusillo = pct;
+      if (elementos.deslizadorModificadorHusillo) elementos.deslizadorModificadorHusillo.value = pct;
+      elementos.etiquetaRpmEnVivo.textContent = `${nuevaRpm} RPM (${pct}%)`;
+      if (window.puenteCNC && typeof window.puenteCNC.establecerSpindleOverride === 'function') {
+        window.puenteCNC.establecerSpindleOverride(pct);
+      }
+      return;
+    }
+
     estado.revolucionesPorMinuto = nuevaRpm;
     elementos.etiquetaRpmEnVivo.textContent = `${estado.revolucionesPorMinuto} RPM`;
     if (estado.husilloActivo && window.puenteCNC) {
@@ -921,6 +1046,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   elementos.deslizadorModificadorHusillo.addEventListener('input', (evento) => {
+    const estaMecanizando = estado.enEjecucion ||
+      estado.estadoOperativo === 'RUN' ||
+      (estado.estadoOperativo === 'HOLD' && estado.enEjecucion);
+
     if (estado.tipoHerramienta === 'laser') {
       let nuevoPct = parseInt(evento.target.value, 10);
       if (isNaN(nuevoPct)) nuevoPct = 100;
@@ -931,7 +1060,15 @@ document.addEventListener('DOMContentLoaded', () => {
         elementos.entradaRpmHusillo.value = nuevoPct;
       }
       const pwmS = Math.round((nuevoPct / 100) * 1000);
-      if (estado.husilloActivo) {
+      if (estaMecanizando) {
+        elementos.etiquetaRpmEnVivo.textContent = `${nuevoPct}% Luz (S${pwmS})`;
+        elementos.metricaEstadoHusillo.textContent = `${nuevoPct}% LUZ`;
+        if (window.puenteCNC && typeof window.puenteCNC.establecerSpindleOverride === 'function') {
+          window.puenteCNC.establecerSpindleOverride(nuevoPct);
+        } else if (window.puenteCNC) {
+          window.puenteCNC.controlarSpindle(true, pwmS);
+        }
+      } else if (estado.husilloActivo) {
         elementos.etiquetaRpmEnVivo.textContent = `${nuevoPct}% Luz (S${pwmS})`;
         elementos.metricaEstadoHusillo.textContent = `${nuevoPct}% LUZ`;
         if (window.puenteCNC) {
@@ -944,14 +1081,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     let modVal = parseInt(evento.target.value, 10);
-    const estaMecanizando = estado.enEjecucion || estado.estadoOperativo === 'RUN';
+    if (isNaN(modVal)) modVal = 100;
     if (estaMecanizando && modVal < 10) {
       modVal = 10;
       evento.target.value = 10;
     }
     estado.modificadorHusillo = modVal;
-    const rpmAjustadas = Math.round(estado.revolucionesPorMinuto * (estado.modificadorHusillo / 100));
-    elementos.etiquetaRpmEnVivo.textContent = `${rpmAjustadas} RPM`;
+    const baseRpm = estado.rpmProgramadas || estado.revolucionesPorMinuto || 12000;
+    const rpmAjustadas = Math.round(baseRpm * (estado.modificadorHusillo / 100));
+    elementos.etiquetaRpmEnVivo.textContent = `${rpmAjustadas} RPM (${modVal}%)`;
+    if (window.puenteCNC && typeof window.puenteCNC.establecerSpindleOverride === 'function') {
+      window.puenteCNC.establecerSpindleOverride(modVal);
+    }
   });
 
   // ==========================================
@@ -989,11 +1130,30 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================
   const ALTURA_LINEA_GCODE = 22;
 
-  function renderizarListaCodigoG() {
+  function actualizarContadorLineas() {
     const total = estado.lineasPrograma.length;
+    const seleccionadas = estado.lineasSeleccionadas ? estado.lineasSeleccionadas.size : 0;
     if (elementos.etiquetaLineasGcode) {
-      elementos.etiquetaLineasGcode.textContent = `${total} líneas`;
+      if (seleccionadas > 1) {
+        elementos.etiquetaLineasGcode.textContent = `${total} líneas (${seleccionadas} sel.)`;
+      } else {
+        elementos.etiquetaLineasGcode.textContent = `${total} líneas`;
+      }
     }
+    const btnDel = document.getElementById('btn-gcode-delete-lines');
+    if (btnDel) {
+      if (seleccionadas > 1) {
+        btnDel.innerHTML = `<i class="fa-solid fa-trash-can text-red"></i> Borrar (${seleccionadas})`;
+      } else {
+        btnDel.innerHTML = '<i class="fa-solid fa-trash-can text-red"></i> Borrar';
+      }
+    }
+  }
+
+  function renderizarListaCodigoG() {
+    estado.lineasConfirmadas.clear();
+    const total = estado.lineasPrograma.length;
+    actualizarContadorLineas();
     elementos.contenedorLineasGcode.style.height = (total * ALTURA_LINEA_GCODE) + 'px';
     elementos.contenedorLineasGcode.style.position = 'relative';
 
@@ -1021,7 +1181,16 @@ document.addEventListener('DOMContentLoaded', () => {
     for (let i = inicio; i < fin; i++) {
       const elemento = estado.lineasPrograma[i];
       const elementoLista = document.createElement('li');
-      elementoLista.className = 'gcode-line' + (i === estado.indiceLineaActiva ? ' active' : '');
+      const esActiva = (i === estado.indiceLineaActiva);
+      const esSeleccionada = (estado.lineasSeleccionadas && estado.lineasSeleccionadas.has(i));
+      const enEdicion = (i === estado.indiceLineaEnEdicion);
+
+      let clases = 'gcode-line';
+      if (esActiva) clases += ' active';
+      if (esSeleccionada) clases += ' selected';
+      if (enEdicion) clases += ' editing';
+
+      elementoLista.className = clases;
       elementoLista.dataset.index = i;
       elementoLista.style.position = 'absolute';
       elementoLista.style.top = (i * ALTURA_LINEA_GCODE) + 'px';
@@ -1032,13 +1201,89 @@ document.addEventListener('DOMContentLoaded', () => {
       const columnaNumero = document.createElement('span');
       columnaNumero.className = 'line-num';
       columnaNumero.textContent = (i + 1).toString();
-
-      const columnaTexto = document.createElement('span');
-      columnaTexto.className = 'line-text';
-      columnaTexto.innerHTML = formatearSintaxisCodigoG(elemento.texto);
-
       elementoLista.appendChild(columnaNumero);
-      elementoLista.appendChild(columnaTexto);
+
+      if (enEdicion) {
+        const contenedorEdicion = document.createElement('div');
+        contenedorEdicion.className = 'line-edit-container';
+
+        const inputEdicion = document.createElement('input');
+        inputEdicion.type = 'text';
+        inputEdicion.className = 'gcode-line-edit-input';
+        inputEdicion.value = elemento.texto;
+        inputEdicion.spellcheck = false;
+        inputEdicion.autocomplete = 'off';
+
+        inputEdicion.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') {
+            ev.preventDefault();
+            guardarEdicionLinea(i, inputEdicion.value);
+            if (ev.shiftKey) insertarLineaGcode(i + 1);
+          } else if (ev.key === 'Escape') {
+            ev.preventDefault();
+            cancelarEdicionLinea();
+          } else if (ev.key === 'Tab') {
+            ev.preventDefault();
+            guardarEdicionLinea(i, inputEdicion.value);
+            const siguiente = ev.shiftKey ? Math.max(0, i - 1) : Math.min(estado.lineasPrograma.length - 1, i + 1);
+            iniciarEdicionLinea(siguiente);
+          }
+        });
+
+        const btnGuardar = document.createElement('button');
+        btnGuardar.type = 'button';
+        btnGuardar.className = 'btn-edit-save';
+        btnGuardar.title = 'Guardar (Enter)';
+        btnGuardar.innerHTML = '<i class="fa-solid fa-check"></i>';
+        btnGuardar.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          guardarEdicionLinea(i, inputEdicion.value);
+        });
+
+        const btnCancelar = document.createElement('button');
+        btnCancelar.type = 'button';
+        btnCancelar.className = 'btn-edit-cancel';
+        btnCancelar.title = 'Cancelar (Esc)';
+        btnCancelar.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+        btnCancelar.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          cancelarEdicionLinea();
+        });
+
+        contenedorEdicion.appendChild(inputEdicion);
+        contenedorEdicion.appendChild(btnGuardar);
+        contenedorEdicion.appendChild(btnCancelar);
+        elementoLista.appendChild(contenedorEdicion);
+
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(() => {
+            inputEdicion.focus();
+            inputEdicion.select();
+          });
+        } else if (typeof setTimeout === 'function') {
+          setTimeout(() => {
+            if (typeof inputEdicion.focus === 'function') inputEdicion.focus();
+            if (typeof inputEdicion.select === 'function') inputEdicion.select();
+          }, 0);
+        }
+      } else {
+        const columnaTexto = document.createElement('span');
+        columnaTexto.className = 'line-text';
+        columnaTexto.innerHTML = formatearSintaxisCodigoG(elemento.texto);
+        elementoLista.appendChild(columnaTexto);
+
+        const contenedorAcciones = document.createElement('div');
+        contenedorAcciones.className = 'gcode-line-actions';
+        contenedorAcciones.innerHTML = `
+          <button type="button" class="btn-line-action btn-line-add" title="Insertar línea debajo"><i class="fa-solid fa-plus"></i></button>
+          <button type="button" class="btn-line-action btn-line-edit" title="Editar línea (Doble clic o F2)"><i class="fa-solid fa-pen"></i></button>
+          <button type="button" class="btn-line-action btn-line-del" title="Borrar línea (Supr)"><i class="fa-solid fa-trash-can"></i></button>
+        `;
+        elementoLista.appendChild(contenedorAcciones);
+
+        if (estado.lineasConfirmadas.has(i)) elementoLista.appendChild(crearIndicadorConfirmacion(estado.lineasConfirmadas.get(i)));
+      }
+
       fragmento.appendChild(elementoLista);
     }
 
@@ -1046,13 +1291,587 @@ document.addEventListener('DOMContentLoaded', () => {
     elementos.contenedorLineasGcode.appendChild(fragmento);
   }
 
-  // Delegación de eventos para selección interactiva de líneas sin duplicar listeners
+  function crearIndicadorConfirmacion(virtual) {
+    const indicador = document.createElement('span');
+    indicador.className = 'gcode-ack';
+    indicador.textContent = 'ok';
+    indicador.title = virtual ? 'Simulador: comando procesado correctamente' : 'Máquina: comando enviado y confirmado con ok';
+    indicador.setAttribute('aria-label', indicador.title);
+    return indicador;
+  }
+
+  function registrarLineaConfirmada(indice, virtual = false) {
+    if (!Number.isInteger(indice) || indice < 0 || indice >= estado.lineasPrograma.length) return;
+    estado.lineasConfirmadas.set(indice, virtual);
+    const fila = elementos.contenedorLineasGcode.querySelector(`.gcode-line[data-index="${indice}"]`);
+    if (fila && !fila.querySelector('.gcode-ack')) fila.appendChild(crearIndicadorConfirmacion(virtual));
+  }
+
+  // Sincronización completa de cambios en el programa G-Code
+  function sincronizarCambiosProgramaGcode(mensajeConsola) {
+    estado.segundosEstimadosBase = estimarSegundosBaseDesdeLineas(estado.lineasPrograma);
+    actualizarMetricasTelemetria();
+    actualizarTiempoEstimado();
+    renderizarListaCodigoG();
+
+    const textoCompleto = estado.lineasPrograma.map(l => l.texto).join('\n');
+    if (window.visualizadorCNC) {
+      window.visualizadorCNC.cargarTrayectoriaDesdeGCode(textoCompleto);
+      window.visualizadorCNC.solicitarRenderizado();
+    }
+    if (window.puenteCNC) {
+      window.puenteCNC.analizarGcode(textoCompleto);
+    }
+    if (mensajeConsola) {
+      imprimirEnConsola('c-info', mensajeConsola);
+    }
+  }
+
+  // Funciones de Edición, Inserción y Borrado de Líneas
+  function iniciarEdicionLinea(indice) {
+    if (estado.enEjecucion) {
+      imprimirEnConsola('c-warn', '[BLOQUEO] No se puede editar código G mientras el trabajo está en ejecución.');
+      return;
+    }
+    if (indice < 0 || indice >= estado.lineasPrograma.length) return;
+    estado.indiceLineaEnEdicion = indice;
+    estado.indiceLineaActiva = indice;
+    estado.lineasSeleccionadas.clear();
+    estado.lineasSeleccionadas.add(indice);
+    actualizarContadorLineas();
+
+    const viewport = elementos.visorGcodeViewport || document.getElementById('gcode-list-viewport');
+    if (viewport) {
+      const posTop = indice * ALTURA_LINEA_GCODE;
+      if (posTop < viewport.scrollTop || posTop > (viewport.scrollTop + viewport.clientHeight - 30)) {
+        viewport.scrollTop = Math.max(0, posTop - 40);
+      }
+    }
+    renderizarVentanaVisibleGcode();
+  }
+
+  function guardarEdicionLinea(indice, nuevoTexto) {
+    if (indice < 0 || indice >= estado.lineasPrograma.length) {
+      estado.indiceLineaEnEdicion = -1;
+      return;
+    }
+    const textoFinal = (nuevoTexto ?? '').trim();
+    const textoAnterior = estado.lineasPrograma[indice].texto;
+    estado.indiceLineaEnEdicion = -1;
+
+    if (textoFinal !== textoAnterior) {
+      estado.pilaDeshacerGcode.push({
+        tipo: 'editar',
+        indice,
+        anterior: textoAnterior
+      });
+      estado.lineasPrograma[indice].texto = textoFinal;
+      sincronizarCambiosProgramaGcode(`[GCODE] Línea ${indice + 1} modificada: "${textoFinal}".`);
+    } else {
+      renderizarVentanaVisibleGcode();
+    }
+  }
+
+  function cancelarEdicionLinea() {
+    estado.indiceLineaEnEdicion = -1;
+    renderizarVentanaVisibleGcode();
+  }
+
+  function insertarLineaGcode(posicion, textoInicial = 'G1 ') {
+    if (estado.enEjecucion) {
+      imprimirEnConsola('c-warn', '[BLOQUEO] No se puede insertar código G mientras el trabajo está en ejecución.');
+      return;
+    }
+    const total = estado.lineasPrograma.length;
+    let pos = (typeof posicion === 'number' && Number.isInteger(posicion))
+      ? posicion
+      : ((estado.indiceLineaActiva >= 0 && estado.indiceLineaActiva < total) ? (estado.indiceLineaActiva + 1) : total);
+    pos = Math.max(0, Math.min(total, pos));
+
+    estado.pilaDeshacerGcode.push({
+      tipo: 'insertar',
+      posicion: pos
+    });
+
+    estado.lineasPrograma.splice(pos, 0, { texto: textoInicial });
+    estado.indiceLineaActiva = pos;
+    estado.lineasSeleccionadas.clear();
+    estado.lineasSeleccionadas.add(pos);
+
+    sincronizarCambiosProgramaGcode(`[GCODE] Nueva línea insertada en la posición ${pos + 1}.`);
+    iniciarEdicionLinea(pos);
+  }
+
+  function eliminarLineasSeleccionadas() {
+    if (estado.enEjecucion) {
+      imprimirEnConsola('c-warn', '[BLOQUEO] No se puede eliminar código G mientras el trabajo está en ejecución.');
+      return;
+    }
+    const total = estado.lineasPrograma.length;
+    if (total === 0) return;
+
+    let indices = Array.from(estado.lineasSeleccionadas).filter(i => i >= 0 && i < total);
+    if (indices.length === 0 && estado.indiceLineaActiva >= 0 && estado.indiceLineaActiva < total) {
+      indices = [estado.indiceLineaActiva];
+    }
+    if (indices.length === 0) {
+      imprimirEnConsola('c-warn', '[GCODE] Seleccione una o varias líneas para eliminar.');
+      return;
+    }
+
+    if (indices.length > 25 && !confirm(`¿Desea eliminar ${indices.length} líneas de código G seleccionadas?`)) {
+      return;
+    }
+
+    indices.sort((a, b) => b - a);
+    const guardadas = indices.map(idx => ({ idx, item: { ...estado.lineasPrograma[idx] } }));
+    estado.pilaDeshacerGcode.push({
+      tipo: 'eliminar_multiples',
+      items: guardadas
+    });
+
+    for (const idx of indices) {
+      estado.lineasPrograma.splice(idx, 1);
+    }
+
+    estado.lineasSeleccionadas.clear();
+    estado.indiceLineaEnEdicion = -1;
+    const menorIndice = indices[indices.length - 1];
+    const nuevoIndice = Math.min(menorIndice, Math.max(0, estado.lineasPrograma.length - 1));
+    estado.indiceLineaActiva = nuevoIndice;
+    if (estado.lineasPrograma.length > 0) {
+      estado.lineasSeleccionadas.add(nuevoIndice);
+    }
+
+    sincronizarCambiosProgramaGcode(`[GCODE] Se eliminaron ${indices.length} línea(s) del programa.`);
+  }
+
+  function eliminarRangoLineas(inicio1Based, fin1Based) {
+    if (estado.enEjecucion) {
+      imprimirEnConsola('c-warn', '[BLOQUEO] No se puede eliminar código G mientras el trabajo está en ejecución.');
+      return;
+    }
+    const total = estado.lineasPrograma.length;
+    if (total === 0) return;
+
+    const start = Math.max(1, Math.min(total, parseInt(inicio1Based, 10) || 1));
+    const end = Math.max(start, Math.min(total, parseInt(fin1Based, 10) || start));
+    const idxStart = start - 1;
+    const cantidad = (end - start) + 1;
+
+    const itemsGuardados = estado.lineasPrograma.slice(idxStart, idxStart + cantidad).map(item => ({ ...item }));
+    estado.pilaDeshacerGcode.push({
+      tipo: 'eliminar_rango',
+      idxStart,
+      items: itemsGuardados
+    });
+
+    estado.lineasPrograma.splice(idxStart, cantidad);
+    estado.lineasSeleccionadas.clear();
+    estado.indiceLineaEnEdicion = -1;
+    estado.indiceLineaActiva = Math.min(idxStart, Math.max(0, estado.lineasPrograma.length - 1));
+    if (estado.lineasPrograma.length > 0) {
+      estado.lineasSeleccionadas.add(estado.indiceLineaActiva);
+    }
+
+    sincronizarCambiosProgramaGcode(`[GCODE] Se eliminó el rango de líneas ${start} a ${end} (${cantidad} líneas eliminadas).`);
+  }
+
+  function deshacerUltimaEdicionGcode() {
+    if (estado.enEjecucion) {
+      imprimirEnConsola('c-warn', '[BLOQUEO] No se puede modificar código G mientras el trabajo está en ejecución.');
+      return;
+    }
+    if (estado.pilaDeshacerGcode.length === 0) {
+      imprimirEnConsola('c-info', '[DESHACER] No hay acciones recientes de edición para deshacer.');
+      return;
+    }
+    const accion = estado.pilaDeshacerGcode.pop();
+    if (accion.tipo === 'editar') {
+      if (estado.lineasPrograma[accion.indice]) {
+        estado.lineasPrograma[accion.indice].texto = accion.anterior;
+        sincronizarCambiosProgramaGcode(`[DESHACER] Restaurada línea ${accion.indice + 1}.`);
+      }
+    } else if (accion.tipo === 'insertar') {
+      if (accion.posicion >= 0 && accion.posicion < estado.lineasPrograma.length) {
+        estado.lineasPrograma.splice(accion.posicion, 1);
+        sincronizarCambiosProgramaGcode(`[DESHACER] Eliminada línea insertada en posición ${accion.posicion + 1}.`);
+      }
+    } else if (accion.tipo === 'eliminar_multiples') {
+      const items = [...accion.items].sort((a, b) => a.idx - b.idx);
+      for (const it of items) {
+        estado.lineasPrograma.splice(it.idx, 0, it.item);
+      }
+      sincronizarCambiosProgramaGcode(`[DESHACER] Restauradas ${items.length} líneas eliminadas.`);
+    } else if (accion.tipo === 'eliminar_rango') {
+      estado.lineasPrograma.splice(accion.idxStart, 0, ...accion.items);
+      sincronizarCambiosProgramaGcode(`[DESHACER] Restauradas ${accion.items.length} líneas del rango.`);
+    }
+  }
+
+  // Menú Contextual G-Code
+  function abrirMenuContextualGcode(clientX, clientY, indice) {
+    const menu = elementos.menuContextualGcode || document.getElementById('gcode-context-menu');
+    if (!menu) return;
+    const btnDel = menu.querySelector('#ctx-gcode-delete');
+    if (btnDel) {
+      const cant = estado.lineasSeleccionadas.size;
+      btnDel.innerHTML = cant > 1
+        ? `<i class="fa-solid fa-trash-can"></i> Borrar ${cant} líneas (Supr)`
+        : '<i class="fa-solid fa-trash-can"></i> Borrar línea (Supr)';
+    }
+    menu.classList.remove('hidden');
+    const anchoMenu = 190;
+    const altoMenu = 190;
+    const x = Math.min(clientX, window.innerWidth - anchoMenu - 10);
+    const y = Math.min(clientY, window.innerHeight - altoMenu - 10);
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+  }
+
+  function cerrarMenuContextualGcode() {
+    const menu = elementos.menuContextualGcode || document.getElementById('gcode-context-menu');
+    if (menu) menu.classList.add('hidden');
+  }
+
+  // Delegación de eventos en la lista de líneas G-Code
   elementos.contenedorLineasGcode.addEventListener('click', (evento) => {
+    cerrarMenuContextualGcode();
+
+    const btnAdd = evento.target.closest('.btn-line-add');
+    if (btnAdd) {
+      evento.stopPropagation();
+      const lineaEl = btnAdd.closest('.gcode-line');
+      if (lineaEl) insertarLineaGcode(parseInt(lineaEl.dataset.index, 10) + 1);
+      return;
+    }
+
+    const btnEdit = evento.target.closest('.btn-line-edit');
+    if (btnEdit) {
+      evento.stopPropagation();
+      const lineaEl = btnEdit.closest('.gcode-line');
+      if (lineaEl) iniciarEdicionLinea(parseInt(lineaEl.dataset.index, 10));
+      return;
+    }
+
+    const btnDel = evento.target.closest('.btn-line-del');
+    if (btnDel) {
+      evento.stopPropagation();
+      const lineaEl = btnDel.closest('.gcode-line');
+      if (lineaEl) {
+        const idx = parseInt(lineaEl.dataset.index, 10);
+        estado.lineasSeleccionadas.clear();
+        estado.lineasSeleccionadas.add(idx);
+        eliminarLineasSeleccionadas();
+      }
+      return;
+    }
+
     const lineaEl = evento.target.closest('.gcode-line');
-    if (lineaEl && lineaEl.dataset.index !== undefined) {
-      seleccionarLineaGcode(parseInt(lineaEl.dataset.index, 10));
+    if (!lineaEl || lineaEl.dataset.index === undefined) return;
+    if (lineaEl.classList.contains('editing')) return;
+
+    const idx = parseInt(lineaEl.dataset.index, 10);
+
+    if (evento.shiftKey && estado.ultimoIndiceSeleccionado !== null) {
+      const min = Math.min(estado.ultimoIndiceSeleccionado, idx);
+      const max = Math.max(estado.ultimoIndiceSeleccionado, idx);
+      estado.lineasSeleccionadas.clear();
+      for (let k = min; k <= max; k++) estado.lineasSeleccionadas.add(k);
+      renderizarVentanaVisibleGcode();
+      actualizarContadorLineas();
+    } else if (evento.ctrlKey || evento.metaKey) {
+      if (estado.lineasSeleccionadas.has(idx)) {
+        estado.lineasSeleccionadas.delete(idx);
+      } else {
+        estado.lineasSeleccionadas.add(idx);
+      }
+      estado.ultimoIndiceSeleccionado = idx;
+      renderizarVentanaVisibleGcode();
+      actualizarContadorLineas();
+    } else {
+      estado.lineasSeleccionadas.clear();
+      estado.lineasSeleccionadas.add(idx);
+      estado.ultimoIndiceSeleccionado = idx;
+      seleccionarLineaGcode(idx);
+      actualizarContadorLineas();
     }
   });
+
+  // Doble clic para editar en línea
+  elementos.contenedorLineasGcode.addEventListener('dblclick', (evento) => {
+    const lineaEl = evento.target.closest('.gcode-line');
+    if (lineaEl && lineaEl.dataset.index !== undefined && !lineaEl.classList.contains('editing')) {
+      iniciarEdicionLinea(parseInt(lineaEl.dataset.index, 10));
+    }
+  });
+
+  // Clic derecho para menú contextual
+  elementos.contenedorLineasGcode.addEventListener('contextmenu', (evento) => {
+    evento.preventDefault();
+    const lineaEl = evento.target.closest('.gcode-line');
+    if (!lineaEl || lineaEl.dataset.index === undefined) return;
+    const idx = parseInt(lineaEl.dataset.index, 10);
+    if (!estado.lineasSeleccionadas.has(idx)) {
+      estado.lineasSeleccionadas.clear();
+      estado.lineasSeleccionadas.add(idx);
+      estado.ultimoIndiceSeleccionado = idx;
+      seleccionarLineaGcode(idx);
+      actualizarContadorLineas();
+    }
+    abrirMenuContextualGcode(evento.clientX, evento.clientY, idx);
+  });
+
+  document.addEventListener('click', (evento) => {
+    if (!evento.target.closest('#gcode-context-menu')) {
+      cerrarMenuContextualGcode();
+    }
+  });
+
+  // Atajos de teclado en el viewport de G-Code
+  if (elementos.visorGcodeViewport) {
+    elementos.visorGcodeViewport.addEventListener('keydown', (ev) => {
+      if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA') return;
+
+      if (ev.key === 'Delete' || ev.key === 'Backspace') {
+        ev.preventDefault();
+        eliminarLineasSeleccionadas();
+      } else if (ev.key === 'Insert') {
+        ev.preventDefault();
+        insertarLineaGcode();
+      } else if (ev.key === 'F2' || ev.key === 'Enter') {
+        ev.preventDefault();
+        if (estado.indiceLineaActiva >= 0) {
+          iniciarEdicionLinea(estado.indiceLineaActiva);
+        }
+      } else if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        const prox = Math.min(estado.lineasPrograma.length - 1, estado.indiceLineaActiva + 1);
+        seleccionarLineaGcode(prox);
+      } else if (ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        const prev = Math.max(0, estado.indiceLineaActiva - 1);
+        seleccionarLineaGcode(prev);
+      } else if (ev.ctrlKey && (ev.key === 'z' || ev.key === 'Z')) {
+        ev.preventDefault();
+        deshacerUltimaEdicionGcode();
+      }
+    });
+  }
+
+  // Botones de la barra de herramientas de PROGRAMA G-CODE
+  if (elementos.botonGcodeAddLine) {
+    elementos.botonGcodeAddLine.addEventListener('click', () => insertarLineaGcode());
+  }
+  if (elementos.botonGcodeEditLine) {
+    elementos.botonGcodeEditLine.addEventListener('click', () => {
+      if (estado.indiceLineaActiva >= 0) iniciarEdicionLinea(estado.indiceLineaActiva);
+    });
+  }
+  if (elementos.botonGcodeDeleteLines) {
+    elementos.botonGcodeDeleteLines.addEventListener('click', () => eliminarLineasSeleccionadas());
+  }
+  if (elementos.botonGcodeDeleteRange) {
+    elementos.botonGcodeDeleteRange.addEventListener('click', () => {
+      if (estado.enEjecucion) {
+        imprimirEnConsola('c-warn', '[BLOQUEO] No se puede eliminar código G mientras el trabajo está en ejecución.');
+        return;
+      }
+      abrirModalBorrarRango();
+    });
+  }
+  if (elementos.botonGcodeFullEditor) {
+    elementos.botonGcodeFullEditor.addEventListener('click', () => {
+      if (estado.enEjecucion) {
+        imprimirEnConsola('c-warn', '[BLOQUEO] No se puede editar código G mientras el trabajo está en ejecución.');
+        return;
+      }
+      abrirModalEditorCompleto();
+    });
+  }
+
+  // Acciones del Menú Contextual
+  const ctxEdit = document.getElementById('ctx-gcode-edit');
+  if (ctxEdit) ctxEdit.addEventListener('click', () => {
+    cerrarMenuContextualGcode();
+    iniciarEdicionLinea(estado.indiceLineaActiva);
+  });
+
+  const ctxAddAbove = document.getElementById('ctx-gcode-add-above');
+  if (ctxAddAbove) ctxAddAbove.addEventListener('click', () => {
+    cerrarMenuContextualGcode();
+    insertarLineaGcode(estado.indiceLineaActiva);
+  });
+
+  const ctxAddBelow = document.getElementById('ctx-gcode-add-below');
+  if (ctxAddBelow) ctxAddBelow.addEventListener('click', () => {
+    cerrarMenuContextualGcode();
+    insertarLineaGcode(estado.indiceLineaActiva + 1);
+  });
+
+  const ctxDel = document.getElementById('ctx-gcode-delete');
+  if (ctxDel) ctxDel.addEventListener('click', () => {
+    cerrarMenuContextualGcode();
+    eliminarLineasSeleccionadas();
+  });
+
+  const ctxDelRange = document.getElementById('ctx-gcode-delete-range');
+  if (ctxDelRange) ctxDelRange.addEventListener('click', () => {
+    cerrarMenuContextualGcode();
+    abrirModalBorrarRango();
+  });
+
+  const ctxCopy = document.getElementById('ctx-gcode-copy');
+  if (ctxCopy) ctxCopy.addEventListener('click', () => {
+    cerrarMenuContextualGcode();
+    const l = estado.lineasPrograma[estado.indiceLineaActiva];
+    if (l && navigator.clipboard) {
+      navigator.clipboard.writeText(l.texto).then(() => {
+        imprimirEnConsola('c-info', `[PORTAPAPELES] Línea copiada: "${l.texto}"`);
+      });
+    }
+  });
+
+  // Modal Borrar Rango
+  function abrirModalBorrarRango() {
+    const modal = elementos.modalDeleteRange || document.getElementById('modal-delete-range-backdrop');
+    if (!modal) return;
+    const inpStart = document.getElementById('input-range-start');
+    const inpEnd = document.getElementById('input-range-end');
+    const total = estado.lineasPrograma.length;
+
+    const startVal = (estado.indiceLineaActiva >= 0 && estado.indiceLineaActiva < total)
+      ? (estado.indiceLineaActiva + 1)
+      : 1;
+    let endVal = startVal;
+    if (estado.lineasSeleccionadas && estado.lineasSeleccionadas.size > 1) {
+      endVal = Math.max(...estado.lineasSeleccionadas) + 1;
+    }
+
+    if (inpStart) {
+      inpStart.max = total;
+      inpStart.value = startVal;
+    }
+    if (inpEnd) {
+      inpEnd.max = total;
+      inpEnd.value = endVal;
+    }
+    actualizarVistaPreviaRango();
+    modal.classList.remove('hidden');
+  }
+
+  function cerrarModalBorrarRango() {
+    const modal = elementos.modalDeleteRange || document.getElementById('modal-delete-range-backdrop');
+    if (modal) modal.classList.add('hidden');
+  }
+
+  function actualizarVistaPreviaRango() {
+    const inpStart = document.getElementById('input-range-start');
+    const inpEnd = document.getElementById('input-range-end');
+    const preview = document.getElementById('lbl-range-preview');
+    if (!preview) return;
+    const total = estado.lineasPrograma.length;
+    const s = Math.max(1, Math.min(total, parseInt(inpStart?.value, 10) || 1));
+    const e = Math.max(s, Math.min(total, parseInt(inpEnd?.value, 10) || s));
+    const cant = (e - s) + 1;
+    preview.textContent = `Se eliminarán ${cant} línea(s) (de la línea ${s} a la ${e}).`;
+  }
+
+  const inpRangeStart = document.getElementById('input-range-start');
+  const inpRangeEnd = document.getElementById('input-range-end');
+  if (inpRangeStart) inpRangeStart.addEventListener('input', actualizarVistaPreviaRango);
+  if (inpRangeEnd) inpRangeEnd.addEventListener('input', actualizarVistaPreviaRango);
+
+  const btnCloseDelRange = document.getElementById('btn-close-delete-range-modal');
+  const btnCancelDelRange = document.getElementById('btn-cancel-delete-range');
+  const btnConfirmDelRange = document.getElementById('btn-confirm-delete-range');
+  if (btnCloseDelRange) btnCloseDelRange.addEventListener('click', cerrarModalBorrarRango);
+  if (btnCancelDelRange) btnCancelDelRange.addEventListener('click', cerrarModalBorrarRango);
+  if (btnConfirmDelRange) btnConfirmDelRange.addEventListener('click', () => {
+    const s = parseInt(inpRangeStart?.value, 10) || 1;
+    const e = parseInt(inpRangeEnd?.value, 10) || s;
+    cerrarModalBorrarRango();
+    eliminarRangoLineas(s, e);
+  });
+
+  // Modal Editor Completo
+  function abrirModalEditorCompleto() {
+    const modal = elementos.modalGcodeEditor || document.getElementById('modal-gcode-editor-backdrop');
+    if (!modal) return;
+    const textarea = document.getElementById('textarea-gcode-full');
+    const lblStats = document.getElementById('lbl-editor-line-stats');
+    if (textarea) {
+      textarea.value = estado.lineasPrograma.map(l => (typeof l === 'string' ? l : (l.texto || ''))).join('\n');
+      if (lblStats) lblStats.textContent = `${estado.lineasPrograma.length} líneas`;
+    }
+    modal.classList.remove('hidden');
+  }
+
+  function cerrarModalEditorCompleto() {
+    const modal = elementos.modalGcodeEditor || document.getElementById('modal-gcode-editor-backdrop');
+    if (modal) modal.classList.add('hidden');
+  }
+
+  const btnCloseEditorModal = document.getElementById('btn-close-gcode-editor-modal');
+  const btnCancelEditorModal = document.getElementById('btn-cancel-gcode-editor');
+  const btnSaveEditorModal = document.getElementById('btn-save-gcode-editor');
+  const btnEditorCleanEmpty = document.getElementById('btn-editor-clean-empty');
+  const btnEditorUppercase = document.getElementById('btn-editor-uppercase');
+  const textareaGcodeFull = document.getElementById('textarea-gcode-full');
+
+  if (textareaGcodeFull) {
+    textareaGcodeFull.addEventListener('input', () => {
+      const lblStats = document.getElementById('lbl-editor-line-stats');
+      if (lblStats) {
+        const count = textareaGcodeFull.value.split('\n').filter(l => l.trim().length > 0).length;
+        lblStats.textContent = `${count} líneas válidas`;
+      }
+    });
+  }
+
+  if (btnEditorCleanEmpty && textareaGcodeFull) {
+    btnEditorCleanEmpty.addEventListener('click', () => {
+      const lineas = textareaGcodeFull.value.split('\n').filter(l => l.trim().length > 0);
+      textareaGcodeFull.value = lineas.join('\n');
+      const lblStats = document.getElementById('lbl-editor-line-stats');
+      if (lblStats) lblStats.textContent = `${lineas.length} líneas válidas`;
+    });
+  }
+
+  if (btnEditorUppercase && textareaGcodeFull) {
+    btnEditorUppercase.addEventListener('click', () => {
+      const lineas = textareaGcodeFull.value.split('\n').map(l => {
+        let partes = l.split(';');
+        partes[0] = partes[0].toUpperCase();
+        return partes.join(';');
+      });
+      textareaGcodeFull.value = lineas.join('\n');
+    });
+  }
+
+  if (btnCloseEditorModal) btnCloseEditorModal.addEventListener('click', cerrarModalEditorCompleto);
+  if (btnCancelEditorModal) btnCancelEditorModal.addEventListener('click', cerrarModalEditorCompleto);
+  if (btnSaveEditorModal && textareaGcodeFull) {
+    btnSaveEditorModal.addEventListener('click', () => {
+      const lineas = textareaGcodeFull.value.split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0)
+        .map(texto => ({ texto }));
+
+      cerrarModalEditorCompleto();
+      if (lineas.length > 0) {
+        estado.pilaDeshacerGcode.push({
+          tipo: 'editor_completo',
+          lineasPrevias: [...estado.lineasPrograma]
+        });
+        estado.lineasPrograma = lineas;
+        estado.indiceLineaActiva = 0;
+        estado.lineasSeleccionadas.clear();
+        estado.lineasSeleccionadas.add(0);
+        sincronizarCambiosProgramaGcode(`[EDITOR] Programa actualizado con ${lineas.length} líneas.`);
+      }
+    });
+  }
 
   if (elementos.visorGcodeViewport) {
     elementos.visorGcodeViewport.addEventListener('scroll', () => {
@@ -1060,12 +1879,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }, { passive: true });
   }
 
+  let refrescoListaResize = null;
   window.addEventListener('resize', () => {
-    renderizarVentanaVisibleGcode();
+    if (refrescoListaResize !== null) return;
+    refrescoListaResize = requestAnimationFrame(() => {
+      refrescoListaResize = null;
+      renderizarVentanaVisibleGcode();
+    });
   });
 
+  function escaparHTML(valor) {
+    return String(valor ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+  }
+
   function formatearSintaxisCodigoG(textoOriginal) {
-    let salida = textoOriginal;
+    let salida = escaparHTML(textoOriginal);
     if (salida.includes(';')) {
       const partes = salida.split(';');
       salida = colorearComandos(partes[0]) + `<span class="cmd-comment">;${partes.slice(1).join(';')}</span>`;
@@ -1091,29 +1919,12 @@ document.addEventListener('DOMContentLoaded', () => {
     resaltarLineaGcodeActiva();
     actualizarMetricasTelemetria();
 
-    // Mover herramienta a la posición de la línea seleccionada para previsualización y simulación didáctica
-    const linea = estado.lineasPrograma[indice];
-    if (linea) {
-      const mX = linea.texto.match(/X([-+]?\d*\.?\d+)/i);
-      const mY = linea.texto.match(/Y([-+]?\d*\.?\d+)/i);
-      const mZ = linea.texto.match(/Z([-+]?\d*\.?\d+)/i);
-      let cambio = false;
-      if (mX) {
-        const valX = parseFloat(mX[1]);
-        if (!isNaN(valX)) { estado.coordenadasTrabajo.x = valX; cambio = true; }
-      }
-      if (mY) {
-        const valY = parseFloat(mY[1]);
-        if (!isNaN(valY)) { estado.coordenadasTrabajo.y = valY; cambio = true; }
-      }
-      if (mZ) {
-        const valZ = parseFloat(mZ[1]);
-        if (!isNaN(valZ)) { estado.coordenadasTrabajo.z = valZ; cambio = true; }
-      }
-      if (cambio) {
-        estado.coordenadasMaquina = { ...estado.coordenadasTrabajo };
-        actualizarLecturasDRO();
-      }
+    // En hardware, el DRO siempre procede de telemetría. Offline usa geometría modal.
+    if (!window.puenteCNC && window.visualizadorCNC) {
+      const segmento = window.visualizadorCNC.trayectoria.findLast(s => s.linea <= indice);
+      estado.coordenadasTrabajo = segmento ? {x: segmento.x2, y: segmento.y2, z: segmento.z2} : {x: 0, y: 0, z: 0};
+      estado.coordenadasMaquina = {...estado.coordenadasTrabajo};
+      actualizarLecturasDRO();
     }
   }
 
@@ -1167,7 +1978,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Resaltado de alarmas y errores en color rojo
     const resaltarAlarmas = localStorage.getItem('cnc_console_highlight_alarms') !== 'false';
     const esAlarma = (claseCss && (claseCss.includes('alarm') || claseCss.includes('error'))) ||
-                     (typeof mensaje === 'string' && (/ALARM|error:/i.test(mensaje)));
+      (typeof mensaje === 'string' && (/ALARM|error:/i.test(mensaje)));
     if (resaltarAlarmas && esAlarma) {
       clases += ' console-line-alarm-highlight';
     }
@@ -1209,9 +2020,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const comando = comandoSinFormato.trim();
     if (!comando) return;
 
-    const estaMecanizando = estado.enEjecucion || 
-                            estado.estadoOperativo === 'RUN' || 
-                            (estado.estadoOperativo === 'HOLD' && estado.enEjecucion);
+    const estaMecanizando = estado.enEjecucion ||
+      estado.estadoOperativo === 'RUN' ||
+      (estado.estadoOperativo === 'HOLD' && estado.enEjecucion);
 
     // Interbloqueo de comando M5 manual durante mecanizado
     if (estaMecanizando && /\bM0?5\b/i.test(comando)) {
@@ -1286,38 +2097,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================
   // Estima la duración física base del programa en segundos a 100% de avance
   function estimarSegundosBaseDesdeLineas(lineas) {
-    let x = 0, y = 0, z = 0;
-    let distCorte = 0, distRapido = 0;
-    let velF = 800;
-
-    for (let i = 0; i < lineas.length; i++) {
-      const l = lineas[i];
-      const texto = (typeof l === 'string' ? l : (l.texto || '')).replace(/\(.*?\)/g, '').split(';')[0].trim().toUpperCase();
-      if (!texto) continue;
-
-      const mF = texto.match(/F(\d+(?:\.\d+)?)/);
-      if (mF) velF = Math.max(1, parseFloat(mF[1]));
-
-      const mX = texto.match(/X([-+]?\d*\.?\d+)/);
-      const mY = texto.match(/Y([-+]?\d*\.?\d+)/);
-      const mZ = texto.match(/Z([-+]?\d*\.?\d+)/);
-
-      if (mX || mY || mZ) {
-        const nx = mX ? parseFloat(mX[1]) : x;
-        const ny = mY ? parseFloat(mY[1]) : y;
-        const nz = mZ ? parseFloat(mZ[1]) : z;
-        const d = Math.hypot(nx - x, ny - y, nz - z);
-
-        const esRapido = /\bG00?\b/.test(texto) || (!texto.includes('G') && mZ && nz > z);
-        if (esRapido) distRapido += d;
-        else distCorte += d;
-
-        x = nx; y = ny; z = nz;
-      }
-    }
-
-    const segs = (distCorte / (velF / 60)) + (distRapido / (2500 / 60));
-    return Math.max(1, Math.round(segs));
+    if (!window.visualizadorCNC) return 1;
+    window.visualizadorCNC.cargarTrayectoriaDesdeGCode(lineas);
+    return Math.max(1, Math.round(window.visualizadorCNC.tiempoEstimadoSegundos || 0));
   }
 
   // Recalcula dinámicamente el tiempo estimado en función del porcentaje de velocidad / override actual
@@ -1350,14 +2132,39 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const feedEfectivo = Math.round(estado.velocidadAvanceNominal * factor);
-    if (elementos.metricaVelocidadAvance) {
+    if (elementos.metricaVelocidadAvance && !window.puenteCNC) {
       elementos.metricaVelocidadAvance.textContent = `${feedEfectivo} mm/min`;
     }
 
-    // Notificar al puente nativo Python (en modo virtual y en hardware real)
-    if (window.puenteCNC && window.puenteCNC.establecerFeedOverride) {
-      window.puenteCNC.establecerFeedOverride(porcentaje);
+  }
+
+  function formatearPorcentajeProgreso(valor) {
+    const numero = Number(valor);
+    return `${(Number.isFinite(numero) ? Math.max(0, Math.min(100, numero)) : 0).toFixed(1)}%`;
+  }
+
+  function mostrarFeedOverride(porcentaje) {
+    const esVirtual = (estado.puertoComSeleccionado === 'SIMULADOR_VIRTUAL' || !window.puenteCNC);
+    const maxVal = esVirtual ? 2000 : 200;
+    const pct = Math.max(10, Math.min(maxVal, Math.round(Number(porcentaje) || 100)));
+    estado.porcentajeVelocidadManual = pct;
+    if (elementos.deslizadorVelocidadJog) {
+      if (Number(elementos.deslizadorVelocidadJog.max) !== maxVal) {
+        elementos.deslizadorVelocidadJog.max = maxVal;
+      }
+      elementos.deslizadorVelocidadJog.value = pct;
     }
+    if (elementos.etiquetaVelocidadJog) elementos.etiquetaVelocidadJog.textContent = `${pct}%`;
+    document.querySelectorAll('.btn-preset-feed').forEach(btn => {
+      const val = Number(btn.getAttribute('data-feed-pct') || btn.dataset.feedPct);
+      btn.classList.toggle('active', val === pct);
+    });
+    actualizarTiempoEstimado();
+  }
+
+  function aplicarFeedOverride(porcentaje) {
+    mostrarFeedOverride(porcentaje);
+    if (window.puenteCNC) window.puenteCNC.establecerFeedOverride(estado.porcentajeVelocidadManual);
   }
 
   function actualizarMetricasTelemetria() {
@@ -1375,11 +2182,15 @@ document.addEventListener('DOMContentLoaded', () => {
       elementos.barraProgresoRelleno.style.width = `${porcentajeAvance}%`;
     }
     if (elementos.etiquetaPorcentajeProgreso) {
-      elementos.etiquetaPorcentajeProgreso.textContent = `${porcentajeAvance}%`;
+      elementos.etiquetaPorcentajeProgreso.textContent = formatearPorcentajeProgreso(porcentajeAvance);
     }
   }
 
-  function iniciarMecanizado() {
+  async function iniciarMecanizado() {
+    if (window.visualizadorCNC?.errorGcode) {
+      imprimirEnConsola('c-error', window.visualizadorCNC.errorGcode);
+      return;
+    }
     if (estado.estadoOperativo === 'ALARM') {
       alert('La máquina se encuentra en ALARMA. Desbloquee con $X antes de comenzar.');
       return;
@@ -1397,8 +2208,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!confirmacion) return;
     }
 
+    estado.lineasConfirmadas.clear();
+    renderizarVentanaVisibleGcode();
     estado.enEjecucion = true;
     estado.enPausa = false;
+    estado.indiceLineaActiva = 0;
     establecerEstadoOperativo('RUN');
     actualizarEstadoGiroVisualizador();
 
@@ -1438,7 +2252,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (window.puenteCNC) {
-      window.puenteCNC.iniciarPrograma(textoCompleto);
+      const aceptado = await window.puenteCNC.iniciarPrograma(textoCompleto);
+      if (!aceptado) {
+        estado.trabajoActual = null;
+        estado.enEjecucion = false;
+        estado.enPausa = false;
+        elementos.botonIniciarMecanizado.classList.remove('hidden');
+        elementos.botonPausarMecanizado.classList.add('hidden');
+        elementos.botonDetenerMecanizado.classList.add('hidden');
+        establecerEstadoOperativo('IDLE');
+        imprimirEnConsola('c-error', '[PROGRAMA] Inicio rechazado. Revise la consola.');
+      }
     } else {
       // Bucle de simulación offline
       imprimirEnConsola('c-info', '[EJECUCIÓN] Iniciando simulación local...');
@@ -1446,44 +2270,49 @@ document.addEventListener('DOMContentLoaded', () => {
       let segTranscurridos = 0;
       if (estado.temporizadorEjecucion) clearInterval(estado.temporizadorEjecucion);
 
+      const pausasProcesadas = new Set();
+      let avanceReloj = 0;
       estado.temporizadorEjecucion = setInterval(() => {
         if (!estado.enEjecucion || estado.enPausa) return;
-
-        // Comprobación de corte con husillo apagado en modo didáctico (solo para fresa en corte real)
-        const lineaActualObj = estado.lineasPrograma[estado.indiceLineaActiva];
-        if (lineaActualObj && lineaActualObj.texto) {
-          const tLimpio = lineaActualObj.texto.trim().toUpperCase();
-          const esCorte = /\bG0?[123]\b/.test(tLimpio);
-          if (esCorte && !estado.husilloActivo && estado.tipoHerramienta === 'fresa') {
-            pausarMecanizado();
-            mostrarAlertaSeguridadHusillo(
-              '¡CORTE CON HUSILLO APAGADO!',
-              'Mecanizado pausado automáticamente por seguridad',
-              `Se detectó comando de corte (${tLimpio}) con el husillo detenido. El mecanizado ha sido pausado para evitar la rotura de la fresa.`
-            );
-            imprimirEnConsola('c-alarm', `[SEGURIDAD CRÍTICA] Corte detectado sin husillo encendido (${tLimpio}). Mecanizado pausado.`);
-            return;
-          }
+        const velOverride = Math.max(0.1, (estado.porcentajeVelocidadManual || 100) / 100);
+        avanceReloj += velOverride * 50;
+        if (avanceReloj < 50) return;
+        avanceReloj -= 50;
+        const idx = estado.indiceLineaActiva;
+        const linea = estado.lineasPrograma[idx]?.texto || '';
+        const limpia = linea.replace(/\(.*?\)/g, '').split(';')[0].toUpperCase();
+        const tokens = [...limpia.matchAll(/([A-Z])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))/g)].map(m => [m[1], Number(m[2])]);
+        const ms = tokens.filter(([k]) => k === 'M').map(([,v]) => v);
+        const s = tokens.find(([k]) => k === 'S');
+        if (s) estado.rpmProgramadas = s[1];
+        if (ms.some(m => [3,4].includes(m)) && estado.tipoHerramienta !== 'lapiz') {
+          estado.husilloActivo = (estado.rpmProgramadas || 0) > 0;
         }
-
+        if (ms.includes(5) || (s && s[1] === 0)) estado.husilloActivo = false;
+        const pausaM6 = ms.includes(6) && localStorage.getItem('cnc_pause_m6') !== 'false';
+        if ((pausaM6 || ms.includes(0)) && !pausasProcesadas.has(idx)) {
+          pausasProcesadas.add(idx);
+          if (pausaM6) estado.husilloActivo = false;
+          pausarMecanizado();
+          mostrarAlertaSeguridadHusillo(pausaM6 ? 'CAMBIO DE HERRAMIENTA (M6)' : 'PAUSA M0', 'Simulación pausada', 'Presione Continuar para seguir.');
+          return;
+        }
+        const esCorte = window.visualizadorCNC?.trayectoria.some(s => s.linea === idx && s.tipo === 'G1');
+        if (esCorte && !estado.husilloActivo && estado.tipoHerramienta === 'fresa') {
+          pausarMecanizado();
+          mostrarAlertaSeguridadHusillo('CORTE CON HUSILLO APAGADO', 'Simulación pausada', 'Encienda el husillo antes de continuar.');
+          return;
+        }
+        if (tokens.length && !ms.includes(6) && tokens.some(([k]) => k !== 'T')) registrarLineaConfirmada(idx, true);
+        seleccionarLineaGcode(idx);
+        actualizarEstadoGiroVisualizador();
         segTranscurridos++;
-        const minutos = String(Math.floor(segTranscurridos / 60)).padStart(2, '0');
-        const segundos = String(segTranscurridos % 60).padStart(2, '0');
-        const tiempoStr = `${minutos}:${segundos}`;
-        if (elementos.metricaTiempoTranscurrido) elementos.metricaTiempoTranscurrido.textContent = tiempoStr;
-        if (elementos.telemetriaTiempoTranscurrido) elementos.telemetriaTiempoTranscurrido.textContent = tiempoStr;
-
-        if (estado.indiceLineaActiva < totalLineas - 1) {
-          const proxIndice = estado.indiceLineaActiva + 1;
-          seleccionarLineaGcode(proxIndice);
-          const pct = Math.round(((proxIndice + 1) / totalLineas) * 100);
-          if (elementos.metricaNumeroLinea) elementos.metricaNumeroLinea.textContent = `${proxIndice + 1} / ${totalLineas}`;
-          if (elementos.barraProgresoRelleno) elementos.barraProgresoRelleno.style.width = `${pct}%`;
-          if (elementos.etiquetaPorcentajeProgreso) elementos.etiquetaPorcentajeProgreso.textContent = `${pct}%`;
-        } else {
-          detenerMecanizado('Completado');
-        }
-      }, 400);
+        const tiempoStr = `${String(Math.floor(segTranscurridos / 60)).padStart(2, '0')}:${String(segTranscurridos % 60).padStart(2, '0')}`;
+        elementos.metricaTiempoTranscurrido.textContent = tiempoStr;
+        elementos.telemetriaTiempoTranscurrido.textContent = tiempoStr;
+        if (idx < totalLineas-1) estado.indiceLineaActiva = idx+1;
+        else detenerMecanizado('Completado');
+      }, 50);
     }
   }
 
@@ -1501,12 +2330,15 @@ document.addEventListener('DOMContentLoaded', () => {
     actualizarEstadoGiroVisualizador();
   }
 
-  function detenerMecanizado(resultado = 'Detenido') {
+  function detenerMecanizado(resultado = 'Detenido', enviarParada = true) {
+    if (typeof resultado !== 'string' || !resultado) {
+      resultado = 'Detenido';
+    }
     estado.enEjecucion = false;
     estado.enPausa = false;
     if (estado.temporizadorEjecucion) clearInterval(estado.temporizadorEjecucion);
 
-    if (window.puenteCNC) window.puenteCNC.detener();
+    if (window.puenteCNC && enviarParada && resultado !== 'Completado') window.puenteCNC.detener();
 
     elementos.botonIniciarMecanizado.classList.remove('hidden');
     elementos.botonPausarMecanizado.classList.add('hidden');
@@ -1546,13 +2378,26 @@ document.addEventListener('DOMContentLoaded', () => {
         imprimirEnConsola('c-system', `[FIN DE PROGRAMA] Programa completado sin incidencias en ${duracionStr} (MSJ_28).`);
       }
 
+      // Si el mecanizado o simulación concluyó con éxito, mostrar el recuadro con la leyenda de finalizado y tiempo real
+      if (resultado === 'Completado' || estadoFinal === 'Simulación Virtual' || estadoFinal === 'Completado') {
+        mostrarModalFinMecanizado({
+          archivo: estado.trabajoActual.archivo,
+          duracion: duracionStr,
+          duracionSeg: duracionSeg,
+          totalLineas: estado.trabajoActual.totalLineas,
+          lineas: `${estado.trabajoActual.totalLineas} / ${estado.trabajoActual.totalLineas}`,
+          herramienta: estado.trabajoActual.herramienta === 'lapiz' ? 'Lápiz Didáctico' : (estado.trabajoActual.herramienta === 'laser' ? 'Diodo Láser' : 'Fresa CNC'),
+          esSimulacion: Boolean(estado.trabajoActual.esSimulacion)
+        });
+      }
+
       estado.trabajoActual = null;
     }
   }
 
   elementos.botonIniciarMecanizado.addEventListener('click', iniciarMecanizado);
   elementos.botonPausarMecanizado.addEventListener('click', pausarMecanizado);
-  elementos.botonDetenerMecanizado.addEventListener('click', detenerMecanizado);
+  elementos.botonDetenerMecanizado.addEventListener('click', () => detenerMecanizado('Detenido'));
 
   // ==========================================
   // CONTROLES DE CÁMARA DEL VISOR 2D / 3D
@@ -1596,6 +2441,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
 
     if (evento.key === 'F11') {
+      if (evento.repeat) { evento.preventDefault(); return; }
       evento.preventDefault();
       conmutarPantallaCompleta();
       return;
@@ -1620,18 +2466,27 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (evento.key === 'PageDown') { evento.preventDefault(); moverEjeManual('Z', -1); }
     else if (evento.key === ' ') { evento.preventDefault(); if (estado.enEjecucion) pausarMecanizado(); }
     else if (evento.key === 'Escape') {
+      evento.preventDefault();
+      // 1. Si está en pantalla completa, salir prioritariamente sin activar paro de emergencia
+      if (document.fullscreenElement || estado.esPantallaCompleta) {
+        conmutarPantallaCompleta();
+        return;
+      }
+      // 2. Si hay un modal abierto, cerrarlo
       const modalAbierto = [
         elementos.modalDiccionario,
         elementos.modalManual,
         elementos.modalConfiguracion,
         elementos.modalSeleccionHerramienta,
-        elementos.modalSeguridad
+        elementos.modalSeguridad,
+        elementos.modalTutorial
       ].find(m => m && !m.classList.contains('hidden'));
       if (modalAbierto) {
         modalAbierto.classList.add('hidden');
         if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
         return;
       }
+      // 3. Paro de emergencia solo si la máquina está en ejecución o en reposo normal
       elementos.botonParoEmergencia.click();
     }
   });
@@ -1699,6 +2554,43 @@ document.addEventListener('DOMContentLoaded', () => {
     const cfgTravelZ = document.getElementById('cfg-travel-z');
     if (cfgTravelZ) cfgTravelZ.value = localStorage.getItem('cnc_travel_z') || '60.0';
 
+    const cfgMaxX = document.getElementById('cfg-maxrate-x');
+    if (cfgMaxX) cfgMaxX.value = localStorage.getItem('cnc_maxrate_x') || '1500.0';
+    const cfgMaxY = document.getElementById('cfg-maxrate-y');
+    if (cfgMaxY) cfgMaxY.value = localStorage.getItem('cnc_maxrate_y') || '1500.0';
+    const cfgMaxZ = document.getElementById('cfg-maxrate-z');
+    if (cfgMaxZ) cfgMaxZ.value = localStorage.getItem('cnc_maxrate_z') || '600.0';
+
+    const cfgAccelX = document.getElementById('cfg-accel-x');
+    if (cfgAccelX) cfgAccelX.value = localStorage.getItem('cnc_accel_x') || '50.0';
+    const cfgAccelY = document.getElementById('cfg-accel-y');
+    if (cfgAccelY) cfgAccelY.value = localStorage.getItem('cnc_accel_y') || '50.0';
+    const cfgAccelZ = document.getElementById('cfg-accel-z');
+    if (cfgAccelZ) cfgAccelZ.value = localStorage.getItem('cnc_accel_z') || '50.0';
+
+    // 2.1 Inversión de Sentido de Giro GRBL ($3)
+    const cfgDirX = document.getElementById('cfg-dir-invert-x');
+    const cfgDirY = document.getElementById('cfg-dir-invert-y');
+    const cfgDirZ = document.getElementById('cfg-dir-invert-z');
+    const lblDirMask = document.getElementById('lbl-cfg-dir-mask');
+    const dirMask = parseInt(localStorage.getItem('cnc_dir_invert_mask') || '0', 10);
+    if (cfgDirX) cfgDirX.checked = Boolean(dirMask & 1);
+    if (cfgDirY) cfgDirY.checked = Boolean(dirMask & 2);
+    if (cfgDirZ) cfgDirZ.checked = Boolean(dirMask & 4);
+    if (lblDirMask) lblDirMask.textContent = `Valor $3=${dirMask}`;
+
+    const fnActualizarMask = () => {
+      let mask = 0;
+      if (document.getElementById('cfg-dir-invert-x')?.checked) mask += 1;
+      if (document.getElementById('cfg-dir-invert-y')?.checked) mask += 2;
+      if (document.getElementById('cfg-dir-invert-z')?.checked) mask += 4;
+      const lbl = document.getElementById('lbl-cfg-dir-mask');
+      if (lbl) lbl.textContent = `Valor $3=${mask}`;
+    };
+    [cfgDirX, cfgDirY, cfgDirZ].forEach(chk => {
+      if (chk) chk.onchange = fnActualizarMask;
+    });
+
     // 3. Ajustes Emisor (Streamer)
     const cfgStreamer = document.getElementById('cfg-streamer-mode');
     if (cfgStreamer) cfgStreamer.value = localStorage.getItem('cnc_streamer_mode') || 'counting';
@@ -1711,6 +2603,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const cfgPauseM6 = document.getElementById('cfg-pause-m6');
     if (cfgPauseM6) cfgPauseM6.checked = localStorage.getItem('cnc_pause_m6') !== 'false';
+
+    const cfgInvertJogX = document.getElementById('cfg-invert-jog-x');
+    if (cfgInvertJogX) cfgInvertJogX.checked = localStorage.getItem('cnc_invert_jog_x') === 'true';
 
     // 4. Interfaz de Usuario
     const cfgTheme = document.getElementById('cfg-theme-select');
@@ -1815,6 +2710,37 @@ document.addEventListener('DOMContentLoaded', () => {
       window.puenteCNC.enviarMDI(`$130=${travelX.toFixed(1)}`);
       window.puenteCNC.enviarMDI(`$131=${travelY.toFixed(1)}`);
       window.puenteCNC.enviarMDI(`$132=${travelZ.toFixed(1)}`);
+
+      const maxRateX = parseFloat(document.getElementById('cfg-maxrate-x')?.value) || 1500.0;
+      const maxRateY = parseFloat(document.getElementById('cfg-maxrate-y')?.value) || 1500.0;
+      const maxRateZ = parseFloat(document.getElementById('cfg-maxrate-z')?.value) || 600.0;
+      localStorage.setItem('cnc_maxrate_x', maxRateX);
+      localStorage.setItem('cnc_maxrate_y', maxRateY);
+      localStorage.setItem('cnc_maxrate_z', maxRateZ);
+
+      const accelX = parseFloat(document.getElementById('cfg-accel-x')?.value) || 50.0;
+      const accelY = parseFloat(document.getElementById('cfg-accel-y')?.value) || 50.0;
+      const accelZ = parseFloat(document.getElementById('cfg-accel-z')?.value) || 50.0;
+      localStorage.setItem('cnc_accel_x', accelX);
+      localStorage.setItem('cnc_accel_y', accelY);
+      localStorage.setItem('cnc_accel_z', accelZ);
+
+      window.puenteCNC.enviarMDI(`$110=${maxRateX.toFixed(1)}`);
+      window.puenteCNC.enviarMDI(`$111=${maxRateY.toFixed(1)}`);
+      window.puenteCNC.enviarMDI(`$112=${maxRateZ.toFixed(1)}`);
+      window.puenteCNC.enviarMDI(`$120=${accelX.toFixed(1)}`);
+      window.puenteCNC.enviarMDI(`$121=${accelY.toFixed(1)}`);
+      window.puenteCNC.enviarMDI(`$122=${accelZ.toFixed(1)}`);
+    }
+
+    // 2.1 Inversión de Sentido de Giro GRBL ($3)
+    let maskDir = 0;
+    if (document.getElementById('cfg-dir-invert-x')?.checked) maskDir += 1;
+    if (document.getElementById('cfg-dir-invert-y')?.checked) maskDir += 2;
+    if (document.getElementById('cfg-dir-invert-z')?.checked) maskDir += 4;
+    localStorage.setItem('cnc_dir_invert_mask', maskDir);
+    if (window.puenteCNC) {
+      window.puenteCNC.enviarMDI(`$3=${maskDir}`);
     }
 
     // 3. Emisor (Streamer)
@@ -1827,6 +2753,15 @@ document.addEventListener('DOMContentLoaded', () => {
     localStorage.setItem('cnc_status_interval', statusInt);
     localStorage.setItem('cnc_skip_comments', skipCom);
     localStorage.setItem('cnc_pause_m6', pauseM6);
+
+    const chkInvertJogX = document.getElementById('cfg-invert-jog-x');
+    if (chkInvertJogX) {
+      localStorage.setItem('cnc_invert_jog_x', chkInvertJogX.checked);
+    }
+
+    if (window.puenteCNC && typeof window.puenteCNC.establecerPausaM6 === 'function') {
+      window.puenteCNC.establecerPausaM6(pauseM6);
+    }
 
     // 4. Interfaz de Usuario
     const themeSel = document.getElementById('cfg-theme-select')?.value || 'dark';
@@ -1944,7 +2879,31 @@ document.addEventListener('DOMContentLoaded', () => {
     if (elementos.tituloSeguridad && titulo) elementos.tituloSeguridad.textContent = titulo;
     if (elementos.encabezadoSeguridad && encabezado) elementos.encabezadoSeguridad.textContent = encabezado;
     if (elementos.descripcionSeguridad && descripcion) elementos.descripcionSeguridad.textContent = descripcion;
-    if (elementos.accionSeguridad && accion) elementos.accionSeguridad.innerHTML = accion;
+
+    const esM6 = (titulo && (titulo.includes('M6') || titulo.includes('HERRAMIENTA'))) ||
+      (descripcion && (descripcion.includes('M6') || descripcion.includes('herramienta')));
+
+    if (esM6) {
+      estado.enEjecucion = true;
+      estado.enPausa = true;
+      establecerEstadoOperativo('HOLD');
+      if (elementos.botonIniciarMecanizado) elementos.botonIniciarMecanizado.classList.add('hidden');
+      if (elementos.botonPausarMecanizado) {
+        elementos.botonPausarMecanizado.classList.remove('hidden');
+        elementos.botonPausarMecanizado.disabled = false;
+        elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-play"></i> CONTINUAR';
+      }
+      if (elementos.botonDetenerMecanizado) elementos.botonDetenerMecanizado.classList.remove('hidden');
+
+      if (elementos.accionSeguridad) {
+        elementos.accionSeguridad.innerHTML = accion || '<b>Acción requerida:</b> Monte la herramienta indicada en la pinza y presione el botón <b>CONTINUAR</b> en el panel de control para seguir con el mecanizado.';
+      }
+    } else {
+      if (elementos.accionSeguridad) {
+        elementos.accionSeguridad.innerHTML = accion || '<b>Acción requerida:</b> Si necesita detener el husillo, presione primero <b>PAUSA</b> o <b>DETENER</b> en el panel de control de ejecución.';
+      }
+    }
+
     if (elementos.modalSeguridad) elementos.modalSeguridad.classList.remove('hidden');
     if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
   }
@@ -1953,6 +2912,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (elementos.botonCerrarSeguridad) {
     elementos.botonCerrarSeguridad.addEventListener('click', () => {
       elementos.modalSeguridad.classList.add('hidden');
+      if (estado.enPausa && elementos.botonPausarMecanizado) {
+        elementos.botonPausarMecanizado.classList.remove('hidden');
+        elementos.botonPausarMecanizado.disabled = false;
+        elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-play"></i> CONTINUAR';
+        elementos.botonPausarMecanizado.focus();
+      }
       if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
     });
   }
@@ -1960,6 +2925,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (elementos.botonEntendidoSeguridad) {
     elementos.botonEntendidoSeguridad.addEventListener('click', () => {
       elementos.modalSeguridad.classList.add('hidden');
+      if (estado.enPausa && elementos.botonPausarMecanizado) {
+        elementos.botonPausarMecanizado.classList.remove('hidden');
+        elementos.botonPausarMecanizado.disabled = false;
+        elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-play"></i> CONTINUAR';
+        elementos.botonPausarMecanizado.focus();
+      }
       if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
     });
   }
@@ -1973,12 +2944,105 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Modal de Mecanizado Finalizado con Leyenda y Tiempo Real
+  function mostrarModalFinMecanizado(datos) {
+    if (!datos) return;
+    if (elementos.lblFinTiempoReal) {
+      const duracionSeg = datos.duracionSeg || 0;
+      const min = Math.floor(duracionSeg / 60);
+      const seg = duracionSeg % 60;
+      let textoTiempo = '';
+      if (min > 0) {
+        textoTiempo = `${min}m ${seg}s (${datos.duracion || '00:00'})`;
+      } else {
+        textoTiempo = `${seg}s (${datos.duracion || '00:00'})`;
+      }
+      elementos.lblFinTiempoReal.textContent = textoTiempo;
+    }
+    if (elementos.lblFinArchivo) {
+      elementos.lblFinArchivo.textContent = datos.archivo || 'Programa CNC';
+      elementos.lblFinArchivo.title = datos.archivo || '';
+    }
+    if (elementos.lblFinLineas) {
+      elementos.lblFinLineas.textContent = datos.lineas || `${datos.totalLineas || 0} / ${datos.totalLineas || 0}`;
+    }
+    if (elementos.lblFinHerramienta) {
+      elementos.lblFinHerramienta.textContent = datos.herramienta || 'Fresa CNC';
+    }
+    if (elementos.lblFinTitulo) {
+      elementos.lblFinTitulo.textContent = datos.esSimulacion ? 'Simulación Virtual Finalizada' : 'Mecanizado Finalizado';
+    }
+    if (elementos.lblFinSubtitulo) {
+      elementos.lblFinSubtitulo.textContent = datos.esSimulacion
+        ? 'Simulación completada con éxito'
+        : 'Programa concluido satisfactoriamente';
+    }
+    if (elementos.lblFinEncabezado) {
+      elementos.lblFinEncabezado.textContent = datos.esSimulacion
+        ? '¡Simulación virtual completada con éxito!'
+        : '¡Mecanizado completado con éxito!';
+    }
+    if (elementos.lblFinDescripcion) {
+      elementos.lblFinDescripcion.textContent = datos.esSimulacion
+        ? 'Se ha simulado el 100% de la trayectoria en el lienzo gráfico 2D/3D sin incidencias.'
+        : 'Se han ejecutado todas las líneas del programa G-code y la máquina ha retornado a estado seguro.';
+    }
+    if (elementos.modalFinMecanizado) {
+      elementos.modalFinMecanizado.classList.remove('hidden');
+    }
+    if (window.visualizadorCNC) {
+      window.visualizadorCNC.solicitarRenderizado();
+    }
+  }
+  window.mostrarModalFinMecanizado = mostrarModalFinMecanizado;
+
+  if (elementos.botonCerrarFin) {
+    elementos.botonCerrarFin.addEventListener('click', () => {
+      if (elementos.modalFinMecanizado) elementos.modalFinMecanizado.classList.add('hidden');
+      if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+    });
+  }
+
+  if (elementos.botonAceptarFin) {
+    elementos.botonAceptarFin.addEventListener('click', () => {
+      if (elementos.modalFinMecanizado) elementos.modalFinMecanizado.classList.add('hidden');
+      if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+    });
+  }
+
+  if (elementos.botonVerHistorialFin) {
+    elementos.botonVerHistorialFin.addEventListener('click', () => {
+      if (elementos.modalFinMecanizado) elementos.modalFinMecanizado.classList.add('hidden');
+      if (typeof HistorialManager !== 'undefined' && typeof HistorialManager.abrirModal === 'function') {
+        HistorialManager.abrirModal();
+      } else if (elementos.botonMenuHistorial) {
+        elementos.botonMenuHistorial.click();
+      } else if (elementos.botonAbrirHistorial) {
+        elementos.botonAbrirHistorial.click();
+      }
+    });
+  }
+
+  if (elementos.modalFinMecanizado) {
+    elementos.modalFinMecanizado.addEventListener('click', (evento) => {
+      if (evento.target === elementos.modalFinMecanizado) {
+        elementos.modalFinMecanizado.classList.add('hidden');
+        if (window.visualizadorCNC) window.visualizadorCNC.solicitarRenderizado();
+      }
+    });
+  }
+
   // ==========================================
   // GESTIÓN DE SELECCIÓN DE HERRAMIENTA (FRESA / LÁPIZ)
   // ==========================================
   let tipoHerramientaSeleccionada = estado.tipoHerramienta;
 
-  function actualizarUIPorTipoHerramienta(tipo) {
+  async function actualizarUIPorTipoHerramienta(tipo) {
+    if (estado.enEjecucion) {
+      imprimirEnConsola('c-warn', '[BLOQUEO] Detenga el programa antes de cambiar la herramienta.');
+      return;
+    }
+    if (window.puenteCNC && !await window.puenteCNC.establecerTipoHerramienta(tipo)) return;
     if (tipo === 'lapiz') {
       estado.tipoHerramienta = 'lapiz';
     } else if (tipo === 'laser' || tipo === 'láser') {
@@ -1993,9 +3057,7 @@ document.addEventListener('DOMContentLoaded', () => {
       window.visualizadorCNC.establecerTipoHerramienta(estado.tipoHerramienta);
     }
 
-    if (window.puenteCNC && typeof window.puenteCNC.establecerTipoHerramienta === 'function') {
-      window.puenteCNC.establecerTipoHerramienta(estado.tipoHerramienta);
-    }
+
 
     const esLapiz = (estado.tipoHerramienta === 'lapiz');
     const esLaser = (estado.tipoHerramienta === 'laser');
@@ -2159,13 +3221,13 @@ document.addEventListener('DOMContentLoaded', () => {
       elementos.etiquetaNombreHerramienta.textContent = esLapiz ? (esEn ? 'Pen' : 'Lápiz') : (esLaser ? (esEn ? 'Laser Diode' : 'Diodo Láser') : (esEn ? 'CNC Endmill' : 'Fresa CNC'));
     }
     if (elementos.etiquetaBadgeHerramienta) {
-      elementos.etiquetaBadgeHerramienta.textContent = esLapiz 
-        ? (esEn ? 'TOOL POSITION (PEN)' : 'POSICIÓN HERRAMIENTA (LÁPIZ)') 
+      elementos.etiquetaBadgeHerramienta.textContent = esLapiz
+        ? (esEn ? 'TOOL POSITION (PEN)' : 'POSICIÓN HERRAMIENTA (LÁPIZ)')
         : (esLaser ? (esEn ? 'TOOL POSITION (LASER)' : 'POSICIÓN HERRAMIENTA (LÁSER)') : (esEn ? 'TOOL POSITION (ENDMILL)' : 'POSICIÓN HERRAMIENTA (FRESA)'));
     }
     if (elementos.textoLegendHerramienta) {
-      elementos.textoLegendHerramienta.textContent = esLapiz 
-        ? (esEn ? 'Drawing Pen' : 'Lápiz Didáctico') 
+      elementos.textoLegendHerramienta.textContent = esLapiz
+        ? (esEn ? 'Drawing Pen' : 'Lápiz Didáctico')
         : (esLaser ? (esEn ? 'Laser Diode' : 'Diodo Láser') : (esEn ? 'CNC Endmill' : 'Fresa CNC'));
     }
     if (elementos.iconoLegendHerramienta) {
@@ -2441,6 +3503,7 @@ document.addEventListener('DOMContentLoaded', () => {
         .map(texto => ({ texto }));
       if (lineas.length > 0) {
         estado.lineasPrograma = lineas;
+        estado.nombreArchivoCargado = archivo.name;
         estado.indiceLineaActiva = 0;
         document.getElementById('lbl-loaded-filename').textContent = archivo.name;
         renderizarListaCodigoG();
@@ -2480,6 +3543,170 @@ document.addEventListener('DOMContentLoaded', () => {
 
   elementos.botonMenuAcercaDe.addEventListener('click', () => {
     alert('CNC Basic v1.0\nInterfaz de control para máquinas CNC con fines educativos\nTrabajo Terminal 2026-B072 (ESCOM - IPN)\n\nAutores:\n• Josué Martin Echeverría Arteaga\n• Jonathan Uriel Paredes Martínez\n\nDirector:\n• Dr. Gelacio Castillo Cabrera');
+  });
+
+
+  // ==========================================
+  // AJUSTE DE VELOCIDAD DE AVANCE (FEEDRATE F) DEL CÓDIGO G
+  // ==========================================
+  function detectarFeedsActuales() {
+    let feedXY = 0;
+    let feedZ = 0;
+    if (estado.lineasPrograma) {
+      for (const l of estado.lineasPrograma) {
+        const txt = (typeof l === 'string' ? l : (l.texto || '')).replace(/\(.*?\)/g, '').split(';')[0].toUpperCase();
+        const mF = txt.match(/\bF([-+]?\d*\.?\d+)\b/);
+        if (mF) {
+          const val = parseFloat(mF[1]);
+          const esSoloZ = /\bZ[-+]?\d/.test(txt) && !/\b[XY][-+]?\d/.test(txt);
+          if (esSoloZ && !feedZ) feedZ = val;
+          else if (!esSoloZ && !feedXY) feedXY = val;
+        }
+        if (feedXY && feedZ) break;
+      }
+    }
+    return {
+      feedXY: feedXY || 120.0,
+      feedZ: feedZ || 35.0
+    };
+  }
+
+  function abrirModalAjustarVelocidad() {
+    if (!estado.lineasPrograma || estado.lineasPrograma.length === 0) {
+      imprimirEnConsola('c-warn', '[AVANCE] No hay ningún programa de código G cargado.');
+      return;
+    }
+    const detected = detectarFeedsActuales();
+    const lblDetect = document.getElementById('lbl-feed-actual-detectado');
+    if (lblDetect) {
+      lblDetect.textContent = `F${detected.feedXY.toFixed(1)} mm/min (Corte XY) | F${detected.feedZ.toFixed(1)} mm/min (Z)`;
+    }
+    const inpXY = document.getElementById('input-new-feed-xy');
+    const inpZ = document.getElementById('input-new-feed-z');
+    if (inpXY) inpXY.value = Math.max(300, Math.round(detected.feedXY * 2.5));
+    if (inpZ) inpZ.value = Math.max(100, Math.round(detected.feedZ * 2));
+
+    const modal = document.getElementById('modal-adjust-feed-backdrop');
+    if (modal) modal.classList.remove('hidden');
+  }
+
+  function cerrarModalAjustarVelocidad() {
+    const modal = document.getElementById('modal-adjust-feed-backdrop');
+    if (modal) modal.classList.add('hidden');
+  }
+
+  function ajustarVelocidadGcodeLocal(contenidoGcode, nuevoFeedXY, nuevoFeedZ) {
+    const lineas = contenidoGcode.split('\n');
+    return lineas.map(l => {
+      let partes = l.split(';');
+      let code = partes[0];
+      let comentario = partes.length > 1 ? (';' + partes.slice(1).join(';')) : '';
+      let comentariosParen = [];
+      let codeSinParen = code.replace(/\(.*?\)/g, (match) => {
+        comentariosParen.push(match);
+        return `__PAREN_${comentariosParen.length - 1}__`;
+      });
+
+      const esSoloZ = /\bZ[-+]?\d/i.test(codeSinParen) && !/\b[XY][-+]?\d/i.test(codeSinParen);
+
+      codeSinParen = codeSinParen.replace(/\bF([-+]?\d*\.?\d+)\b/gi, () => {
+        const fVal = (esSoloZ && nuevoFeedZ > 0) ? nuevoFeedZ : nuevoFeedXY;
+        return `F${fVal.toFixed(1)}`;
+      });
+
+      comentariosParen.forEach((cp, idx) => {
+        codeSinParen = codeSinParen.replace(`__PAREN_${idx}__`, cp);
+      });
+
+      return codeSinParen + comentario;
+    }).join('\n');
+  }
+
+  async function aplicarNuevoFeedrateGcode() {
+    const inpXY = document.getElementById('input-new-feed-xy');
+    const inpZ = document.getElementById('input-new-feed-z');
+    const nuevoFeedXY = parseFloat(inpXY?.value) || 600.0;
+    const nuevoFeedZ = parseFloat(inpZ?.value) || 150.0;
+
+    const textoActual = estado.lineasPrograma.map(l => (typeof l === 'string' ? l : (l.texto || ''))).join('\n');
+    let textoAcelerado = '';
+
+    if (window.puenteCNC && typeof window.puenteCNC.ajustarVelocidadGcode === 'function') {
+      try {
+        const res = window.puenteCNC.ajustarVelocidadGcode(textoActual, nuevoFeedXY, nuevoFeedZ);
+        if (res && typeof res.then === 'function') {
+          textoAcelerado = await res;
+        } else if (typeof res === 'string') {
+          textoAcelerado = res;
+        }
+      } catch (err) {
+        console.warn('Fallback local ajustar feedrate:', err);
+      }
+    }
+
+    if (!textoAcelerado) {
+      textoAcelerado = ajustarVelocidadGcodeLocal(textoActual, nuevoFeedXY, nuevoFeedZ);
+    }
+
+    if (textoAcelerado) {
+      const lineas = textoAcelerado.split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0)
+        .map(texto => ({ texto }));
+
+      estado.lineasPrograma = lineas;
+      estado.velocidadAvanceNominal = nuevoFeedXY;
+      estado.indiceLineaActiva = 0;
+      renderizarListaCodigoG();
+      estado.segundosEstimadosBase = estimarSegundosBaseDesdeLineas(lineas);
+      actualizarMetricasTelemetria();
+      actualizarTiempoEstimado();
+
+      if (window.visualizadorCNC) {
+        window.visualizadorCNC.cargarTrayectoriaDesdeGCode(textoAcelerado);
+        window.visualizadorCNC.ajustarVistaAPieza();
+      }
+      if (window.puenteCNC) window.puenteCNC.analizarGcode(textoAcelerado);
+
+      cerrarModalAjustarVelocidad();
+      imprimirEnConsola('c-ok', `[VELOCIDAD] Avance de corte acelerado a F${nuevoFeedXY} mm/min (XY) y F${nuevoFeedZ} mm/min (Z).`);
+    }
+  }
+
+  // Eventos de botones de velocidad
+  const btnAdjustFeed = document.getElementById('btn-adjust-feedrate');
+  if (btnAdjustFeed) btnAdjustFeed.addEventListener('click', abrirModalAjustarVelocidad);
+
+  const btnMenuAdjustFeed = document.getElementById('btn-menu-adjust-feed');
+  if (btnMenuAdjustFeed) btnMenuAdjustFeed.addEventListener('click', abrirModalAjustarVelocidad);
+
+  const btnCloseFeedModal = document.getElementById('btn-close-feed-modal');
+  if (btnCloseFeedModal) btnCloseFeedModal.addEventListener('click', cerrarModalAjustarVelocidad);
+
+  const btnCancelFeedModal = document.getElementById('btn-cancel-feed-modal');
+  if (btnCancelFeedModal) btnCancelFeedModal.addEventListener('click', cerrarModalAjustarVelocidad);
+
+  const btnApplyFeedModal = document.getElementById('btn-apply-feed-modal');
+  if (btnApplyFeedModal) btnApplyFeedModal.addEventListener('click', aplicarNuevoFeedrateGcode);
+
+  document.querySelectorAll('.btn-feed-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const f = btn.getAttribute('data-feed');
+      const fz = btn.getAttribute('data-feed-z');
+      const inpXY = document.getElementById('input-new-feed-xy');
+      const inpZ = document.getElementById('input-new-feed-z');
+      if (inpXY && f) inpXY.value = f;
+      if (inpZ && fz) inpZ.value = fz;
+    });
+  });
+
+  // Botones de Override Rápido (50%, 100%, 150%, 200%)
+  document.querySelectorAll('.btn-preset-feed').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const pct = parseInt(btn.getAttribute('data-feed-pct'), 10) || 100;
+      aplicarFeedOverride(pct);
+      imprimirEnConsola('c-info', `[OVERRIDE] Feed Override establecido a ${pct}%.`);
+    });
   });
 
   // ==========================================
@@ -2530,22 +3757,93 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  function actualizarEstadoPantallaCompleta(esFs) {
+    estado.esPantallaCompleta = !!esFs;
+    document.body.classList.toggle('is-fullscreen', estado.esPantallaCompleta);
+
+    const btnRestore = document.getElementById('btn-win-restore');
+    const iconRestore = document.getElementById('icon-win-restore');
+    if (iconRestore && btnRestore) {
+      if (estado.esPantallaCompleta) {
+        iconRestore.className = 'fa-solid fa-compress';
+        btnRestore.title = estado.idiomaActual === 'en' ? 'Exit Fullscreen (F11 / Esc)' : 'Salir de Pantalla Completa (F11 / Esc)';
+      } else {
+        iconRestore.className = 'fa-solid fa-expand';
+        btnRestore.title = estado.idiomaActual === 'en' ? 'Fullscreen (F11)' : 'Pantalla Completa (F11)';
+      }
+    }
+
+    const btnMenu = document.getElementById('btn-menu-fullscreen');
+    if (btnMenu) {
+      const txt = estado.esPantallaCompleta
+        ? (estado.idiomaActual === 'en' ? 'Exit Fullscreen' : 'Salir de Pantalla Completa')
+        : (estado.idiomaActual === 'en' ? 'Fullscreen' : 'Pantalla Completa');
+      const icon = estado.esPantallaCompleta ? 'fa-compress' : 'fa-expand';
+      const sc = estado.esPantallaCompleta ? 'F11 / Esc' : 'F11';
+      btnMenu.innerHTML = `<i class="fa-solid ${icon}"></i> ${txt} <span class="shortcut">${sc}</span>`;
+    }
+
+    if (window.visualizadorCNC) {
+      window.visualizadorCNC.estaArrastrando = false;
+      if (typeof window.visualizadorCNC.redimensionarLienzo === 'function') {
+        window.visualizadorCNC.redimensionarLienzo();
+      }
+    }
+  }
+
+  let ultimoConmutarFs = 0;
   function conmutarPantallaCompleta() {
+    const ahora = Date.now();
+    if (ahora - ultimoConmutarFs < 400) return;
+    ultimoConmutarFs = ahora;
+
     if (window.puenteCNC && typeof window.puenteCNC.alternarPantallaCompleta === 'function') {
       window.puenteCNC.alternarPantallaCompleta();
     } else {
       if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(() => {});
+        document.documentElement.requestFullscreen().catch(() => { });
       } else {
-        if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+        if (document.exitFullscreen) document.exitFullscreen().catch(() => { });
       }
     }
   }
+
+  document.addEventListener('fullscreenchange', () => {
+    actualizarEstadoPantallaCompleta(!!document.fullscreenElement);
+  });
 
   const btnMenuFullscreen = document.getElementById('btn-menu-fullscreen');
   if (btnMenuFullscreen) {
     btnMenuFullscreen.addEventListener('click', () => {
       conmutarPantallaCompleta();
+    });
+  }
+
+  // Controles nativos de ventana en barra superior (minimizar, restaurar/fullscreen, cerrar)
+  const btnWinMin = document.getElementById('btn-win-min');
+  if (btnWinMin) {
+    btnWinMin.addEventListener('click', () => {
+      if (window.puenteCNC && typeof window.puenteCNC.minimizarVentana === 'function') {
+        window.puenteCNC.minimizarVentana();
+      }
+    });
+  }
+
+  const btnWinRestore = document.getElementById('btn-win-restore');
+  if (btnWinRestore) {
+    btnWinRestore.addEventListener('click', () => {
+      conmutarPantallaCompleta();
+    });
+  }
+
+  const btnWinClose = document.getElementById('btn-win-close');
+  if (btnWinClose) {
+    btnWinClose.addEventListener('click', () => {
+      if (window.puenteCNC && typeof window.puenteCNC.cerrarVentana === 'function') {
+        window.puenteCNC.cerrarVentana();
+      } else {
+        window.close();
+      }
     });
   }
 
@@ -2787,10 +4085,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function aplicarDimensiones(ancho, guardar = true) {
       const anchoRestringido = Math.min(ANCHO_MAX, Math.max(ANCHO_MIN, Math.round(ancho)));
-      workspace.style.setProperty('--sidebar-width', `${anchoRestringido}px`);
+      if (workspace.style.getPropertyValue('--sidebar-width') !== `${anchoRestringido}px`) {
+        workspace.style.setProperty('--sidebar-width', `${anchoRestringido}px`);
+      }
+      anchoActual = anchoRestringido;
       if (guardar) localStorage.setItem('cnc_sidebar_width', anchoRestringido);
       if (window.visualizadorCNC) {
-        window.visualizadorCNC.redimensionarLienzo();
+        window.visualizadorCNC.aplicarTamanoLienzo();
       }
     }
 
@@ -2806,7 +4107,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       if (guardar) localStorage.setItem('cnc_sidebar_collapsed', estaColapsado ? 'true' : 'false');
       if (window.visualizadorCNC) {
-        window.visualizadorCNC.redimensionarLienzo();
+        window.visualizadorCNC.aplicarTamanoLienzo();
       }
     }
 
@@ -2827,10 +4128,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let arrastrando = false;
     let xInicial = 0;
     let anchoInicial = anchoActual;
+    let rafAncho = null;
+    let anchoPendiente = null;
 
     resizer.addEventListener('mousedown', (e) => {
       // Ignorar si el clic fue en el botón de toggle
-      if (e.target.closest('#btn-toggle-sidebar')) return;
+      if (e.target.closest('#btn-toggle-sidebar') || e.button !== 0 || arrastrando) return;
 
       e.preventDefault();
       // Si estaba colapsado, restaurarlo primero
@@ -2846,6 +4149,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const alMoverMouse = (evento) => {
         if (!arrastrando) return;
+        if (!evento.buttons) { alSoltarMouse(); return; }
         // Al arrastrar a la derecha (evento.clientX > xInicial), delta es negativo -> panel se hace más angosto
         // Al arrastrar a la izquierda (evento.clientX < xInicial), se detiene rígidamente en 340px (ANCHO_MAX)
         const delta = xInicial - evento.clientX;
@@ -2854,7 +4158,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (nuevoAncho < ANCHO_MIN) nuevoAncho = ANCHO_MIN;
         if (nuevoAncho > ANCHO_MAX) nuevoAncho = ANCHO_MAX;
 
-        aplicarDimensiones(nuevoAncho, false);
+        anchoPendiente = nuevoAncho;
+        if (rafAncho === null) rafAncho = requestAnimationFrame(() => {
+          rafAncho = null;
+          if (arrastrando) aplicarDimensiones(anchoPendiente, false);
+        });
       };
 
       const alSoltarMouse = () => {
@@ -2864,13 +4172,22 @@ document.addEventListener('DOMContentLoaded', () => {
         document.body.classList.remove('resizing-col');
         window.removeEventListener('mousemove', alMoverMouse);
         window.removeEventListener('mouseup', alSoltarMouse);
-
-        const anchoFinal = sidebar.getBoundingClientRect().width;
-        aplicarDimensiones(anchoFinal, true);
+        window.removeEventListener('blur', alSoltarMouse);
+        window.removeEventListener('mouseleave', alSoltarMouse);
+        window.removeEventListener('resize', alSoltarMouse);
+        document.removeEventListener('visibilitychange', alSoltarMouse);
+        if (rafAncho !== null) cancelAnimationFrame(rafAncho);
+        rafAncho = null;
+        aplicarDimensiones(anchoPendiente ?? anchoActual, true);
+        anchoPendiente = null;
       };
 
       window.addEventListener('mousemove', alMoverMouse);
       window.addEventListener('mouseup', alSoltarMouse);
+      window.addEventListener('blur', alSoltarMouse);
+      window.addEventListener('mouseleave', alSoltarMouse);
+      window.addEventListener('resize', alSoltarMouse);
+      document.addEventListener('visibilitychange', alSoltarMouse);
     });
 
     // Doble clic en la barra para alternar rápidamente entre tamaño compacto (250px) y el estándar original (340px)
@@ -2916,11 +4233,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // =========================================================================
   const HistorialManager = {
     lista: [],
-    inicializar() {
+    _sanitizarItem(item) {
+      if (!item) return item;
+      if (typeof item.resultado !== 'string') {
+        item.resultado = (item.resultado && item.resultado.isTrusted) ? 'Detenido' : (item.resultado ? String(item.resultado) : 'Completado');
+      }
+      return item;
+    },
+    async inicializar() {
       try {
         const guardado = localStorage.getItem('cnc_historial_trabajos');
         if (guardado) {
-          this.lista = JSON.parse(guardado);
+          const parsed = JSON.parse(guardado);
+          this.lista = Array.isArray(parsed) ? parsed.map(i => this._sanitizarItem(i)) : [];
         }
       } catch (e) {
         this.lista = [];
@@ -2928,18 +4253,21 @@ document.addEventListener('DOMContentLoaded', () => {
       this.renderizar();
       this.configurarEventos();
 
+      await this.cargarDisco();
+    },
+    async cargarDisco() {
       // Cargar desde disco a través del puente Python si existe
       if (window.puenteCNC && typeof window.puenteCNC.cargarHistorialDisco === 'function') {
         try {
-          const disco = window.puenteCNC.cargarHistorialDisco();
-          if (disco && disco !== '[]') {
+          const disco = await window.puenteCNC.cargarHistorialDisco();
+          if (disco) {
             const parsed = JSON.parse(disco);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              this.lista = parsed;
+            if (Array.isArray(parsed)) {
+              this.lista = parsed.map(i => this._sanitizarItem(i));
               this.renderizar();
             }
           }
-        } catch (e) {}
+        } catch (e) { }
       }
     },
     guardar() {
@@ -2955,7 +4283,7 @@ document.addEventListener('DOMContentLoaded', () => {
     },
     registrarTrabajo(item) {
       const id = this.lista.length + 1;
-      const nuevo = { id, ...item };
+      const nuevo = this._sanitizarItem({ id, ...item });
       this.lista.unshift(nuevo);
       if (this.lista.length > 200) this.lista.pop(); // Limitar historial a 200 entradas
       this.guardar();
@@ -2964,8 +4292,13 @@ document.addEventListener('DOMContentLoaded', () => {
     renderizar(filtro = '') {
       if (!elementos.tbodyHistorial) return;
       const f = filtro.toLowerCase().trim();
-      const filtrados = f 
-        ? this.lista.filter(item => (item.archivo && item.archivo.toLowerCase().includes(f)) || (item.resultado && item.resultado.toLowerCase().includes(f)) || (item.herramienta && item.herramienta.toLowerCase().includes(f)))
+      const filtrados = f
+        ? this.lista.filter(item => {
+          const res = typeof item.resultado === 'string' ? item.resultado : '';
+          return (item.archivo && item.archivo.toLowerCase().includes(f)) ||
+            (res && res.toLowerCase().includes(f)) ||
+            (item.herramienta && item.herramienta.toLowerCase().includes(f));
+        })
         : this.lista;
 
       if (filtrados.length === 0) {
@@ -2973,18 +4306,19 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         elementos.tbodyHistorial.innerHTML = filtrados.map(item => {
           let badgeClass = 'badge-status-completed';
-          if (item.resultado && (item.resultado.includes('Simulación') || item.resultado.includes('Virtual') || item.resultado.includes('Simulation'))) badgeClass = 'badge-status-simulacion';
-          else if (item.resultado && (item.resultado.includes('Detenido') || item.resultado.includes('Cancelado'))) badgeClass = 'badge-status-stopped';
-          else if (item.resultado && (item.resultado.includes('Alarma') || item.resultado.includes('Error'))) badgeClass = 'badge-status-error';
+          const res = typeof item.resultado === 'string' ? item.resultado : (item.resultado ? String(item.resultado) : 'Desconocido');
+          if (res.includes('Simulación') || res.includes('Virtual') || res.includes('Simulation')) badgeClass = 'badge-status-simulacion';
+          else if (res.includes('Detenido') || res.includes('Cancelado')) badgeClass = 'badge-status-stopped';
+          else if (res.includes('Alarma') || res.includes('Error')) badgeClass = 'badge-status-error';
 
           return `<tr>
-            <td style="font-family: var(--font-mono); color: var(--text-muted);">${item.id}</td>
-            <td style="font-size: 11px;">${item.fecha}</td>
-            <td style="font-weight: 600; color: #fff;">${item.archivo}</td>
-            <td>${item.herramienta}</td>
-            <td style="font-family: var(--font-mono);">${item.duracion}</td>
-            <td style="font-family: var(--font-mono);">${item.lineas}</td>
-            <td><span class="badge-status ${badgeClass}">${item.resultado}</span></td>
+            <td style="font-family: var(--font-mono); color: var(--text-muted);">${escaparHTML(item.id)}</td>
+            <td style="font-size: 11px;">${escaparHTML(item.fecha)}</td>
+            <td style="font-weight: 600; color: #fff;">${escaparHTML(item.archivo)}</td>
+            <td>${escaparHTML(item.herramienta)}</td>
+            <td style="font-family: var(--font-mono);">${escaparHTML(item.duracion)}</td>
+            <td style="font-family: var(--font-mono);">${escaparHTML(item.lineas)}</td>
+            <td><span class="badge-status ${badgeClass}">${escaparHTML(res)}</span></td>
           </tr>`;
         }).join('');
       }
@@ -3004,9 +4338,25 @@ document.addEventListener('DOMContentLoaded', () => {
         if (this.lista.length === 0) {
           elementos.kpiHistorialExito.textContent = '100%';
         } else {
-          const exitosos = this.lista.filter(i => i.resultado === 'Completado' || (i.resultado && (i.resultado.includes('Simulación') || i.resultado.includes('Virtual') || i.resultado.includes('Simulation')))).length;
+          const exitosos = this.lista.filter(i => {
+            const res = typeof i.resultado === 'string' ? i.resultado : '';
+            return res === 'Completado' || res.includes('Simulación') || res.includes('Virtual') || res.includes('Simulation');
+          }).length;
           const pct = Math.round((exitosos / this.lista.length) * 100);
           elementos.kpiHistorialExito.textContent = `${pct}%`;
+        }
+      }
+
+      // Actualizar rótulo informativo en el pie del modal
+      if (typeof document !== 'undefined') {
+        const infoEl = document.getElementById('historial-footer-info');
+        if (infoEl) {
+          const visible = filtrados.length;
+          const total = this.lista.length;
+          const icon = '<i class="fa-solid fa-database" style="color: var(--cyan-primary);"></i>';
+          infoEl.innerHTML = f
+            ? `${icon} <span>Mostrando ${visible} de ${total} trabajos (filtrado)</span>`
+            : `${icon} <span>${total} trabajos registrados en memoria local</span>`;
         }
       }
     },
@@ -3043,11 +4393,21 @@ document.addEventListener('DOMContentLoaded', () => {
         imprimirEnConsola('c-system', '[HISTORIAL] Historial de trabajos limpiado correctamente.');
       }
     },
+    abrirModal() {
+      this.renderizar();
+      if (elementos.modalHistorial) elementos.modalHistorial.classList.remove('hidden');
+    },
     configurarEventos() {
       if (elementos.botonMenuHistorial) {
         elementos.botonMenuHistorial.addEventListener('click', () => {
-          this.renderizar();
-          if (elementos.modalHistorial) elementos.modalHistorial.classList.remove('hidden');
+          this.abrirModal();
+        });
+      }
+      if (elementos.modalHistorial) {
+        elementos.modalHistorial.addEventListener('click', (evento) => {
+          if (evento.target === elementos.modalHistorial) {
+            elementos.modalHistorial.classList.add('hidden');
+          }
         });
       }
       if (elementos.botonCerrarHistorial) {
@@ -3085,9 +4445,11 @@ document.addEventListener('DOMContentLoaded', () => {
     totalPasos: 5,
     inicializar() {
       this.configurarEventos();
-      // Verificar si es primer uso (MSJ_29)
+      // Verificar si es primer uso tras la instalación (MSJ_29)
       const noMostrar = localStorage.getItem('cnc_tutorial_no_mostrar') === 'true';
       if (!noMostrar && elementos.bannerPrimerUso) {
+        // Marcar de inmediato para que solo se muestre la primera vez tras la instalación
+        localStorage.setItem('cnc_tutorial_no_mostrar', 'true');
         setTimeout(() => {
           elementos.bannerPrimerUso.classList.remove('hidden');
         }, 1500);
@@ -3097,12 +4459,11 @@ document.addEventListener('DOMContentLoaded', () => {
       this.mostrarPaso(1);
       if (elementos.modalTutorial) elementos.modalTutorial.classList.remove('hidden');
       if (elementos.bannerPrimerUso) elementos.bannerPrimerUso.classList.add('hidden');
+      localStorage.setItem('cnc_tutorial_no_mostrar', 'true');
     },
     cerrar() {
       if (elementos.modalTutorial) elementos.modalTutorial.classList.add('hidden');
-      if (elementos.chkNoMostrarTutorial && elementos.chkNoMostrarTutorial.checked) {
-        localStorage.setItem('cnc_tutorial_no_mostrar', 'true');
-      }
+      localStorage.setItem('cnc_tutorial_no_mostrar', 'true');
     },
     mostrarPaso(num) {
       this.pasoActual = Math.max(1, Math.min(this.totalPasos, num));
@@ -3121,7 +4482,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (elementos.botonNextTutorial) {
         const esUltimo = (this.pasoActual === this.totalPasos);
         const lang = estado.idiomaActual;
-        elementos.botonNextTutorial.innerHTML = esUltimo 
+        elementos.botonNextTutorial.innerHTML = esUltimo
           ? (lang === 'en' ? '<i class="fa-solid fa-check"></i> Finish' : '<i class="fa-solid fa-check"></i> Finalizar')
           : (lang === 'en' ? 'Next <i class="fa-solid fa-arrow-right"></i>' : 'Siguiente <i class="fa-solid fa-arrow-right"></i>');
       }
@@ -3134,7 +4495,10 @@ document.addEventListener('DOMContentLoaded', () => {
         elementos.botonCerrarTutorial.addEventListener('click', () => this.cerrar());
       }
       if (elementos.botonIniciarTutorialToast) {
-        elementos.botonIniciarTutorialToast.addEventListener('click', () => this.abrir());
+        elementos.botonIniciarTutorialToast.addEventListener('click', () => {
+          localStorage.setItem('cnc_tutorial_no_mostrar', 'true');
+          this.abrir();
+        });
       }
       if (elementos.botonDescartarToast) {
         elementos.botonDescartarToast.addEventListener('click', () => {
@@ -3615,7 +4979,7 @@ document.addEventListener('DOMContentLoaded', () => {
       setHtml('#btn-zero-all', `<i class="fa-solid fa-bullseye"></i> ${d.dro_zero_all}`);
 
       setTxt('#block-jog .sidebar-header .title-sub', d.jog_title);
-      setTxt('#block-jog .speed-txt', d.jog_vel_label);
+      setTxt('#block-override .speed-txt', d.jog_vel_label);
 
       setTxt('#block-execution .sidebar-header .title-sub', d.exec_title);
       setTxt('#block-execution .tele-item:nth-child(1) .tele-label', d.tele_linea);
