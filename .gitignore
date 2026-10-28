@@ -18,3 +18,7 @@ __pycache__/
 
 # Documentación local (no subir a GitHub)
 docs/
+output/
+tmp/
+REVISION_CODIGO.md
+*.pdf
