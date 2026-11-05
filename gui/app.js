@@ -43,9 +43,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Estado operativo de GRBL ('IDLE', 'RUN', 'HOLD', 'ALARM', 'JOG', 'DESCONECTADO')
     estadoOperativo: 'DESCONECTADO',
     limitesHabilitados: false,
+    enHoming: false,
+    finesCarreraConfirmados: { X: false, Y: false, Z: false },
     // Velocidad de avance y estimación de tiempo
     porcentajeVelocidadManual: 100, // Override en porcentaje (100% nominal)
-    segundosEstimadosBase: 37, // Duración base estimada a 100%
+    segundosEstimadosBase: 0, // Duración base estimada a 100%
     velocidadAvanceNominal: 800, // mm/min base
     indiceLineaActiva: 0,
     lineasConfirmadas: new Map(),
@@ -53,21 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
     ultimoIndiceSeleccionado: null,
     indiceLineaEnEdicion: -1,
     pilaDeshacerGcode: [],
-    lineasPrograma: [
-      { texto: "G21 ; Unidades metricas en milimetros" },
-      { texto: "G90 ; Posicionamiento absoluto" },
-      { texto: "G94 ; Avance en mm/min" },
-      { texto: "G0 Z5.0" },
-      { texto: "M3 S12000 ; Spindle ON" },
-      { texto: "G0 X110.0 Y140.0" },
-      { texto: "G1 Z-1.0 F300" },
-      { texto: "G1 X210.0 F800" },
-      { texto: "G1 Y220.0" },
-      { texto: "G1 X110.0" },
-      { texto: "G1 Y140.0" },
-      { texto: "G0 Z5.0" },
-      { texto: "M5 ; Spindle OFF" }
-    ],
+    lineasPrograma: [],
     temporizadorEjecucion: null,
     revolucionesPorMinuto: 12000,
     potenciaLaserPct: parseInt(localStorage.getItem('cnc_laser_power_pct'), 10) || 100,
@@ -110,6 +98,11 @@ document.addEventListener('DOMContentLoaded', () => {
     botonJogXMenos: document.getElementById('btn-jog-x-minus'),
     botonJogZMas: document.getElementById('btn-jog-z-plus'),
     botonJogZMenos: document.getElementById('btn-jog-z-minus'),
+    botonJogHome: document.getElementById('btn-jog-home'),
+    botonJogHomeAll: document.getElementById('btn-jog-home-all'),
+    badgeFcX: document.getElementById('fc-badge-x'),
+    badgeFcY: document.getElementById('fc-badge-y'),
+    badgeFcZ: document.getElementById('fc-badge-z'),
     botonesPaso: document.querySelectorAll('.step-btn'),
     deslizadorVelocidadJog: document.getElementById('slider-jog-speed'),
     etiquetaVelocidadJog: document.getElementById('lbl-jog-vel'),
@@ -344,14 +337,11 @@ document.addEventListener('DOMContentLoaded', () => {
           elementos.selectorPuertoCom.appendChild(opcion);
         });
 
-        // Si no se conservó el puerto previo, priorizar el dispositivo USB CNC real o conectar el simulador
+        // Si no se conservó el puerto previo, seleccionar el simulador virtual. Nunca se conecta
+        // automáticamente un puerto real: el usuario debe elegirlo explícitamente en el selector.
         if (!puertoSeleccionado && listaPuertos.length > 0) {
-          const dispositivoCnc = listaPuertos.find(p => p.tipo === 'USB_CNC');
-          if (dispositivoCnc) {
-            elementos.selectorPuertoCom.value = dispositivoCnc.puerto;
-          } else {
-            elementos.selectorPuertoCom.value = listaPuertos[0].puerto;
-          }
+          const simulador = listaPuertos.find(p => p.tipo === 'SIMULADOR') || listaPuertos[listaPuertos.length - 1];
+          elementos.selectorPuertoCom.value = simulador.puerto;
           conectarPuertoSeleccionado();
         }
       } catch (e) {
@@ -395,7 +385,14 @@ document.addEventListener('DOMContentLoaded', () => {
             animFrameEstado = null;
             if (!datosEstadoPendiente) return;
             const d = datosEstadoPendiente;
-            if (Number.isFinite(d.override_feed)) mostrarFeedOverride(d.override_feed);
+            if (Number.isFinite(d.override_feed)) {
+              const obj = estado.objetivoOverrideManual;
+              const enAjuste = Number.isFinite(obj) && d.override_feed !== obj && (Date.now() - (estado.tiempoOverrideManual || 0)) < 2500;
+              if (d.override_feed === obj) estado.objetivoOverrideManual = null;
+              if (!enAjuste && document.activeElement !== elementos.deslizadorVelocidadJog) {
+                mostrarFeedOverride(d.override_feed);
+              }
+            }
             if (Number.isFinite(d.override_spindle)) {
               estado.modificadorHusillo = d.override_spindle;
               if (elementos.deslizadorModificadorHusillo && document.activeElement !== elementos.deslizadorModificadorHusillo) {
@@ -499,11 +496,22 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // Pines de fin de carrera y sondas activas
-            const txtLimites = d.pines_limite ? `Límites: [${d.pines_limite}]` : 'Límites: OFF';
-            if (elementos.etiquetaEstadoLimites.textContent !== txtLimites) {
-              elementos.etiquetaEstadoLimites.textContent = txtLimites;
-              elementos.puntoIndicadorLimites.className = d.pines_limite ? 'indicator-dot dot-connected' : 'indicator-dot dot-off';
+            estado.pinesLimiteActivos = d.pines_limite || '';
+            if (d.estado === 'HOME') {
+              estado.enHoming = true;
             }
+            if (estado.pinesLimiteActivos) {
+              const pUp = estado.pinesLimiteActivos.toUpperCase();
+              if (pUp.includes('X')) estado.finesCarreraConfirmados.X = true;
+              if (pUp.includes('Y')) estado.finesCarreraConfirmados.Y = true;
+              if (pUp.includes('Z')) estado.finesCarreraConfirmados.Z = true;
+            } else if (!estado.enHoming) {
+              if (Math.abs(Number(estado.coordenadasTrabajo.x) || 0) > 0.05) estado.finesCarreraConfirmados.X = false;
+              if (Math.abs(Number(estado.coordenadasTrabajo.y) || 0) > 0.05) estado.finesCarreraConfirmados.Y = false;
+              if (Math.abs(Number(estado.coordenadasTrabajo.z) || 0) > 0.05) estado.finesCarreraConfirmados.Z = false;
+            }
+            actualizarBadgesFinesCarrera();
+            actualizarIndicadorLimites();
           }, 50);
         }
       } catch (e) {
@@ -513,6 +521,84 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 3. Salida de consola serial desde Python
     puente.senial_consola.connect((tipo, mensaje) => {
+      if (typeof mensaje === 'string') {
+        if (mensaje.includes('[FIN DE CARRERA X]')) estado.finesCarreraConfirmados.X = true;
+        if (mensaje.includes('[FIN DE CARRERA Y]')) estado.finesCarreraConfirmados.Y = true;
+        if (mensaje.includes('[FIN DE CARRERA Z]')) estado.finesCarreraConfirmados.Z = true;
+        if (mensaje.includes('[HOMING COMPLETADO]')) {
+          estado.enHoming = false;
+          estado.finesCarreraConfirmados = { X: true, Y: true, Z: true };
+        }
+        const mDir = mensaje.match(/\$3=(\d+)/);
+        if (mDir) {
+          const mask3 = parseInt(mDir[1], 10);
+          if (Number.isFinite(mask3)) {
+            localStorage.setItem('cnc_dir_invert_mask', String(mask3));
+            const chkX = document.getElementById('cfg-dir-invert-x');
+            const chkY = document.getElementById('cfg-dir-invert-y');
+            const chkZ = document.getElementById('cfg-dir-invert-z');
+            const lblM = document.getElementById('lbl-cfg-dir-mask');
+            if (chkX) chkX.checked = Boolean(mask3 & 1);
+            if (chkY) chkY.checked = Boolean(mask3 & 2);
+            if (chkZ) chkZ.checked = Boolean(mask3 & 4);
+            if (lblM) lblM.textContent = `Valor $3=${mask3}`;
+          }
+        }
+        const mStep = mensaje.match(/\$(10[012])=([0-9.]+)/);
+        if (mStep) {
+          const ejeStep = mStep[1] === '100' ? 'x' : (mStep[1] === '101' ? 'y' : 'z');
+          const valStep = parseFloat(mStep[2]);
+          if (Number.isFinite(valStep) && valStep > 0) {
+            localStorage.setItem(`cnc_step_${ejeStep}`, valStep.toFixed(3));
+            const inpStep = document.getElementById(`cfg-step-${ejeStep}`);
+            if (inpStep) inpStep.value = valStep.toFixed(3);
+            const ejeCalibSel = (document.getElementById('calib-eje')?.value || 'X').toLowerCase();
+            const inpBaseCalib = document.getElementById('calib-pasos-base');
+            if (inpBaseCalib && ejeCalibSel === ejeStep && document.activeElement !== inpBaseCalib) {
+              inpBaseCalib.value = valStep.toFixed(3);
+            }
+            if (estado.calibBase && estado.calibBase.eje.toLowerCase() === ejeStep) {
+              estado.calibBase.pasos = valStep;
+            }
+            if (typeof window.actualizarPreviewCalibracion === 'function') window.actualizarPreviewCalibracion();
+          }
+        }
+        const mRate = mensaje.match(/\$(11[012])=([0-9.]+)/);
+        if (mRate) {
+          const ejeR = mRate[1] === '110' ? 'x' : (mRate[1] === '111' ? 'y' : 'z');
+          const valR = parseFloat(mRate[2]);
+          if (Number.isFinite(valR) && valR > 0) {
+            localStorage.setItem(`cnc_maxrate_${ejeR}`, valR.toFixed(1));
+            const inpR = document.getElementById(`cfg-maxrate-${ejeR}`);
+            if (inpR) inpR.value = valR.toFixed(1);
+          }
+        }
+        const mAccel = mensaje.match(/\$(12[012])=([0-9.]+)/);
+        if (mAccel) {
+          const ejeA = mAccel[1] === '120' ? 'x' : (mAccel[1] === '121' ? 'y' : 'z');
+          const valA = parseFloat(mAccel[2]);
+          if (Number.isFinite(valA) && valA > 0) {
+            localStorage.setItem(`cnc_accel_${ejeA}`, valA.toFixed(1));
+            const inpA = document.getElementById(`cfg-accel-${ejeA}`);
+            if (inpA) inpA.value = valA.toFixed(1);
+          }
+        }
+        const mTravel = mensaje.match(/\$(13[012])=([0-9.]+)/);
+        if (mTravel) {
+          const ejeT = mTravel[1] === '130' ? 'x' : (mTravel[1] === '131' ? 'y' : 'z');
+          const valT = parseFloat(mTravel[2]);
+          if (Number.isFinite(valT) && valT > 0) {
+            localStorage.setItem(`cnc_travel_${ejeT}`, valT.toFixed(1));
+            const inpT = document.getElementById(`cfg-travel-${ejeT}`);
+            if (inpT) inpT.value = valT.toFixed(1);
+          }
+        }
+        if (mensaje.toLowerCase().includes('caution: unlocked')) {
+          estado.enHoming = false;
+          establecerEstadoOperativo('IDLE');
+        }
+        actualizarBadgesFinesCarrera();
+      }
       imprimirEnConsola(tipo, mensaje);
     });
 
@@ -521,13 +607,15 @@ document.addEventListener('DOMContentLoaded', () => {
     let animFrameProgreso = null;
 
     puente.senial_progreso.connect((lineaActual, totalLineas, porcentaje, tiempo) => {
+      // Ignorar avances tardíos o espurios cuando no hay un mecanizado en curso (evita pintar trayecto como grabado)
+      if (!estado.enEjecucion && !estado.enPausa) return;
       datosProgresoPendiente = { lineaActual, totalLineas, porcentaje, tiempo };
       estado.indiceLineaActiva = Math.max(0, lineaActual - 1);
 
       if (!animFrameProgreso) {
         animFrameProgreso = setTimeout(() => {
           animFrameProgreso = null;
-          if (!datosProgresoPendiente) return;
+          if (!datosProgresoPendiente || (!estado.enEjecucion && !estado.enPausa)) return;
           const { lineaActual: act, totalLineas: tot, porcentaje: pct, tiempo: t } = datosProgresoPendiente;
 
           elementos.metricaNumeroLinea.textContent = `${act} / ${tot}`;
@@ -620,10 +708,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const esVirtual = (puerto === 'SIMULADOR_VIRTUAL' || !window.puenteCNC);
     if (elementos.deslizadorVelocidadJog) {
-      const maxVal = esVirtual ? 2000 : 200;
+      const maxVal = esVirtual ? 500 : 200;
       elementos.deslizadorVelocidadJog.max = maxVal;
       elementos.deslizadorVelocidadJog.title = esVirtual
-        ? 'Velocidad de Simulación y Override (10% a 2000%)'
+        ? 'Velocidad de Simulación y Override (10% a 500%)'
         : 'Modificador de velocidad y tiempo estimado (10% a 200%)';
     }
 
@@ -783,6 +871,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const paso = Number(estado.incrementoPaso) || 0.1;
     const desplazamiento = paso * sentido * factorSentido;
+    if (estado.finesCarreraConfirmados) {
+      estado.finesCarreraConfirmados[eje] = false;
+      actualizarBadgesFinesCarrera();
+    }
     const avanceCalculado = Math.round(estado.velocidadAvanceNominal * (estado.porcentajeVelocidadManual / 100));
 
     if (window.puenteCNC) {
@@ -807,6 +899,86 @@ document.addEventListener('DOMContentLoaded', () => {
   elementos.botonJogXMenos.addEventListener('click', () => moverEjeManual('X', -1));
   elementos.botonJogZMas.addEventListener('click', () => moverEjeManual('Z', 1));
   elementos.botonJogZMenos.addEventListener('click', () => moverEjeManual('Z', -1));
+
+  function actualizarBadgesFinesCarrera() {
+    const mapa = [
+      ['X', elementos.badgeFcX],
+      ['Y', elementos.badgeFcY],
+      ['Z', elementos.badgeFcZ]
+    ];
+    for (const [eje, el] of mapa) {
+      if (!el) continue;
+      const confirmado = Boolean(estado.finesCarreraConfirmados && estado.finesCarreraConfirmados[eje]);
+      el.classList.toggle('confirmed', confirmado);
+      el.classList.toggle('searching', Boolean(estado.enHoming && !confirmado));
+      if (confirmado) {
+        el.innerHTML = `<i class="fa-solid fa-circle-check"></i> FC-${eje}`;
+      } else if (estado.enHoming) {
+        el.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> FC-${eje}`;
+      } else {
+        el.innerHTML = `<i class="fa-solid fa-circle-dot"></i> FC-${eje}`;
+      }
+    }
+    if (elementos.botonJogHome) elementos.botonJogHome.classList.toggle('is-homing', Boolean(estado.enHoming));
+    if (elementos.botonJogHomeAll) elementos.botonJogHomeAll.classList.toggle('is-homing', Boolean(estado.enHoming));
+  }
+
+  function ejecutarHomingConFinesDeCarrera() {
+    if (estado.enEjecucion) {
+      imprimirEnConsola('c-warn', '[BLOQUEO] No se permite ejecutar Homing ($H) durante el mecanizado de un programa.');
+      return;
+    }
+    if (estado.estadoOperativo === 'ALARM') {
+      imprimirEnConsola('c-alarm', '[ALARMA] Desbloquee la máquina ($X) antes de iniciar el regreso a casa.');
+      return;
+    }
+    estado.enHoming = true;
+    estado.finesCarreraConfirmados = { X: false, Y: false, Z: false };
+    actualizarBadgesFinesCarrera();
+
+    if (window.puenteCNC) {
+      window.puenteCNC.ejecutarHoming();
+    } else {
+      establecerEstadoOperativo('HOME');
+      imprimirEnConsola('c-ok', '> $H');
+      imprimirEnConsola('c-info', '[HOMING] Iniciando regreso de todos los ejes a casa ($H) buscando finales de carrera...');
+      setTimeout(() => {
+        estado.coordenadasTrabajo.z = 0;
+        estado.coordenadasMaquina.z = 0;
+        estado.finesCarreraConfirmados.Z = true;
+        actualizarLecturasDRO();
+        actualizarBadgesFinesCarrera();
+        imprimirEnConsola('c-ok', '[FIN DE CARRERA Z] Sensor Z activado (Pn:Z) — Eje Z confirmado en casa (0.000 mm).');
+      }, 250);
+      setTimeout(() => {
+        estado.coordenadasTrabajo.x = 0;
+        estado.coordenadasMaquina.x = 0;
+        estado.finesCarreraConfirmados.X = true;
+        actualizarLecturasDRO();
+        actualizarBadgesFinesCarrera();
+        imprimirEnConsola('c-ok', '[FIN DE CARRERA X] Sensor X activado (Pn:X) — Eje X confirmado en casa (0.000 mm).');
+      }, 500);
+      setTimeout(() => {
+        estado.coordenadasTrabajo.y = 0;
+        estado.coordenadasMaquina.y = 0;
+        estado.finesCarreraConfirmados.Y = true;
+        estado.enHoming = false;
+        establecerEstadoOperativo('IDLE');
+        actualizarLecturasDRO();
+        actualizarBadgesFinesCarrera();
+        imprimirEnConsola('c-ok', '[FIN DE CARRERA Y] Sensor Y activado (Pn:Y) — Eje Y confirmado en casa (0.000 mm).');
+        imprimirEnConsola('c-system', '[HOMING COMPLETADO] Todos los ejes (X, Y, Z) en casa (0.000 mm) y confirmados por finales de carrera.');
+        imprimirEnConsola('c-ok', 'ok');
+      }, 750);
+    }
+  }
+
+  if (elementos.botonJogHome) {
+    elementos.botonJogHome.addEventListener('click', ejecutarHomingConFinesDeCarrera);
+  }
+  if (elementos.botonJogHomeAll) {
+    elementos.botonJogHomeAll.addEventListener('click', ejecutarHomingConFinesDeCarrera);
+  }
 
   // Selección de magnitud del incremento de paso
   elementos.botonesPaso.forEach(boton => {
@@ -904,6 +1076,23 @@ document.addEventListener('DOMContentLoaded', () => {
     const estaMecanizando = estado.enEjecucion ||
       estado.estadoOperativo === 'RUN' ||
       (estado.estadoOperativo === 'HOLD' && estado.enEjecucion);
+
+    // Mantener el láser activo durante el trabajo para evitar una interrupción
+    // accidental del grabado; la pausa o detención debe hacerse desde ejecución.
+    const trabajoEnCurso = estado.enEjecucion || estado.estadoOperativo === 'RUN';
+    if (estado.tipoHerramienta === 'laser' && estado.husilloActivo && trabajoEnCurso) {
+      mostrarAlertaSeguridadHusillo(
+        'BLOQUEO DE SEGURIDAD DEL LÁSER',
+        'No es posible apagar el láser mientras el trabajo está en curso',
+        'Apagar el diodo durante el grabado interrumpiría la trayectoria y puede dejar la pieza incompleta. Detenga el trabajo desde el panel de ejecución antes de apagarlo.'
+      );
+      imprimirEnConsola('c-alarm', '[SEGURIDAD] Intento de apagado del láser denegado durante el trabajo.');
+      if (elementos.botonAlternarHusillo) {
+        elementos.botonAlternarHusillo.classList.add('btn-spindle-denied');
+        setTimeout(() => elementos.botonAlternarHusillo.classList.remove('btn-spindle-denied'), 700);
+      }
+      return;
+    }
 
     // INTERBLOQUEO DE SEGURIDAD CNC: Prohibido apagar el husillo mientras se mecaniza con FRESA
     if (estado.tipoHerramienta === 'fresa' && estado.husilloActivo && estaMecanizando) {
@@ -1118,13 +1307,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // Indicador de límites: ON/OFF según el ajuste de límites duros ($21) y alarma si un pin está activo
+  function actualizarIndicadorLimites() {
+    const en = estado.idiomaActual === 'en';
+    const pines = estado.pinesLimiteActivos || '';
+    let texto, clase;
+    if (pines) {
+      texto = `${en ? 'Limits' : 'Límites'}: ${en ? 'TRIGGERED' : 'ACTIVADO'} [${pines}]`;
+      clase = estado.estadoOperativo === 'ALARM' ? 'indicator-dot dot-alarm' : 'indicator-dot dot-connected';
+    } else if (estado.limitesHabilitados) {
+      texto = en ? 'Limits: ON' : 'Límites: ON';
+      clase = 'indicator-dot dot-connected';
+    } else {
+      texto = en ? 'Limits: OFF' : 'Límites: OFF';
+      clase = 'indicator-dot dot-off';
+    }
+    if (elementos.etiquetaEstadoLimites && elementos.etiquetaEstadoLimites.textContent !== texto) {
+      elementos.etiquetaEstadoLimites.textContent = texto;
+    }
+    if (elementos.puntoIndicadorLimites) elementos.puntoIndicadorLimites.className = clase;
+    if (elementos.indicadorLimites) elementos.indicadorLimites.classList.toggle('limits-on', Boolean(estado.limitesHabilitados));
+  }
+
   elementos.indicadorLimites.addEventListener('click', () => {
     estado.limitesHabilitados = !estado.limitesHabilitados;
     const cmd = estado.limitesHabilitados ? '$21=1' : '$21=0';
     if (window.puenteCNC) window.puenteCNC.enviarMDI(cmd);
-    else imprimirEnConsola('c-info', `[CONFIG] Sensores de límite fin de carrera (${cmd}).`);
+    imprimirEnConsola('c-info', `[CONFIG] Límites duros ${estado.limitesHabilitados ? 'ACTIVADOS' : 'DESACTIVADOS'} (${cmd}).`);
+    actualizarIndicadorLimites();
   });
-
   // ==========================================
   // VISOR DE LÍNEAS DE CÓDIGO G (VIRTUALIZADO DE ALTO RENDIMIENTO)
   // ==========================================
@@ -1316,7 +1527,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const textoCompleto = estado.lineasPrograma.map(l => l.texto).join('\n');
     if (window.visualizadorCNC) {
-      window.visualizadorCNC.cargarTrayectoriaDesdeGCode(textoCompleto);
       window.visualizadorCNC.solicitarRenderizado();
     }
     if (window.puenteCNC) {
@@ -1889,7 +2099,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   function escaparHTML(valor) {
-    return String(valor ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+    return String(valor ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
   function formatearSintaxisCodigoG(textoOriginal) {
@@ -1922,8 +2132,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // En hardware, el DRO siempre procede de telemetría. Offline usa geometría modal.
     if (!window.puenteCNC && window.visualizadorCNC) {
       const segmento = window.visualizadorCNC.trayectoria.findLast(s => s.linea <= indice);
-      estado.coordenadasTrabajo = segmento ? {x: segmento.x2, y: segmento.y2, z: segmento.z2} : {x: 0, y: 0, z: 0};
-      estado.coordenadasMaquina = {...estado.coordenadasTrabajo};
+      estado.coordenadasTrabajo = segmento ? { x: segmento.x2, y: segmento.y2, z: segmento.z2 } : { x: 0, y: 0, z: 0 };
+      estado.coordenadasMaquina = { ...estado.coordenadasTrabajo };
       actualizarLecturasDRO();
     }
   }
@@ -2145,7 +2355,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function mostrarFeedOverride(porcentaje) {
     const esVirtual = (estado.puertoComSeleccionado === 'SIMULADOR_VIRTUAL' || !window.puenteCNC);
-    const maxVal = esVirtual ? 2000 : 200;
+    const maxVal = esVirtual ? 500 : 200;
     const pct = Math.max(10, Math.min(maxVal, Math.round(Number(porcentaje) || 100)));
     estado.porcentajeVelocidadManual = pct;
     if (elementos.deslizadorVelocidadJog) {
@@ -2156,7 +2366,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (elementos.etiquetaVelocidadJog) elementos.etiquetaVelocidadJog.textContent = `${pct}%`;
     document.querySelectorAll('.btn-preset-feed').forEach(btn => {
-      const val = Number(btn.getAttribute('data-feed-pct') || btn.dataset.feedPct);
+      const val = Number((typeof btn.getAttribute === 'function' && btn.getAttribute('data-feed-pct')) || btn.dataset?.feedPct);
       btn.classList.toggle('active', val === pct);
     });
     actualizarTiempoEstimado();
@@ -2164,6 +2374,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function aplicarFeedOverride(porcentaje) {
     mostrarFeedOverride(porcentaje);
+    estado.objetivoOverrideManual = estado.porcentajeVelocidadManual;
+    estado.tiempoOverrideManual = Date.now();
     if (window.puenteCNC) window.puenteCNC.establecerFeedOverride(estado.porcentajeVelocidadManual);
   }
 
@@ -2234,7 +2446,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     if (esSimulacionVirtual) {
-      imprimirEnConsola('c-info', '[SIMULADOR] Ejecución en modo simulador virtual (RF-11 / C.U-03-04).');
+      imprimirEnConsola('c-info', '[SIMULADOR] Ejecución en modo simulador virtual.');
     }
 
     if (estado.tipoHerramienta === 'lapiz') {
@@ -2282,10 +2494,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const linea = estado.lineasPrograma[idx]?.texto || '';
         const limpia = linea.replace(/\(.*?\)/g, '').split(';')[0].toUpperCase();
         const tokens = [...limpia.matchAll(/([A-Z])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))/g)].map(m => [m[1], Number(m[2])]);
-        const ms = tokens.filter(([k]) => k === 'M').map(([,v]) => v);
+        const ms = tokens.filter(([k]) => k === 'M').map(([, v]) => v);
         const s = tokens.find(([k]) => k === 'S');
         if (s) estado.rpmProgramadas = s[1];
-        if (ms.some(m => [3,4].includes(m)) && estado.tipoHerramienta !== 'lapiz') {
+        if (ms.some(m => [3, 4].includes(m)) && estado.tipoHerramienta !== 'lapiz') {
           estado.husilloActivo = (estado.rpmProgramadas || 0) > 0;
         }
         if (ms.includes(5) || (s && s[1] === 0)) estado.husilloActivo = false;
@@ -2310,7 +2522,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const tiempoStr = `${String(Math.floor(segTranscurridos / 60)).padStart(2, '0')}:${String(segTranscurridos % 60).padStart(2, '0')}`;
         elementos.metricaTiempoTranscurrido.textContent = tiempoStr;
         elementos.telemetriaTiempoTranscurrido.textContent = tiempoStr;
-        if (idx < totalLineas-1) estado.indiceLineaActiva = idx+1;
+        if (idx < totalLineas - 1) estado.indiceLineaActiva = idx + 1;
         else detenerMecanizado('Completado');
       }, 50);
     }
@@ -2573,7 +2785,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const cfgDirY = document.getElementById('cfg-dir-invert-y');
     const cfgDirZ = document.getElementById('cfg-dir-invert-z');
     const lblDirMask = document.getElementById('lbl-cfg-dir-mask');
-    const dirMask = parseInt(localStorage.getItem('cnc_dir_invert_mask') || '0', 10);
+    const dirMask = parseInt(localStorage.getItem('cnc_dir_invert_mask') || '2', 10);
     if (cfgDirX) cfgDirX.checked = Boolean(dirMask & 1);
     if (cfgDirY) cfgDirY.checked = Boolean(dirMask & 2);
     if (cfgDirZ) cfgDirZ.checked = Boolean(dirMask & 4);
@@ -2651,6 +2863,17 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   elementos.botonAbrirConfiguracion.addEventListener('click', () => {
+    estado.calibBase = null;
+    cargarValoresModalConfiguracion();
+    const ejeSel = (document.getElementById('calib-eje')?.value || 'X').toLowerCase();
+    const inpStepSel = document.getElementById(`cfg-step-${ejeSel}`);
+    const inpBase = document.getElementById('calib-pasos-base');
+    if (inpBase && inpStepSel) inpBase.value = parseFloat(inpStepSel.value || '250').toFixed(3);
+    if (window.puenteCNC && estado.conectado && !estado.ejecutandoPrograma && estado.estadoOperativo === 'IDLE') {
+      window.puenteCNC.enviarMDI('$$');
+    }
+    cargarValoresModalConfiguracion();
+    actualizarPreviewCalibracion();
     cargarValoresModalConfiguracion();
     elementos.modalConfiguracion.classList.remove('hidden');
   });
@@ -2682,6 +2905,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 2. Parámetros de Máquina ($100, $101, $102) y ($130, $131, $132)
+    const ejeCalibGuardar = document.getElementById('calib-eje')?.value || 'X';
+    const cmdDistGuardar = parseFloat(document.getElementById('calib-dist-comandada')?.value);
+    const realDistGuardar = parseFloat(document.getElementById('calib-dist-real')?.value);
+    if (Number.isFinite(cmdDistGuardar) && cmdDistGuardar > 0 && Number.isFinite(realDistGuardar) && realDistGuardar > 0 && Math.abs(cmdDistGuardar - realDistGuardar) > 1e-4) {
+      const inpStepGuardar = document.getElementById(`cfg-step-${ejeCalibGuardar.toLowerCase()}`);
+      const baseGuardar = (estado.calibBase && estado.calibBase.eje === ejeCalibGuardar && Number.isFinite(estado.calibBase.pasos))
+        ? estado.calibBase.pasos
+        : (parseFloat(document.getElementById('calib-pasos-base')?.value) || parseFloat(inpStepGuardar?.value) || 250.0);
+      const nuevoGuardar = (baseGuardar * cmdDistGuardar) / realDistGuardar;
+      if (Number.isFinite(nuevoGuardar) && nuevoGuardar > 0) {
+        if (inpStepGuardar) inpStepGuardar.value = nuevoGuardar.toFixed(3);
+        const inpBaseG = document.getElementById('calib-pasos-base');
+        if (inpBaseG) inpBaseG.value = nuevoGuardar.toFixed(3);
+        estado.calibBase = { eje: ejeCalibGuardar, pasos: Number(nuevoGuardar.toFixed(3)), comandada: cmdDistGuardar };
+        const inpRealG = document.getElementById('calib-dist-real');
+        if (inpRealG) inpRealG.value = cmdDistGuardar.toFixed(1);
+      }
+    }
     const stepX = parseFloat(document.getElementById('cfg-step-x')?.value) || 250.0;
     const stepY = parseFloat(document.getElementById('cfg-step-y')?.value) || 250.0;
     const stepZ = parseFloat(document.getElementById('cfg-step-z')?.value) || 400.0;
@@ -2811,15 +3052,269 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Asistente Didáctico de Calibración de Pasos/mm
+  // Asistente Didáctico de Calibración de Pasos/mm
+  function actualizarPreviewCalibracion() {
+    const eje = document.getElementById('calib-eje')?.value || 'X';
+    const comandada = parseFloat(document.getElementById('calib-dist-comandada')?.value);
+    const real = parseFloat(document.getElementById('calib-dist-real')?.value);
+    const lblPrev = document.getElementById('lbl-preview-calibracion');
+    if (!lblPrev) return;
+    const inputEje = document.getElementById(`cfg-step-${eje.toLowerCase()}`);
+    const inpBase = document.getElementById('calib-pasos-base');
+    const lblBase = document.getElementById('lbl-calib-pasos-base');
+    const cmdNumPre = 100 + 'XYZ'.indexOf(eje);
+    if (lblBase) lblBase.textContent = `Base ($${cmdNumPre}):`;
+    const actual = (estado.calibBase && estado.calibBase.eje === eje && Number.isFinite(estado.calibBase.pasos) && estado.calibBase.pasos > 0)
+      ? estado.calibBase.pasos
+      : (parseFloat(inpBase?.value) || parseFloat(inputEje ? inputEje.value : (localStorage.getItem(`cnc_step_${eje.toLowerCase()}`) || '250.0')) || 250.0);
+    if (inpBase && document.activeElement !== inpBase) inpBase.value = actual.toFixed(3);
+    const cmdNum = 100 + 'XYZ'.indexOf(eje);
+    if (!Number.isFinite(comandada) || comandada <= 0 || !Number.isFinite(real) || real <= 0) {
+      lblPrev.textContent = `Actual: $${cmdNum}=${actual.toFixed(3)} pasos/mm`;
+      return;
+    }
+    const nuevo = (actual * comandada) / real;
+    lblPrev.textContent = `Base: $${cmdNum}=${actual.toFixed(3)} × (${comandada.toFixed(1)}/${real.toFixed(2)} mm) → Nuevo: $${cmdNum}=${nuevo.toFixed(3)} pasos/mm`;
+    const lblTool = document.getElementById('lbl-calib-tool-speed');
+    const inpTool = document.getElementById('calib-tool-speed');
+    if (lblTool && inpTool) {
+      if (estado.tipoHerramienta === 'laser') {
+        lblTool.textContent = 'Potencia Diodo Láser (% Luz):';
+        inpTool.max = '100';
+        inpTool.step = '5';
+        if (document.activeElement !== inpTool) inpTool.value = estado.potenciaLaserPct || 100;
+        document.querySelectorAll('.btn-calib-power-preset').forEach((b, i) => {
+          const vals = [25, 50, 80, 100];
+          b.setAttribute('data-power', vals[i] || 100);
+          b.textContent = `${vals[i] || 100}%`;
+        });
+      } else {
+        lblTool.textContent = 'Velocidad Husillo / Herramienta (RPM):';
+        inpTool.max = '24000';
+        inpTool.step = '500';
+        if (document.activeElement !== inpTool) inpTool.value = estado.revolucionesPorMinuto || 12000;
+        document.querySelectorAll('.btn-calib-power-preset').forEach((b, i) => {
+          const vals = [5000, 10000, 12000, 18000];
+          b.setAttribute('data-power', vals[i] || 12000);
+          b.textContent = `${vals[i] || 12000}`;
+        });
+      }
+    }
+  }
+  window.actualizarPreviewCalibracion = actualizarPreviewCalibracion;
+
+  const selCalibEje = document.getElementById('calib-eje');
+  if (selCalibEje) {
+    selCalibEje.addEventListener('change', () => {
+      const ejeC = (selCalibEje.value || 'X').toLowerCase();
+      const inpStepC = document.getElementById(`cfg-step-${ejeC}`);
+      const inpBaseC = document.getElementById('calib-pasos-base');
+      const vStep = parseFloat(inpStepC?.value || localStorage.getItem(`cnc_step_${ejeC}`) || '250.0') || 250.0;
+      if (inpBaseC) inpBaseC.value = vStep.toFixed(3);
+      estado.calibBase = null;
+      actualizarPreviewCalibracion();
+    });
+  }
+  const inpCalibPasosBase = document.getElementById('calib-pasos-base');
+  if (inpCalibPasosBase) {
+    const syncBaseManual = () => {
+      const ejeC = document.getElementById('calib-eje')?.value || 'X';
+      const vBase = parseFloat(inpCalibPasosBase.value);
+      if (Number.isFinite(vBase) && vBase > 0) {
+        estado.calibBase = { eje: ejeC, pasos: vBase, comandada: parseFloat(document.getElementById('calib-dist-comandada')?.value) || 50 };
+        const inpStepC = document.getElementById(`cfg-step-${ejeC.toLowerCase()}`);
+        if (inpStepC) inpStepC.value = vBase.toFixed(3);
+      }
+      actualizarPreviewCalibracion();
+    };
+    inpCalibPasosBase.addEventListener('input', syncBaseManual);
+    inpCalibPasosBase.addEventListener('change', syncBaseManual);
+  }
+  ['cfg-step-x', 'cfg-step-y', 'cfg-step-z'].forEach(id => {
+    const elStep = document.getElementById(id);
+    if (elStep) {
+      elStep.addEventListener('input', () => {
+        const ejeEdit = id.slice(-1).toUpperCase();
+        const ejeSel = document.getElementById('calib-eje')?.value || 'X';
+        const vStep = parseFloat(elStep.value);
+        if (ejeEdit === ejeSel && Number.isFinite(vStep) && vStep > 0) {
+          const inpBaseC = document.getElementById('calib-pasos-base');
+          if (inpBaseC) inpBaseC.value = vStep.toFixed(3);
+          estado.calibBase = null;
+        }
+      });
+    }
+  });
+  ['calib-eje', 'calib-dist-comandada', 'calib-dist-real', 'cfg-step-x', 'cfg-step-y', 'cfg-step-z'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('input', actualizarPreviewCalibracion);
+      el.addEventListener('change', actualizarPreviewCalibracion);
+    }
+  });
+
+  document.querySelectorAll('.btn-calib-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const dist = parseFloat(btn.getAttribute('data-dist'));
+      if (!Number.isFinite(dist) || dist <= 0) return;
+      const inpCmd = document.getElementById('calib-dist-comandada');
+      const inpReal = document.getElementById('calib-dist-real');
+      if (inpCmd) inpCmd.value = dist.toFixed(1);
+      if (inpReal) inpReal.value = dist.toFixed(1);
+      actualizarPreviewCalibracion();
+    });
+  });
+
+  document.querySelectorAll('.btn-calib-feed-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const f = parseFloat(btn.getAttribute('data-feed'));
+      const inpF = document.getElementById('calib-feed');
+      if (inpF && Number.isFinite(f) && f > 0) inpF.value = Math.round(f);
+    });
+  });
+
+  document.querySelectorAll('.btn-calib-power-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const p = parseFloat(btn.getAttribute('data-power'));
+      const inpP = document.getElementById('calib-tool-speed');
+      if (inpP && Number.isFinite(p) && p > 0) {
+        inpP.value = Math.round(p);
+        if (estado.tipoHerramienta === 'laser') {
+          estado.potenciaLaserPct = Math.min(100, Math.max(1, Math.round(p)));
+          localStorage.setItem('cnc_laser_power_pct', estado.potenciaLaserPct);
+        } else {
+          estado.revolucionesPorMinuto = Math.round(p);
+        }
+      }
+    });
+  });
+
+  const inpCalibToolSpeed = document.getElementById('calib-tool-speed');
+  if (inpCalibToolSpeed) {
+    inpCalibToolSpeed.addEventListener('change', () => {
+      const val = parseFloat(inpCalibToolSpeed.value);
+      if (!Number.isFinite(val) || val <= 0) return;
+      if (estado.tipoHerramienta === 'laser') {
+        estado.potenciaLaserPct = Math.min(100, Math.max(1, Math.round(val)));
+        localStorage.setItem('cnc_laser_power_pct', estado.potenciaLaserPct);
+      } else {
+        estado.revolucionesPorMinuto = Math.round(val);
+      }
+    });
+  }
+
+  const btnCalibTrazar = document.getElementById('btn-calib-trazar');
+  if (btnCalibTrazar) {
+    btnCalibTrazar.addEventListener('click', () => {
+      const eje = document.getElementById('calib-eje')?.value || 'X';
+      const comandada = parseFloat(document.getElementById('calib-dist-comandada')?.value);
+      const usarHerramienta = document.getElementById('calib-usar-herramienta')?.checked !== false;
+      const lblResultado = document.getElementById('lbl-resultado-calibracion');
+
+      if (!Number.isFinite(comandada) || comandada <= 0) {
+        if (lblResultado) {
+          lblResultado.style.color = '#dc2626';
+          lblResultado.textContent = 'Ingrese una distancia comandada mayor a 0 mm.';
+        }
+        return;
+      }
+      if (estado.estadoOperativo === 'ALARM') {
+        if (lblResultado) {
+          lblResultado.style.color = '#dc2626';
+          lblResultado.textContent = 'La máquina está en ALARMA. Desbloquee con $X primero.';
+        }
+        return;
+      }
+
+      const inputEjeTr = document.getElementById(`cfg-step-${eje.toLowerCase()}`);
+      const inpBaseTr = document.getElementById('calib-pasos-base');
+      const pasosBaseTr = parseFloat(inpBaseTr?.value) || parseFloat(inputEjeTr?.value) || parseFloat(localStorage.getItem(`cnc_step_${eje.toLowerCase()}`) || '250.0') || 250.0;
+      if (inpBaseTr) inpBaseTr.value = pasosBaseTr.toFixed(3);
+      if (inputEjeTr) inputEjeTr.value = pasosBaseTr.toFixed(3);
+      localStorage.setItem(`cnc_step_${eje.toLowerCase()}`, pasosBaseTr.toFixed(3));
+      estado.calibBase = { eje, pasos: pasosBaseTr, comandada };
+      const cmdNumTr = 100 + 'XYZ'.indexOf(eje);
+      const maskDirCalib = ((parseInt(localStorage.getItem('cnc_dir_invert_mask') || '2', 10) || 0) & ~3) | 2;
+      localStorage.setItem('cnc_dir_invert_mask', String(maskDirCalib));
+      estado.ultimoTrazoCalib = { eje, distanciaMm: comandada };
+      const cmds = [`G10 L20 P1 ${eje}0`, 'G91 G21'];
+      const activarMotor = usarHerramienta && eje !== 'Z' && estado.tipoHerramienta !== 'lapiz';
+      if (activarMotor) {
+        if (estado.tipoHerramienta === 'laser') {
+          const pct = Math.min(100, Math.max(1, parseFloat(document.getElementById('calib-tool-speed')?.value) || estado.potenciaLaserPct || 80));
+          estado.potenciaLaserPct = Math.round(pct);
+          const pwmS = Math.max(10, Math.round((pct / 100) * 1000));
+          cmds.push(`M3 S${pwmS}`);
+        } else {
+          const rpm = Math.max(500, Math.round(parseFloat(document.getElementById('calib-tool-speed')?.value) || estado.revolucionesPorMinuto || 10000));
+          estado.revolucionesPorMinuto = rpm;
+          cmds.push(`M3 S${rpm}`);
+        }
+      }
+      const feedInput = parseFloat(document.getElementById('calib-feed')?.value);
+      const feedCalib = (Number.isFinite(feedInput) && feedInput >= 10) ? Math.round(feedInput) : (eje === 'Z' ? 300 : 600);
+      cmds.push(`G1 ${eje}${comandada.toFixed(3)} F${feedCalib}`);
+      cmds.push('G4 P0');
+      if (activarMotor) {
+        cmds.push('M5');
+      }
+      cmds.push('G90');
+
+      cmds.forEach(c => {
+        if (window.puenteCNC) window.puenteCNC.enviarMDI(c);
+        else procesarComandoMdi(c);
+      });
+
+      const modoTxt = usarHerramienta
+        ? (estado.tipoHerramienta === 'laser' ? 'con Diodo Láser' : (estado.tipoHerramienta === 'lapiz' ? 'con Lápiz' : 'con Fresa'))
+        : 'en vacío (sin herramienta)';
+      imprimirEnConsola('c-info', `[CALIBRACIÓN] Trazando línea de prueba de ${comandada.toFixed(1)} mm en eje ${eje} ${modoTxt}. Mida el trazo e ingrese el valor real.`);
+      if (lblResultado) {
+        lblResultado.style.color = 'var(--cyan-primary)';
+        lblResultado.textContent = `✓ Trazando ${comandada.toFixed(1)} mm en ${eje} (${modoTxt}). Mida la línea y escriba la Distancia Real Medida.`;
+      }
+      const inpReal = document.getElementById('calib-dist-real');
+      if (inpReal) {
+        inpReal.focus();
+        inpReal.select();
+      }
+      actualizarPreviewCalibracion();
+    });
+  }
+
+  const btnCalibRegresar = document.getElementById('btn-calib-regresar');
+  if (btnCalibRegresar) {
+    btnCalibRegresar.addEventListener('click', () => {
+      const eje = document.getElementById('calib-eje')?.value || 'X';
+      const lblResultado = document.getElementById('lbl-resultado-calibracion');
+      const distRegreso = (estado.ultimoTrazoCalib && estado.ultimoTrazoCalib.eje === eje && Number.isFinite(estado.ultimoTrazoCalib.distanciaMm) && estado.ultimoTrazoCalib.distanciaMm > 0)
+        ? estado.ultimoTrazoCalib.distanciaMm
+        : null;
+      estado.ultimoTrazoCalib = null;
+      const cmdsRegreso = distRegreso !== null
+        ? ['M5', 'G91 G21', `G0 ${eje}-${distRegreso.toFixed(3)}`, 'G90', `G10 L20 P1 ${eje}0`]
+        : ['M5', 'G90 G21', `G0 ${eje}0`];
+      cmdsRegreso.forEach(c => {
+        if (window.puenteCNC) window.puenteCNC.enviarMDI(c);
+        else procesarComandoMdi(c);
+      });
+      imprimirEnConsola('c-info', `[CALIBRACIÓN] Regresando eje ${eje} al punto de inicio (0.000 mm).`);
+      if (lblResultado) {
+        lblResultado.style.color = 'var(--text-bright)';
+        lblResultado.textContent = `↩ Regresando eje ${eje} a 0.000 mm...`;
+      }
+    });
+  }
+
   const btnCalcularPasos = document.getElementById('btn-calcular-pasos');
   if (btnCalcularPasos) {
-    btnCalcularPasos.addEventListener('click', () => {
+    btnCalcularPasos.addEventListener('click', async () => {
       const eje = document.getElementById('calib-eje')?.value || 'X';
       const comandada = parseFloat(document.getElementById('calib-dist-comandada')?.value);
       const real = parseFloat(document.getElementById('calib-dist-real')?.value);
       const lblResultado = document.getElementById('lbl-resultado-calibracion');
 
-      if (isNaN(comandada) || comandada <= 0 || isNaN(real) || real <= 0) {
+      if (!Number.isFinite(comandada) || comandada <= 0 || !Number.isFinite(real) || real <= 0) {
         if (lblResultado) {
           lblResultado.style.color = '#dc2626';
           lblResultado.textContent = 'Valores inválidos. Ingrese distancias mayores a 0.';
@@ -2828,24 +3323,84 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const inputEje = document.getElementById(`cfg-step-${eje.toLowerCase()}`);
-      const actual = parseFloat(inputEje ? inputEje.value : '250.0') || 250.0;
+      const inpBaseCalc = document.getElementById('calib-pasos-base');
+      const actual = (estado.calibBase && estado.calibBase.eje === eje && Number.isFinite(estado.calibBase.pasos) && estado.calibBase.pasos > 0)
+        ? estado.calibBase.pasos
+        : (parseFloat(inpBaseCalc?.value) || parseFloat(inputEje ? inputEje.value : '250.0') || 250.0);
       const nuevo = (actual * comandada) / real;
 
-      if (inputEje) {
-        inputEje.value = nuevo.toFixed(3);
+      if (!Number.isFinite(nuevo) || nuevo.toFixed(3) <= 0 || !['X', 'Y', 'Z'].includes(eje)) {
+        if (lblResultado) lblResultado.textContent = 'El resultado de calibración está fuera de rango.';
+        return;
       }
-      localStorage.setItem(`cnc_step_${eje.toLowerCase()}`, nuevo.toFixed(3));
-
-      const cmdNum = (eje === 'X') ? '100' : (eje === 'Y' ? '101' : '102');
-      if (window.puenteCNC) {
-        window.puenteCNC.enviarMDI(`$${cmdNum}=${nuevo.toFixed(3)}`);
+      const cmdNum = 100 + 'XYZ'.indexOf(eje);
+      const comando = `$${cmdNum}=${nuevo.toFixed(3)}`;
+      btnCalcularPasos.disabled = true;
+      if (lblResultado) lblResultado.textContent = 'Esperando confirmación de GRBL…';
+      try {
+        const puente = window.puenteCNC;
+        if (!puente?.aplicarCalibracion || !puente.senial_calibracion) {
+          throw new Error(`Valor calculado: ${comando}. Sin conexión; no se aplicó.`);
+        }
+        await new Promise((resolve, reject) => {
+          let finalizado = false;
+          const finalizar = (error) => {
+            if (finalizado) return;
+            finalizado = true;
+            clearTimeout(timer);
+            puente.senial_calibracion.disconnect(confirmar);
+            error ? reject(error) : resolve();
+          };
+          const confirmar = (texto, aceptado) => {
+            if (texto === comando) finalizar(aceptado ? null : new Error('GRBL rechazó la calibración.'));
+          };
+          const timer = setTimeout(() => finalizar(new Error('Sin confirmación de GRBL. Consulte $$ antes de reintentar.')), 8000);
+          puente.senial_calibracion.connect(confirmar);
+          Promise.resolve(puente.aplicarCalibracion(eje, Number(nuevo.toFixed(3))))
+            .then(aceptado => {
+              if (!aceptado) {
+                if (puente.enviarMDI) {
+                  puente.enviarMDI(comando);
+                  setTimeout(() => finalizar(null), 200);
+                } else {
+                  finalizar(new Error('Requiere conexión en reposo y sin comandos pendientes.'));
+                }
+              }
+            })
+            .catch(finalizar);
+        });
+        const nuevoRedondeado = Number(nuevo.toFixed(3));
+        if (inputEje) inputEje.value = nuevoRedondeado.toFixed(3);
+        if (inpBaseCalc) inpBaseCalc.value = nuevoRedondeado.toFixed(3);
+        estado.calibBase = { eje, pasos: nuevoRedondeado, comandada };
+        if (estado.ultimoTrazoCalib && estado.ultimoTrazoCalib.eje === eje) {
+          estado.ultimoTrazoCalib.distanciaMm = real;
+          if (window.puenteCNC && typeof window.puenteCNC.enviarMDI === 'function') {
+        if (estado.ultimoTrazoCalib && estado.ultimoTrazoCalib.eje === eje) {
+          estado.ultimoTrazoCalib.distanciaMm = real;
+        }
+          }
+        }
+        const inpRealCalc = document.getElementById('calib-dist-real');
+        if (inpRealCalc) inpRealCalc.value = comandada.toFixed(1);
+        localStorage.setItem(`cnc_step_${eje.toLowerCase()}`, nuevo.toFixed(3));
+        actualizarPreviewCalibracion();
+        localStorage.setItem(`cnc_step_${eje.toLowerCase()}`, nuevo.toFixed(3));
+        const simulado = estado.puertoComSeleccionado === 'SIMULADOR_VIRTUAL';
+        if (lblResultado) {
+          lblResultado.style.color = 'var(--green-start)';
+          lblResultado.textContent = `✓ ${comando} ${simulado ? 'aceptado en simulación' : 'confirmado por GRBL'}.`;
+        }
+        imprimirEnConsola('c-ok', `[CALIBRACIÓN] ${comando} confirmado${simulado ? ' en simulación' : ''}.`);
+      } catch (error) {
+        if (lblResultado) {
+          lblResultado.style.color = '#dc2626';
+          lblResultado.textContent = error.message;
+        }
+        imprimirEnConsola('c-error', `[CALIBRACIÓN] ${error.message}`);
+      } finally {
+        btnCalcularPasos.disabled = false;
       }
-
-      if (lblResultado) {
-        lblResultado.style.color = 'var(--green-start)';
-        lblResultado.textContent = `✓ Eje ${eje}: $${cmdNum}=${nuevo.toFixed(3)} pasos/mm aplicado!`;
-      }
-      imprimirEnConsola('c-ok', `[CALIBRACIÓN] Nuevo valor para Eje ${eje}: $${cmdNum}=${nuevo.toFixed(3)} pasos/mm (Comandado: ${comandada}mm, Medido: ${real}mm).`);
     });
   }
 
@@ -2880,6 +3435,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (elementos.encabezadoSeguridad && encabezado) elementos.encabezadoSeguridad.textContent = encabezado;
     if (elementos.descripcionSeguridad && descripcion) elementos.descripcionSeguridad.textContent = descripcion;
 
+    const esLaser = titulo && titulo.includes('LÁSER');
     const esM6 = (titulo && (titulo.includes('M6') || titulo.includes('HERRAMIENTA'))) ||
       (descripcion && (descripcion.includes('M6') || descripcion.includes('herramienta')));
 
@@ -2900,7 +3456,9 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } else {
       if (elementos.accionSeguridad) {
-        elementos.accionSeguridad.innerHTML = accion || '<b>Acción requerida:</b> Si necesita detener el husillo, presione primero <b>PAUSA</b> o <b>DETENER</b> en el panel de control de ejecución.';
+        elementos.accionSeguridad.innerHTML = accion || (esLaser
+          ? '<b>Acción requerida:</b> Detenga el trabajo desde el panel de ejecución antes de apagar el láser.'
+          : '<b>Acción requerida:</b> Si necesita detener el husillo, presione primero <b>PAUSA</b> o <b>DETENER</b> en el panel de control de ejecución.');
       }
     }
 
@@ -3040,9 +3598,9 @@ document.addEventListener('DOMContentLoaded', () => {
   async function actualizarUIPorTipoHerramienta(tipo) {
     if (estado.enEjecucion) {
       imprimirEnConsola('c-warn', '[BLOQUEO] Detenga el programa antes de cambiar la herramienta.');
-      return;
+      return false;
     }
-    if (window.puenteCNC && !await window.puenteCNC.establecerTipoHerramienta(tipo)) return;
+    if (window.puenteCNC && !await window.puenteCNC.establecerTipoHerramienta(tipo)) return false;
     if (tipo === 'lapiz') {
       estado.tipoHerramienta = 'lapiz';
     } else if (tipo === 'laser' || tipo === 'láser') {
@@ -3269,6 +3827,7 @@ document.addEventListener('DOMContentLoaded', () => {
         elementos.tarjetaToolLaser.classList.toggle('active', estado.tipoHerramienta === 'laser');
       }
     }
+    return true;
   }
   window.actualizarUIPorTipoHerramienta = actualizarUIPorTipoHerramienta;
 
@@ -3335,8 +3894,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (elementos.botonAplicarModalHerramienta) {
-    elementos.botonAplicarModalHerramienta.addEventListener('click', () => {
-      actualizarUIPorTipoHerramienta(tipoHerramientaSeleccionada);
+    elementos.botonAplicarModalHerramienta.addEventListener('click', async () => {
+      if (!await actualizarUIPorTipoHerramienta(tipoHerramientaSeleccionada)) return;
       if (elementos.modalSeleccionHerramienta) {
         elementos.modalSeleccionHerramienta.classList.add('hidden');
       }
@@ -3476,6 +4035,218 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   elementos.botonCargarDemo.addEventListener('click', () => {
+    if (estado.enEjecucion) {
+      imprimirEnConsola('c-error', '[ARCHIVO] Detenga el programa antes de cargar otro archivo.');
+      return;
+    }
+    estado.pilaDeshacerGcode.length = 0;
+    estado.lineasSeleccionadas.clear();
+    estado.indiceLineaEnEdicion = -1;
+    estado.ultimoIndiceSeleccionado = null;
+    estado.lineasPrograma = [
+      { texto: '; SmartCAD DXF -> G-code (MVP)  mode=laser units=mm' },
+      { texto: 'G21' },
+      { texto: 'G90' },
+      { texto: 'G17' },
+      { texto: 'M5' },
+      { texto: 'G0 X0 Y15.001' },
+      { texto: 'M3 S1000' },
+      { texto: 'G1 X0 Y10.6 F1000' },
+      { texto: 'G1 X2.5 Y10.6' },
+      { texto: 'G1 X2.5 Y12.601' },
+      { texto: 'G1 X8 Y12.601' },
+      { texto: 'G1 X8 Y10.6' },
+      { texto: 'G1 X11.45 Y10.6' },
+      { texto: 'G1 X11.45 Y9.301' },
+      { texto: 'G1 X8 Y7.001' },
+      { texto: 'G1 X8 Y2.401' },
+      { texto: 'G1 X2.5 Y2.401' },
+      { texto: 'G1 X2.5 Y4.401' },
+      { texto: 'G1 X0 Y4.401' },
+      { texto: 'G1 X0 Y0.001' },
+      { texto: 'G1 X18.4 Y0.001' },
+      { texto: 'G1 X18.4 Y4.401' },
+      { texto: 'G1 X15.9 Y4.401' },
+      { texto: 'G1 X15.9 Y2.401' },
+      { texto: 'G1 X11.45 Y2.401' },
+      { texto: 'G1 X11.45 Y6.26' },
+      { texto: 'G1 X15 Y8.201' },
+      { texto: 'G1 X15 Y10.6' },
+      { texto: 'G1 X19.2 Y10.6' },
+      { texto: 'G1 X20.5 Y12.601' },
+      { texto: 'G1 X22.5 Y12.601' },
+      { texto: 'G1 X24.5 Y12.601' },
+      { texto: 'G1 X25.8 Y10.6' },
+      { texto: 'G1 X30 Y10.6' },
+      { texto: 'G1 X30 Y8.292' },
+      { texto: 'G1 X33.55 Y6.26' },
+      { texto: 'G1 X33.55 Y5.78' },
+      { texto: 'G1 X33.55 Y2.401' },
+      { texto: 'G1 X29.1 Y2.401' },
+      { texto: 'G1 X29.1 Y4.401' },
+      { texto: 'G1 X26.6 Y4.401' },
+      { texto: 'G1 X26.6 Y0.001' },
+      { texto: 'G1 X63.4 Y0.001' },
+      { texto: 'G1 X63.4 Y4.401' },
+      { texto: 'G1 X60.9 Y4.401' },
+      { texto: 'G1 X60.9 Y2.401' },
+      { texto: 'G1 X56.45 Y2.401' },
+      { texto: 'G1 X56.45 Y6.26' },
+      { texto: 'G1 X60 Y8.292' },
+      { texto: 'G1 X60 Y10.6' },
+      { texto: 'G1 X64.2 Y10.6' },
+      { texto: 'G1 X65.2 Y12.139' },
+      { texto: 'G1 X65.5 Y12.601' },
+      { texto: 'G1 X67.5 Y12.601' },
+      { texto: 'G1 X69.5 Y12.601' },
+      { texto: 'G1 X69.8 Y12.139' },
+      { texto: 'G1 X70.799 Y10.6' },
+      { texto: 'G1 X75 Y10.6' },
+      { texto: 'G1 X75 Y8.292' },
+      { texto: 'G1 X78.55 Y6.26' },
+      { texto: 'G1 X78.55 Y2.401' },
+      { texto: 'G1 X74.1 Y2.401' },
+      { texto: 'G1 X74.1 Y4.401' },
+      { texto: 'G1 X71.6 Y4.401' },
+      { texto: 'G1 X71.6 Y0.001' },
+      { texto: 'G1 X108.4 Y0.001' },
+      { texto: 'G1 X108.4 Y4.401' },
+      { texto: 'G1 X105.9 Y4.401' },
+      { texto: 'G1 X105.9 Y2.4' },
+      { texto: 'G1 X101.45 Y2.401' },
+      { texto: 'G1 X101.45 Y5.78' },
+      { texto: 'G1 X101.45 Y6.26' },
+      { texto: 'G1 X105 Y8.292' },
+      { texto: 'G1 X105 Y10.6' },
+      { texto: 'G1 X109.2 Y10.6' },
+      { texto: 'G1 X110.5 Y12.6' },
+      { texto: 'G1 X112.5 Y12.6' },
+      { texto: 'G1 X114.5 Y12.6' },
+      { texto: 'G1 X114.8 Y12.138' },
+      { texto: 'G1 X115.799 Y10.6' },
+      { texto: 'G1 X120 Y10.6' },
+      { texto: 'G1 X120 Y8.291' },
+      { texto: 'G1 X123.55 Y6.26' },
+      { texto: 'G1 X123.55 Y2.4' },
+      { texto: 'G1 X119.099 Y2.4' },
+      { texto: 'G1 X119.099 Y4.4' },
+      { texto: 'G1 X116.6 Y4.4' },
+      { texto: 'G1 X116.6 Y0' },
+      { texto: 'G1 X153.4 Y0.001' },
+      { texto: 'G1 X153.4 Y4.4' },
+      { texto: 'G1 X150.9 Y4.4' },
+      { texto: 'G1 X150.9 Y2.4' },
+      { texto: 'G1 X146.45 Y2.4' },
+      { texto: 'G1 X146.45 Y5.78' },
+      { texto: 'G1 X146.45 Y6.26' },
+      { texto: 'G1 X149.999 Y8.291' },
+      { texto: 'G1 X149.999 Y10.6' },
+      { texto: 'G1 X154.2 Y10.6' },
+      { texto: 'G1 X155.5 Y12.6' },
+      { texto: 'G1 X157.5 Y12.6' },
+      { texto: 'G1 X159.5 Y12.6' },
+      { texto: 'G1 X160.8 Y10.6' },
+      { texto: 'G1 X165 Y10.6' },
+      { texto: 'G1 X165 Y8.2' },
+      { texto: 'G1 X168.55 Y6.26' },
+      { texto: 'G1 X168.55 Y2.4' },
+      { texto: 'G1 X164.1 Y2.4' },
+      { texto: 'G1 X164.1 Y4.4' },
+      { texto: 'G1 X161.6 Y4.4' },
+      { texto: 'G1 X161.6 Y0.001' },
+      { texto: 'G1 X180 Y0' },
+      { texto: 'G1 X180 Y4.4' },
+      { texto: 'G1 X177.5 Y4.4' },
+      { texto: 'G1 X177.5 Y2.4' },
+      { texto: 'G1 X172 Y2.4' },
+      { texto: 'G1 X172 Y7' },
+      { texto: 'G1 X168.55 Y9.3' },
+      { texto: 'G1 X168.55 Y10.6' },
+      { texto: 'G1 X172 Y10.6' },
+      { texto: 'G1 X172 Y12.6' },
+      { texto: 'G1 X177.5 Y12.6' },
+      { texto: 'G1 X177.5 Y10.6' },
+      { texto: 'G1 X180 Y10.6' },
+      { texto: 'G1 X180 Y15' },
+      { texto: 'G1 X157.5 Y15' },
+      { texto: 'G1 X139.1 Y15' },
+      { texto: 'G1 X139.1 Y10.6' },
+      { texto: 'G1 X141.599 Y10.6' },
+      { texto: 'G1 X141.599 Y12.6' },
+      { texto: 'G1 X146.099 Y12.6' },
+      { texto: 'G1 X146.099 Y8.291' },
+      { texto: 'G1 X142.909 Y6.491' },
+      { texto: 'G1 X142.5 Y6.26' },
+      { texto: 'G1 X142.5 Y4.4' },
+      { texto: 'G1 X138.3 Y4.4' },
+      { texto: 'G1 X137 Y2.4' },
+      { texto: 'G1 X132.999 Y2.4' },
+      { texto: 'G1 X131.7 Y4.4' },
+      { texto: 'G1 X127.499 Y4.4' },
+      { texto: 'G1 X127.499 Y6.26' },
+      { texto: 'G1 X123.9 Y8.291' },
+      { texto: 'G1 X123.9 Y10.31' },
+      { texto: 'G1 X123.9 Y12.6' },
+      { texto: 'G1 X128.4 Y12.6' },
+      { texto: 'G1 X128.4 Y10.6' },
+      { texto: 'G1 X130.9 Y10.6' },
+      { texto: 'G1 X130.9 Y15' },
+      { texto: 'G1 X112.5 Y15' },
+      { texto: 'G1 X112.5 Y15.001' },
+      { texto: 'G1 X94.1 Y15.001' },
+      { texto: 'G1 X94.1 Y10.6' },
+      { texto: 'G1 X96.599 Y10.6' },
+      { texto: 'G1 X96.599 Y12.601' },
+      { texto: 'G1 X101.099 Y12.601' },
+      { texto: 'G1 X101.099 Y8.292' },
+      { texto: 'G1 X97.909 Y6.492' },
+      { texto: 'G1 X97.5 Y6.26' },
+      { texto: 'G1 X97.5 Y4.401' },
+      { texto: 'G1 X93.3 Y4.401' },
+      { texto: 'G1 X92 Y2.401' },
+      { texto: 'G1 X87.999 Y2.401' },
+      { texto: 'G1 X86.7 Y4.401' },
+      { texto: 'G1 X82.5 Y4.401' },
+      { texto: 'G1 X82.5 Y6.26' },
+      { texto: 'G1 X78.9 Y8.292' },
+      { texto: 'G1 X78.9 Y10.311' },
+      { texto: 'G1 X78.9 Y12.601' },
+      { texto: 'G1 X83.4 Y12.601' },
+      { texto: 'G1 X83.4 Y10.6' },
+      { texto: 'G1 X85.9 Y10.6' },
+      { texto: 'G1 X85.9 Y15.001' },
+      { texto: 'G1 X67.5 Y15.001' },
+      { texto: 'G1 X49.1 Y15.001' },
+      { texto: 'G1 X49.1 Y10.6' },
+      { texto: 'G1 X51.6 Y10.6' },
+      { texto: 'G1 X51.6 Y12.601' },
+      { texto: 'G1 X56.1 Y12.601' },
+      { texto: 'G1 X56.1 Y10.311' },
+      { texto: 'G1 X56.1 Y8.292' },
+      { texto: 'G1 X52.5 Y6.26' },
+      { texto: 'G1 X52.5 Y4.401' },
+      { texto: 'G1 X48.3 Y4.401' },
+      { texto: 'G1 X47 Y2.401' },
+      { texto: 'G1 X43 Y2.401' },
+      { texto: 'G1 X41.7 Y4.401' },
+      { texto: 'G1 X37.5 Y4.401' },
+      { texto: 'G1 X37.5 Y6.26' },
+      { texto: 'G1 X37.09 Y6.492' },
+      { texto: 'G1 X33.9 Y8.292' },
+      { texto: 'G1 X33.9 Y12.601' },
+      { texto: 'G1 X38.4 Y12.601' },
+      { texto: 'G1 X38.4 Y10.6' },
+      { texto: 'G1 X40.9 Y10.6' },
+      { texto: 'G1 X40.9 Y15.001' },
+      { texto: 'G1 X22.5 Y15.001' },
+      { texto: 'G1 X0 Y15.001' },
+      { texto: 'M5' },
+      { texto: 'G0 X0 Y0' },
+      { texto: 'M2' }
+    ];
+    estado.nombreArchivoCargado = 'corte laser.nc';
+    const lblNombre = document.getElementById('lbl-loaded-filename');
+    if (lblNombre) lblNombre.textContent = 'corte laser.nc';
     estado.indiceLineaActiva = 0;
     renderizarListaCodigoG();
     estado.segundosEstimadosBase = estimarSegundosBaseDesdeLineas(estado.lineasPrograma);
@@ -3483,25 +4254,39 @@ document.addEventListener('DOMContentLoaded', () => {
     actualizarTiempoEstimado();
     const texto = estado.lineasPrograma.map(l => l.texto).join('\n');
     if (window.visualizadorCNC) {
-      window.visualizadorCNC.cargarTrayectoriaDesdeGCode(texto);
       window.visualizadorCNC.ajustarVistaAPieza();
     }
     if (window.puenteCNC) window.puenteCNC.analizarGcode(texto);
-    imprimirEnConsola('c-info', '[ARCHIVO] Archivo de demostración pieza_01.nc cargado.');
+    imprimirEnConsola('c-info', `[ARCHIVO] Archivo de demostración ${estado.nombreArchivoCargado} cargado.`);
   });
 
   elementos.botonAbrirArchivoMenu.addEventListener('click', () => elementos.selectorArchivoGcode.click());
   elementos.selectorArchivoGcode.addEventListener('change', (evento) => {
     const archivo = evento.target.files[0];
     if (!archivo) return;
+    evento.target.value = '';
+    if (estado.enEjecucion) {
+      imprimirEnConsola('c-error', '[ARCHIVO] Detenga el programa antes de cargar otro archivo.');
+      return;
+    }
     const lector = new FileReader();
+    lector.onerror = () => imprimirEnConsola('c-error', `[ARCHIVO] No se pudo leer ${archivo.name}. Se conserva el programa anterior.`);
     lector.onload = (ev) => {
       const contenidoTexto = ev.target.result;
       const lineas = contenidoTexto.split('\n')
         .map(l => l.trim())
         .filter(l => l.length > 0)
         .map(texto => ({ texto }));
+      if (!lineas.length) {
+        imprimirEnConsola('c-error', `[ARCHIVO] ${archivo.name} está vacío. No se cargó; se conserva el programa anterior.`);
+        return;
+      }
       if (lineas.length > 0) {
+        // Liberar las referencias del archivo anterior al abrir otro programa.
+        estado.pilaDeshacerGcode.length = 0;
+        estado.lineasSeleccionadas.clear();
+        estado.indiceLineaEnEdicion = -1;
+        estado.ultimoIndiceSeleccionado = null;
         estado.lineasPrograma = lineas;
         estado.nombreArchivoCargado = archivo.name;
         estado.indiceLineaActiva = 0;
@@ -3512,7 +4297,6 @@ document.addEventListener('DOMContentLoaded', () => {
         actualizarTiempoEstimado();
         const textoCompleto = lineas.map(l => l.texto).join('\n');
         if (window.visualizadorCNC) {
-          window.visualizadorCNC.cargarTrayectoriaDesdeGCode(textoCompleto);
           window.visualizadorCNC.ajustarVistaAPieza();
         }
         if (window.puenteCNC) window.puenteCNC.analizarGcode(textoCompleto);
@@ -3523,6 +4307,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   elementos.botonMenuHoming.addEventListener('click', () => {
+    ejecutarHomingConFinesDeCarrera();
+    if (false)
     if (window.puenteCNC) window.puenteCNC.ejecutarHoming();
     else procesarComandoMdi('$H');
   });
@@ -3663,7 +4449,6 @@ document.addEventListener('DOMContentLoaded', () => {
       actualizarTiempoEstimado();
 
       if (window.visualizadorCNC) {
-        window.visualizadorCNC.cargarTrayectoriaDesdeGCode(textoAcelerado);
         window.visualizadorCNC.ajustarVistaAPieza();
       }
       if (window.puenteCNC) window.puenteCNC.analizarGcode(textoAcelerado);
@@ -3866,30 +4651,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  const btnMenuExportLog = document.getElementById('btn-menu-export-log');
-  if (btnMenuExportLog) {
-    btnMenuExportLog.addEventListener('click', () => {
-      const lineasConsola = Array.from(elementos.cuerpoConsola.querySelectorAll('.console-line'))
-        .map(linea => linea.textContent)
-        .join('\n');
-      if (!lineasConsola.trim()) {
-        imprimirEnConsola('c-info', '[BITÁCORA] La consola se encuentra vacía.');
-        return;
-      }
-      const blob = new Blob([lineasConsola], { type: 'text/plain;charset=utf-8' });
-      const enlace = document.createElement('a');
-      enlace.href = URL.createObjectURL(blob);
-      enlace.download = `bitacora_cnc_${new Date().toISOString().slice(0, 10)}.txt`;
-      enlace.click();
-      imprimirEnConsola('c-system', '[BITÁCORA] Bitácora serial exportada exitosamente.');
-    });
-  }
-
   // --- MENÚ EDICIÓN ---
   const btnMenuClearGcode = document.getElementById('btn-menu-clear-gcode');
   if (btnMenuClearGcode) {
     btnMenuClearGcode.addEventListener('click', () => {
       estado.lineasPrograma = [];
+      estado.pilaDeshacerGcode.length = 0;
+      estado.lineasSeleccionadas.clear();
+      estado.indiceLineaEnEdicion = -1;
+      estado.ultimoIndiceSeleccionado = null;
       estado.indiceLineaActiva = 0;
       document.getElementById('lbl-loaded-filename').textContent = 'Ninguno';
       renderizarListaCodigoG();
@@ -3903,7 +4673,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnMenuClearConsole = document.getElementById('btn-menu-clear-console');
   if (btnMenuClearConsole) {
     btnMenuClearConsole.addEventListener('click', () => {
-      elementos.cuerpoConsola.innerHTML = '';
+      if (elementos.salidaConsola) elementos.salidaConsola.innerHTML = '';
       imprimirEnConsola('c-info', '[CONSOLA] Bitácora de consola serial limpiada.');
     });
   }
@@ -3933,7 +4703,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnMenuCalibration.addEventListener('click', () => {
       cargarValoresModalConfiguracion();
       elementos.modalConfiguracion.classList.remove('hidden');
-      const pestana = document.querySelector('.cfg-tab-btn[data-target="cfg-tab-maquina"]');
+      const pestana = document.querySelector('.cfg-tab-btn[data-target="cfg-tab-calibracion"]');
       if (pestana) pestana.click();
       const box = document.getElementById('box-calibracion-pasos');
       if (box) box.scrollIntoView({ behavior: 'smooth' });
@@ -4005,9 +4775,6 @@ document.addEventListener('DOMContentLoaded', () => {
   estado.segundosEstimadosBase = estimarSegundosBaseDesdeLineas(estado.lineasPrograma);
   actualizarMetricasTelemetria();
   actualizarTiempoEstimado();
-  if (window.visualizadorCNC) {
-    window.visualizadorCNC.cargarTrayectoriaDesdeGCode(estado.lineasPrograma.map(l => l.texto).join('\n'));
-  }
 
   // ==========================================
   // MONITOREO Y CONFIGURACIÓN DE LÍMITES CNC
@@ -4545,10 +5312,9 @@ document.addEventListener('DOMContentLoaded', () => {
         menu_vista: "Vista",
         menu_ayuda: "Ayuda",
         btn_abrir_archivo: "Abrir Archivo G-Code...",
-        btn_cargar_demo: "Cargar pieza_01.nc (Demo)",
+        btn_cargar_demo: "Cargar corte laser.nc (Demo)",
         btn_guardar_gcode: "Guardar G-Code",
         btn_historial: "Historial de Trabajos Realizados",
-        btn_exportar_bitacora: "Exportar Bitácora de Sesión",
         btn_limpiar_prog: "Limpiar Programa",
         btn_limpiar_consola: "Limpiar Consola Serial",
         btn_homing: "Ciclo de Homing ($H)",
@@ -4619,6 +5385,7 @@ document.addEventListener('DOMContentLoaded', () => {
         cfg_modal_subtitle: "Parámetros GRBL v1.1 & Preferencias de Usuario",
         cfg_nav_conexion: "Ajustes de Conexión",
         cfg_nav_maquina: "Info de la Máquina",
+        cfg_nav_calibracion: "Calibración de Pasos",
         cfg_nav_emisor: "Ajustes Emisor",
         cfg_nav_ui: "Interfaz de Usuario",
         cfg_nav_atajos: "Ajustes y Atajos",
@@ -4700,10 +5467,9 @@ document.addEventListener('DOMContentLoaded', () => {
         menu_vista: "View",
         menu_ayuda: "Help",
         btn_abrir_archivo: "Open G-Code File...",
-        btn_cargar_demo: "Load pieza_01.nc (Demo)",
+        btn_cargar_demo: "Load corte laser.nc (Demo)",
         btn_guardar_gcode: "Save G-Code",
         btn_historial: "Work History & Logs",
-        btn_exportar_bitacora: "Export Session Log",
         btn_limpiar_prog: "Clear Program",
         btn_limpiar_consola: "Clear Serial Console",
         btn_homing: "Homing Cycle ($H)",
@@ -4774,6 +5540,7 @@ document.addEventListener('DOMContentLoaded', () => {
         cfg_modal_subtitle: "GRBL v1.1 Parameters & User Preferences",
         cfg_nav_conexion: "Connection Settings",
         cfg_nav_maquina: "Machine Information",
+        cfg_nav_calibracion: "Steps/mm Calibration",
         cfg_nav_emisor: "Streamer Settings",
         cfg_nav_ui: "User Interface",
         cfg_nav_atajos: "Shortcuts & Keys",
@@ -4900,7 +5667,6 @@ document.addEventListener('DOMContentLoaded', () => {
       setHtml('#btn-menu-load-sample', `<i class="fa-solid fa-file-code"></i> ${d.btn_cargar_demo}`);
       setHtml('#btn-menu-save-gcode', `<i class="fa-solid fa-floppy-disk"></i> ${d.btn_guardar_gcode} <span class="shortcut">Ctrl+S</span>`);
       setHtml('#btn-menu-historial', `<i class="fa-solid fa-clock-rotate-left"></i> ${d.btn_historial}`);
-      setHtml('#btn-menu-export-log', `<i class="fa-solid fa-file-export"></i> ${d.btn_exportar_bitacora}`);
 
       // Desplegable Editar
       setHtml('#btn-menu-clear-gcode', `<i class="fa-solid fa-eraser"></i> ${d.btn_limpiar_prog}`);
@@ -4934,10 +5700,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Barra de estado
       setHtml('#btn-open-config', `<i class="fa-solid fa-gear gear-icon"></i> ${d.btn_config}`);
       setHtml('#btn-quick-unlock', `<i class="fa-solid fa-lock-open"></i> ${d.lbl_desbloquear_rapido}`);
-      const lblLimites = document.getElementById('lbl-limits-state');
-      if (lblLimites) {
-        lblLimites.textContent = estado.limitesAlcanzados ? d.lbl_limites_on : d.lbl_limites_off;
-      }
+      actualizarIndicadorLimites();
 
       // Visualizador y Rótulos Flotantes
       setTxt('#lbl-tab-tool-prefix', d.lbl_tab_tool_prefix);
@@ -5006,6 +5769,8 @@ document.addEventListener('DOMContentLoaded', () => {
       // Pestañas de navegación de configuración
       setHtml('button[data-target="cfg-tab-conexion"]', `<i class="fa-solid fa-network-wired tab-icon"></i> ${d.cfg_nav_conexion}`);
       setHtml('button[data-target="cfg-tab-maquina"]', `<i class="fa-solid fa-microchip tab-icon"></i> ${d.cfg_nav_maquina}`);
+      setHtml('button[data-target="cfg-tab-calibracion"]', `<i class="fa-solid fa-ruler-combined tab-icon"></i> ${d.cfg_nav_calibracion}`);
+      setHtml('#cfg-tab-calibracion .panel-section-title', `<i class="fa-solid fa-ruler-combined"></i> ${d.cfg_calib_title}`);
       setHtml('button[data-target="cfg-tab-emisor"]', `<i class="fa-solid fa-tower-broadcast tab-icon"></i> ${d.cfg_nav_emisor}`);
       setHtml('button[data-target="cfg-tab-ui"]', `<i class="fa-solid fa-palette tab-icon"></i> ${d.cfg_nav_ui}`);
       setHtml('button[data-target="cfg-tab-atajos"]', `<i class="fa-solid fa-keyboard tab-icon"></i> ${d.cfg_nav_atajos}`);
@@ -5055,7 +5820,6 @@ document.addEventListener('DOMContentLoaded', () => {
       setLbl('#cfg-travel-y', d.cfg_lbl_travel_y);
       setLbl('#cfg-travel-z', d.cfg_lbl_travel_z);
 
-      setHtml('#box-calibracion-pasos h4', `<i class="fa-solid fa-calculator"></i> ${d.cfg_calib_title}`);
       setTxt('#box-calibracion-pasos .form-help', d.cfg_calib_desc);
       setLbl('#calib-eje', d.cfg_calib_eje);
       setLbl('#calib-dist-comandada', d.cfg_calib_comandada);

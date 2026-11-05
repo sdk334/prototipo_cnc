@@ -11,14 +11,10 @@ import os
 import sys
 import time
 def configurar_variables_graficas():
-    """Evita el camino D3D/ANGLE forzado al recrear superficies en Windows."""
+    """Permite que Chromium use la aceleración gráfica disponible en el equipo."""
     os.environ.setdefault('QT_AUTO_SCREEN_SCALE_FACTOR', '1')
-    os.environ.setdefault('QT_OPENGL', 'software')
-    os.environ.setdefault('QT_QUICK_BACKEND', 'software')
     flags = [f for f in os.environ.get('QTWEBENGINE_CHROMIUM_FLAGS', '').split()
-             if not f.startswith(('--use-gl=', '--use-angle='))]
-    if '--disable-gpu' not in flags:
-        flags.append('--disable-gpu')
+             if f != '--disable-gpu' and not f.startswith(('--use-gl=swiftshader', '--disable-accelerated-2d-canvas'))]
     if '--log-level=3' not in flags and not any(f.startswith('--log-level=') for f in flags):
         flags.append('--log-level=3')
     os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = ' '.join(flags)
@@ -38,8 +34,7 @@ from core import ControladorGRBL, ProcesadorGCode, PuenteCNC
 
 def configurar_entorno_grafico():
     configurar_variables_graficas()
-    QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseSoftwareOpenGL)
-    QQuickWindow.setGraphicsApi(QSGRendererInterface.GraphicsApi.Software)
+    # No forzar OpenGL por software: WebEngine comparte el contexto gráfico de Qt.
 
 
 class VentanaPrincipalCNC(QMainWindow):
@@ -108,8 +103,8 @@ class VentanaPrincipalCNC(QMainWindow):
         ajustes.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         ajustes.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
         ajustes.setAttribute(QWebEngineSettings.WebAttribute.ScrollAnimatorEnabled, True)
-        ajustes.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, False)
-        ajustes.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, False)
+        ajustes.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
+        ajustes.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
         ajustes.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
         self.pagina_web.fullScreenRequested.connect(self._al_solicitar_pantalla_completa)
 

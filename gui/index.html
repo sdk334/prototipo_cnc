@@ -32,8 +32,8 @@
             title="RF-02 / C.U-02-01: Carga y parsea un archivo de código G (.nc, .gcode) desde disco"><i
               class="fa-solid fa-folder-open"></i> Abrir Archivo G-Code... <span class="shortcut">Ctrl+O</span></button>
           <button class="dropdown-item" id="btn-menu-load-sample"
-            title="Carga el programa de prueba didáctico de cajera mecanizada (pieza_01.nc)"><i
-              class="fa-solid fa-file-code"></i> Cargar pieza_01.nc (Demo)</button>
+            title="Carga el programa de prueba didáctico de corte láser (corte laser.nc)"><i
+              class="fa-solid fa-file-code"></i> Cargar corte laser.nc (Demo)</button>
           <div class="dropdown-divider"></div>
           <button class="dropdown-item" id="btn-menu-save-gcode"
             title="Guarda o exporta el programa de código G actual con sus modificaciones"><i
@@ -42,9 +42,6 @@
           <button class="dropdown-item" id="btn-menu-historial"
             title="RF-10 / C.U-06-03: Muestra el historial completo de trabajos, tiempos de ejecución y estado de las piezas"><i
               class="fa-solid fa-clock-rotate-left"></i> Historial de Trabajos Realizados</button>
-          <button class="dropdown-item" id="btn-menu-export-log"
-            title="RF-10 / C.U-06-04: Exporta el registro de eventos y telemetría de la sesión a archivo"><i
-              class="fa-solid fa-file-export"></i> Exportar Bitácora de Sesión</button>
         </div>
       </div>
 
@@ -351,7 +348,7 @@
           <div class="loaded-file-indicator">
             <i class="fa-solid fa-file-code file-icon"></i>
             <span class="file-label">ARCHIVO:</span>
-            <span class="file-name" id="lbl-loaded-filename">pieza_01.nc</span>
+            <span class="file-name" id="lbl-loaded-filename">Ninguno</span>
           </div>
         </div>
       </section>
@@ -509,7 +506,7 @@
 
               <button class="jog-btn jog-left" id="btn-jog-x-minus" title="X- Izquierda"><i
                   class="fa-solid fa-arrow-left"></i></button>
-              <div class="dpad-center-label">XY</div>
+              <button class="jog-btn jog-home-center" id="btn-jog-home" title="Home ($H): Regresar todos los ejes a casa con confirmación de finales de carrera"><i class="fa-solid fa-house"></i></button>
               <button class="jog-btn jog-right" id="btn-jog-x-plus" title="X+ Derecha"><i
                   class="fa-solid fa-arrow-right"></i></button>
 
@@ -537,6 +534,21 @@
             <button class="step-btn" data-step="10">10</button>
           </div>
 
+          <!-- Homing & Limit Switches Confirmation -->
+          <div class="jog-home-row">
+            <button type="button" class="btn-jog-home-action" id="btn-jog-home-all"
+              title="Ejecuta el ciclo de Homing ($H) regresando los ejes Z, X, Y a casa hasta activar y confirmar los finales de carrera">
+              <i class="fa-solid fa-house"></i> <span id="lbl-jog-home-btn">HOME ($H)</span>
+            </button>
+            <div class="jog-endstops-status" title="Estado de confirmación de finales de carrera por eje">
+              <span class="endstop-pill" id="fc-badge-x"><i class="fa-solid fa-circle-dot"></i> FC-X</span>
+              <span class="endstop-pill" id="fc-badge-y"><i class="fa-solid fa-circle-dot"></i> FC-Y</span>
+              <span class="endstop-pill" id="fc-badge-z"><i class="fa-solid fa-circle-dot"></i> FC-Z</span>
+            </div>
+          </div>
+          <div style="display:none">
+          </div>
+
         </div>
       </section>
 
@@ -554,7 +566,7 @@
               <span class="speed-txt">Vel. / Override</span>
               <span class="speed-val highlight-cyan" id="lbl-jog-vel">100%</span>
             </div>
-            <input type="range" class="speed-slider" id="slider-jog-speed" min="10" max="200" value="100" step="5"
+            <input type="range" class="speed-slider" id="slider-jog-speed" min="10" max="200" value="100" step="1"
               title="Modificador de velocidad y tiempo estimado (10% a 200%)">
             <div class="preset-feed-row">
               <button type="button" class="btn-preset-feed" data-feed-pct="50">50%</button>
@@ -687,6 +699,9 @@
           </button>
           <button class="cfg-tab-btn" data-target="cfg-tab-maquina">
             <i class="fa-solid fa-microchip tab-icon"></i> Info de la Máquina
+          </button>
+          <button class="cfg-tab-btn" data-target="cfg-tab-calibracion">
+            <i class="fa-solid fa-ruler-combined tab-icon"></i> Calibración de Pasos
           </button>
           <button class="cfg-tab-btn" data-target="cfg-tab-emisor">
             <i class="fa-solid fa-tower-broadcast tab-icon"></i> Ajustes Emisor
@@ -828,16 +843,25 @@
               </div>
             </div>
 
+          </div>
+
+          <!-- 2.5 Asistente Didáctico de Calibración de Pasos/mm -->
+          <div class="cfg-panel" id="cfg-tab-calibracion">
+            <h3 class="panel-section-title"><i class="fa-solid fa-ruler-combined"></i> Asistente de Calibración de Pasos/mm ($100, $101, $102)</h3>
             <!-- Asistente Didáctico de Calibración de Pasos/mm -->
             <div class="calibration-box mt-3" id="box-calibracion-pasos"
               style="background: rgba(0, 229, 255, 0.05); border: 1px solid rgba(0, 229, 255, 0.25); border-radius: 6px; padding: 12px; margin-top: 15px;">
-              <h4 style="margin: 0 0 8px 0; font-size: 0.88rem; color: var(--cyan-primary);"><i
-                  class="fa-solid fa-calculator"></i> Asistente de Calibración de Pasos/mm ($100, $101, $102)</h4>
+
+
               <p class="form-help" style="margin-bottom: 10px;">Si al ordenar mover 100 mm la máquina se desplaza una
                 distancia diferente, calcula el valor exacto aquí:</p>
               <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
                 <div class="form-group">
                   <label>Eje a Calibrar:</label>
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 5px;">
+                    <span id="lbl-calib-pasos-base" style="font-size: 0.72rem; color: var(--text-muted); white-space: nowrap;">Base ($100):</span>
+                    <input type="number" class="form-control" id="calib-pasos-base" value="250.000" step="0.001" min="0.001" style="padding: 2px 6px; height: 24px; width: 95px; font-size: 0.76rem; font-family: var(--font-mono);" title="Pasos/mm actuales con los que se traza la línea de prueba">
+                  </div>
                   <select class="form-control" id="calib-eje">
                     <option value="X">Eje X ($100)</option>
                     <option value="Y">Eje Y ($101)</option>
@@ -846,17 +870,60 @@
                 </div>
                 <div class="form-group">
                   <label>Distancia Comandada (mm):</label>
-                  <input type="number" class="form-control" id="calib-dist-comandada" value="100.0" step="0.1">
+                  <input type="number" class="form-control" id="calib-dist-comandada" value="50.0" step="0.1">
+                  <div style="display: flex; gap: 4px; margin-top: 5px;">
+                    <button type="button" class="btn-secondary-action btn-calib-preset" data-dist="10" style="padding: 2px 7px; font-size: 0.72rem;">10 mm</button>
+                    <button type="button" class="btn-secondary-action btn-calib-preset" data-dist="20" style="padding: 2px 7px; font-size: 0.72rem;">20 mm</button>
+                    <button type="button" class="btn-secondary-action btn-calib-preset" data-dist="50" style="padding: 2px 7px; font-size: 0.72rem;">50 mm</button>
+                    <button type="button" class="btn-secondary-action btn-calib-preset" data-dist="100" style="padding: 2px 7px; font-size: 0.72rem;">100 mm</button>
+                  </div>
                 </div>
                 <div class="form-group">
                   <label>Distancia Real Medida (mm):</label>
-                  <input type="number" class="form-control" id="calib-dist-real" value="100.0" step="0.05">
+                  <input type="number" class="form-control" id="calib-dist-real" value="50.0" step="0.05">
+                  <small id="lbl-preview-calibracion" style="display: block; margin-top: 5px; font-family: var(--font-mono); font-size: 0.74rem; color: var(--cyan-primary);"></small>
                 </div>
               </div>
               <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px;">
-                <button type="button" class="btn-secondary-action" id="btn-calcular-pasos"
-                  style="padding: 6px 14px; font-size: 0.8rem;"><i class="fa-solid fa-arrows-rotate"></i> Calcular y
-                  Aplicar</button>
+              </div>
+              <div class="form-grid" style="grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+                <div class="form-group">
+                  <label>Velocidad de Avance del Trazo (F mm/min):</label>
+                  <input type="number" class="form-control" id="calib-feed" value="600" step="50" min="10" max="5000">
+                  <div style="display: flex; gap: 4px; margin-top: 5px;">
+                    <button type="button" class="btn-secondary-action btn-calib-feed-preset" data-feed="100" style="padding: 2px 7px; font-size: 0.72rem;">100</button>
+                    <button type="button" class="btn-secondary-action btn-calib-feed-preset" data-feed="300" style="padding: 2px 7px; font-size: 0.72rem;">300</button>
+                    <button type="button" class="btn-secondary-action btn-calib-feed-preset" data-feed="600" style="padding: 2px 7px; font-size: 0.72rem;">600</button>
+                    <button type="button" class="btn-secondary-action btn-calib-feed-preset" data-feed="1000" style="padding: 2px 7px; font-size: 0.72rem;">1000 mm/min</button>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label id="lbl-calib-tool-speed">Potencia / Velocidad de Herramienta (% Luz / RPM):</label>
+                  <input type="number" class="form-control" id="calib-tool-speed" value="100" step="5" min="1" max="24000">
+                  <div style="display: flex; gap: 4px; margin-top: 5px;">
+                    <button type="button" class="btn-secondary-action btn-calib-power-preset" data-power="25" style="padding: 2px 7px; font-size: 0.72rem;">25%</button>
+                    <button type="button" class="btn-secondary-action btn-calib-power-preset" data-power="50" style="padding: 2px 7px; font-size: 0.72rem;">50%</button>
+                    <button type="button" class="btn-secondary-action btn-calib-power-preset" data-power="80" style="padding: 2px 7px; font-size: 0.72rem;">80%</button>
+                    <button type="button" class="btn-secondary-action btn-calib-power-preset" data-power="100" style="padding: 2px 7px; font-size: 0.72rem;">100%</button>
+                  </div>
+                </div>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(0, 229, 255, 0.15);">
+                <label style="display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--text-bright); cursor: pointer;">
+                  <input type="checkbox" id="calib-usar-herramienta" checked>
+                  <span>Activar herramienta al trazar (Láser / Lápiz / Fresa) para marcar la línea a medir</span>
+                </label>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <button type="button" class="btn-primary-save" id="btn-calib-trazar" style="padding: 6px 12px; font-size: 0.78rem;"><i class="fa-solid fa-ruler-horizontal"></i> 1. Trazar Línea de Prueba</button>
+                  <button type="button" class="btn-secondary-action" id="btn-calib-regresar" style="padding: 6px 10px; font-size: 0.78rem;" title="Regresar el eje al punto inicial (0 mm)"><i class="fa-solid fa-rotate-left"></i> Regresar a 0</button>
+                </div>
+              </div>
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px;">
+              </div>
+              <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px;">
+                <button type="button" class="btn-secondary-action" id="btn-calcular-pasos" style="padding: 6px 14px; font-size: 0.8rem; flex-shrink: 0; white-space: nowrap;"><i class="fa-solid fa-arrows-rotate"></i> 2. Calcular y Aplicar</button>
+
+
                 <span id="lbl-resultado-calibracion"
                   style="font-family: var(--font-mono); font-size: 0.82rem; color: var(--green-start);"></span>
               </div>
@@ -2456,7 +2523,7 @@
               <div class="tutorial-tip-card">
                 <h4><i class="fa-solid fa-plug text-cyan"></i> Detección Automática (Hot-Plug)</h4>
                 <p>El sistema escanea periódicamente los puertos COM disponibles. Al conectar el cable USB del CNC, el
-                  enlace se activa automáticamente.</p>
+                  puerto aparece en la lista. Selecciona el puerto COM para iniciar la conexión.</p>
               </div>
               <div class="tutorial-tip-card">
                 <h4><i class="fa-solid fa-laptop-code text-cyan"></i> Modo Virtual Didáctico</h4>

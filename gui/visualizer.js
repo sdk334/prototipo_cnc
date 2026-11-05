@@ -134,6 +134,7 @@ class VisualizadorCNC {
   marcarEstaticoSucio() {
     this.necesitaRedibujarEstatico = true;
     this._cacheVisiblesValida = false;
+    this._cacheVisibles = null;
     this._progInvalido = true;
     this.actualizarMatrizProyeccion();
   }
@@ -164,6 +165,7 @@ class VisualizadorCNC {
                             Math.sqrt(4194304 / (ancho * alto)));
     const anchoDevice = Math.max(1, Math.floor(ancho * escala));
     const altoDevice = Math.max(1, Math.floor(alto * escala));
+    const primerTamano = !this.anchoPantalla;
     const cambio = this.anchoPantalla !== ancho || this.altoPantalla !== alto ||
                    this.lienzo.width !== anchoDevice || this.lienzo.height !== altoDevice;
     if (!cambio) return;
@@ -175,6 +177,7 @@ class VisualizadorCNC {
     this.contextoEstatico.setTransform(anchoDevice / ancho, 0, 0, altoDevice / alto, 0, 0);
     this.anchoPantalla = ancho;
     this.altoPantalla = alto;
+    if (primerTamano && !this.limitesMaterial) this.ajustarVistaAMesa();
     this.marcarEstaticoSucio();
     if (this.contexto && typeof this.contexto.save === 'function' && typeof this.renderizar === 'function') {
       this.renderizar();
@@ -282,6 +285,7 @@ class VisualizadorCNC {
   // Inicializa el Cubo de Navegación 3D (ViewCube) y vincula eventos de arrastre y clics
   iniciarCuboNavegacion() {
     const stage = document.getElementById('viewcube-stage');
+    if (typeof document.getElementById !== 'function') return;
     const cube = document.getElementById('viewcube-cube');
     if (!stage || !cube) return;
 
@@ -425,6 +429,7 @@ class VisualizadorCNC {
 
   // Sincroniza la rotación CSS 3D del cubo con la orientación actual de la cámara sin deformación
   actualizarCuboOrientacion() {
+    if (typeof document.getElementById !== 'function') return;
     const cube = document.getElementById('viewcube-cube');
     if (!cube) return;
 
@@ -460,6 +465,8 @@ class VisualizadorCNC {
   reiniciarVista() {
     if (this.limitesMaterial && this.limitesMaterial.maxX > this.limitesMaterial.minX) {
       this.ajustarVistaAPieza();
+    } else if (this.anchoPantalla) {
+      this.ajustarVistaAMesa();
     } else {
       this.zoom = 1.0;
       this.desplazamientoX = -35;
@@ -471,6 +478,22 @@ class VisualizadorCNC {
       this.marcarEstaticoSucio();
       this.solicitarRenderizado();
     }
+  }
+
+  // Sin programa cargado: encuadra la mesa completa para que la herramienta (origen) quede visible en la esquina
+  ajustarVistaAMesa() {
+    if (!this.anchoPantalla) return;
+    const anchoMesa = Math.max(10, this.limitesMaquina?.maxX || 300);
+    const altoMesa = Math.max(10, this.limitesMaquina?.maxY || 200);
+    this.centroPieza = { x: anchoMesa / 2, y: altoMesa / 2, z: 0 };
+    const escalaOptima = Math.min((this.anchoPantalla * 0.7) / anchoMesa, (this.altoPantalla * 0.7) / altoMesa);
+    this.zoom = Math.max(0.1, Math.min(250.0, escalaOptima / 1.65));
+    this.desplazamientoX = 0;
+    this.desplazamientoY = 0;
+    this.actualizarSuperposicionZoom();
+    this.actualizarCuboOrientacion();
+    this.marcarEstaticoSucio();
+    this.solicitarRenderizado();
   }
 
   // Encuadra y centra automáticamente la pieza en pantalla
@@ -536,6 +559,7 @@ class VisualizadorCNC {
   }
 
   actualizarSuperposicionZoom() {
+    if (typeof document.getElementById !== 'function') return;
     const etiquetaZoom = document.getElementById('lbl-view-zoom');
     if (etiquetaZoom) {
       const porcentaje = Math.round(this.zoom * 100);
@@ -697,24 +721,8 @@ class VisualizadorCNC {
 
   // Trayectoria demostrativa inicial
   cargarTrayectoriaEjemplo() {
-    const gcodeInicial = [
-      "G21 ; Unidades metricas en milimetros",
-      "G90 ; Posicionamiento absoluto",
-      "G94 ; Avance en mm/min",
-      "G0 Z5.0",
-      "M3 S12000 ; Spindle ON",
-      "G0 X110.0 Y140.0",
-      "G1 Z-1.0 F300",
-      "G1 X210.0 F800",
-      "G1 Y220.0",
-      "G1 X110.0",
-      "G1 Y140.0",
-      "G0 Z5.0",
-      "M5 ; Spindle OFF",
-      "G0 X0 Y0",
-      "M30"
-    ];
-    this.cargarTrayectoriaDesdeGCode(gcodeInicial);
+    // Sin programa de ejemplo: el visor permanece vacío hasta que el usuario cargue un G-code.
+    this.cargarTrayectoriaDesdeGCode([]);
   }
 
   // Analiza y genera la geometría 2D/3D directamente desde G-Code
@@ -736,42 +744,50 @@ class VisualizadorCNC {
     let terminado = false;
     const rechazar = mensaje => {
       this.errorGcode = mensaje;
-      this.trayectoria = [];
-      this.marcarEstaticoSucio();
-      this.solicitarRenderizado();
+      this.limpiarTrayectoria();
     };
 
     let minCorteX = Infinity, maxCorteX = -Infinity;
     let minCorteY = Infinity, maxCorteY = -Infinity;
     let minCorteZ = Infinity, maxCorteZ = -Infinity;
 
+    const tokenRE = /([A-Z])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))/g;
+    const soportados = new Set([0,1,2,3,4,17,20,21,40,49,54,80,90,91,91.1,94]);
+    const soportadosM = new Set([0,1,2,3,4,5,6,7,8,9,30]);
+    const gruposModales = [[0,1,2,3,80], [20,21], [90,91], [0,1,2,3,4]];
     for (let idxLinea = 0; idxLinea < lineas.length; idxLinea++) {
       const rawLinea = lineas[idxLinea];
       let linea = rawLinea.replace(/\(.*?\)/g, '').split(';')[0].trim().toUpperCase();
       if (!linea) continue;
 
-      const tokenRE = /([A-Z])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))/g;
-      const tokens = [...linea.matchAll(tokenRE)].map(m => [m[1], Number(m[2])]);
-      const gs = tokens.filter(([k]) => k === 'G').map(([,v]) => v);
-      const soportados = [0,1,2,3,4,17,20,21,40,49,54,80,90,91,91.1,94];
-      const ms = tokens.filter(([k]) => k === 'M').map(([,v]) => v);
-      const repetidos = [...'XYZIJRFSNT'].some(k => tokens.filter(([letra]) => letra === k).length > 1);
-      const incompatible = [[0,1,2,3,80], [20,21], [90,91], [0,1,2,3,4]].some(grupo => gs.filter(g => grupo.includes(g)).length > 1);
+      const tokens = Array.from(linea.matchAll(tokenRE), m => [m[1], Number(m[2])]);
+      const gs = [], ms = [], parametros = Object.create(null);
+      let repetidos = false;
+      for (const [k, v] of tokens) {
+        if (k === 'G') gs.push(v);
+        if (k === 'M') ms.push(v);
+        if ('XYZIJRFSNT'.includes(k)) {
+          if (Object.hasOwn(parametros, k)) repetidos = true;
+        }
+        parametros[k] = v;
+      }
+      const incompatible = gruposModales.some(grupo => {
+        let cantidad = 0;
+        return gs.some(g => grupo.includes(g) && ++cantidad > 1);
+      });
       if ((terminado && linea !== '%') || (linea !== '%' && linea.replace(tokenRE, '').trim()) || repetidos || incompatible ||
-          gs.some(g => !soportados.includes(g)) || ms.some(m => ![0,1,2,3,4,5,6,7,8,9,30].includes(m)) ||
-          tokens.some(([k,v]) => !'GMXYZIJRFSPNT'.includes(k) || !Number.isFinite(v) || (['F'].includes(k) && v <= 0) ||
-            (['S','T','N'].includes(k) && v < 0))) {
+          gs.some(g => !soportados.has(g)) || ms.some(m => !soportadosM.has(m)) ||
+          tokens.some(([k,v]) => !'GMXYZIJRFSPNT'.includes(k) || !Number.isFinite(v) || (k === 'F' && v <= 0) ||
+            ('STN'.includes(k) && v < 0))) {
         rechazar(`Línea ${idxLinea+1}: código inválido o no soportado (plano XY/G54).`);
         return;
       }
       terminado = ms.some(m => [2,30].includes(m));
-      linea = tokens.map(([k,v]) => `${k}${v}`).join(' ');
       if (gs.includes(90)) modoAbsoluto = true;
       if (gs.includes(91)) modoAbsoluto = false;
       if (gs.includes(20)) unidad = 25.4;
       if (gs.includes(21)) unidad = 1;
-      const palabraF = tokens.find(([k]) => k === 'F');
-      if (palabraF) feed = palabraF[1] * unidad;
+      if (Object.hasOwn(parametros, 'F')) feed = parametros.F * unidad;
       for (const g of gs) if ([0,1,2,3,80].includes(g)) modoMovimiento = `G${g}`;
       if (gs.includes(4)) {
         if (!tokens.some(([k,v]) => k === 'P' && v >= 0) || tokens.some(([k]) => 'XYZ'.includes(k))) {
@@ -785,32 +801,29 @@ class VisualizadorCNC {
         rechazar(`Línea ${idxLinea+1}: parámetros incompatibles con el modo de movimiento.`); return;
       }
 
-      const matchX = linea.match(/X([-+]?\d*\.?\d+)/);
-      const matchY = linea.match(/Y([-+]?\d*\.?\d+)/);
-      const matchZ = linea.match(/Z([-+]?\d*\.?\d+)/);
 
       let objetivoX = posX;
       let objetivoY = posY;
       let objetivoZ = posZ;
       let huboCoordenada = false;
 
-      if (matchX) {
-        const val = parseFloat(matchX[1]) * unidad;
+      if (Object.hasOwn(parametros, 'X')) {
+        const val = parametros.X * unidad;
         objetivoX = modoAbsoluto ? val : posX + val;
         huboCoordenada = true;
       }
-      if (matchY) {
-        const val = parseFloat(matchY[1]) * unidad;
+      if (Object.hasOwn(parametros, 'Y')) {
+        const val = parametros.Y * unidad;
         objetivoY = modoAbsoluto ? val : posY + val;
         huboCoordenada = true;
       }
-      if (matchZ) {
-        const val = parseFloat(matchZ[1]) * unidad;
+      if (Object.hasOwn(parametros, 'Z')) {
+        const val = parametros.Z * unidad;
         objetivoZ = modoAbsoluto ? val : posZ + val;
         huboCoordenada = true;
       }
 
-      const arcoCompleto = ['G2', 'G3'].includes(modoMovimiento) && tokens.some(([k]) => ['I','J'].includes(k));
+      const arcoCompleto = ['G2', 'G3'].includes(modoMovimiento) && (Object.hasOwn(parametros, 'I') || Object.hasOwn(parametros, 'J'));
       if (!huboCoordenada && !arcoCompleto) continue;
 
       const dx = objetivoX - posX;
@@ -821,22 +834,22 @@ class VisualizadorCNC {
       }
 
       if (modoMovimiento === 'G2' || modoMovimiento === 'G3') {
-        const matchI = linea.match(/I([-+]?\d*\.?\d+)/);
-        const matchJ = linea.match(/J([-+]?\d*\.?\d+)/);
-        const matchR = linea.match(/R([-+]?\d*\.?\d+)/);
+        const tieneI = Object.hasOwn(parametros, 'I');
+        const tieneJ = Object.hasOwn(parametros, 'J');
+        const tieneR = Object.hasOwn(parametros, 'R');
 
         let cx = posX, cy = posY, radio = 0;
         let arcoValido = false;
 
-        if (matchI || matchJ) {
-          const i = matchI ? parseFloat(matchI[1]) * unidad : 0;
-          const j = matchJ ? parseFloat(matchJ[1]) * unidad : 0;
+        if (tieneI || tieneJ) {
+          const i = tieneI ? parametros.I * unidad : 0;
+          const j = tieneJ ? parametros.J * unidad : 0;
           cx = posX + i;
           cy = posY + j;
           radio = Math.hypot(i, j);
-          arcoValido = radio > 0.000001 && !matchR && Math.abs(Math.hypot(objetivoX-cx, objetivoY-cy)-radio) <= Math.max(.005, .001*radio);
-        } else if (matchR) {
-          radio = parseFloat(matchR[1]) * unidad;
+          arcoValido = radio > 0.000001 && !tieneR && Math.abs(Math.hypot(objetivoX-cx, objetivoY-cy)-radio) <= Math.max(.005, .001*radio);
+        } else if (tieneR) {
+          radio = parametros.R * unidad;
           const dXm = (objetivoX - posX) / 2;
           const dYm = (objetivoY - posY) / 2;
           const distMitad = Math.hypot(dXm, dYm);
@@ -923,6 +936,9 @@ class VisualizadorCNC {
     this.trayectoria = nuevaTrayectoria;
     this.totalLineasGcode = lineas.length;
     this.lineaActualEjecucion = -1;
+    this.indiceSegmentoActivo = -1;
+    this.progresoSegmentoActivo = 0.0;
+    this._progInvalido = true;
     this.evaluarLimitesPieza();
 
     if (minCorteX !== Infinity && maxCorteX !== -Infinity) {
@@ -938,8 +954,8 @@ class VisualizadorCNC {
         z: 0
       };
     } else {
-      this.limitesMaterial = { minX: 95, maxX: 225, minY: 125, maxY: 235 };
-      this.centroPieza = { x: 160, y: 180, z: 0 };
+      this.limitesMaterial = null; // Sin trayectoria de corte no hay bloque de material
+      this.centroPieza = { x: (this.limitesMaquina?.maxX || 300) / 2, y: (this.limitesMaquina?.maxY || 200) / 2, z: 0 };
     }
 
     this.limitesZ = {
@@ -1224,7 +1240,8 @@ class VisualizadorCNC {
 
   // Representa el bloque de material (2D o prisma extruido 3D)
   dibujarMaterial(ctx) {
-    const limites = this.limitesMaterial || { minX: 95, maxX: 225, minY: 125, maxY: 235 };
+    if (!this.limitesMaterial) return;
+    const limites = this.limitesMaterial;
     const minZ = (this.limitesZ && this.limitesZ.minZ < 0) ? this.limitesZ.minZ : -2.5;
 
     if (this.modoVista === 'XY') {
@@ -1808,32 +1825,34 @@ class VisualizadorCNC {
         return;
       }
 
-      // Si la ventana o pestaña está en segundo plano, evitar consumo innecesario
+      // No acumular tiempo mientras la pestaña o un modal suspende la animación.
       if (document.hidden) {
+        tiempoPrevio = tiempoActual;
         this.animacionGiroId = requestAnimationFrame(pasoAnimacion);
         return;
       }
 
       if (document.querySelector('.modal-backdrop:not(.hidden)')) {
+        tiempoPrevio = tiempoActual;
         this.animacionGiroId = requestAnimationFrame(pasoAnimacion);
         return;
       }
 
-      const dt = Math.min(100, Math.max(1, tiempoActual - tiempoPrevio));
+      // Limitar pausas largas: evitar que la herramienta salte al volver de un
+      // bloqueo momentáneo del hilo principal, manteniendo el giro en grados/segundo.
+      const dt = Math.min(50, Math.max(0, tiempoActual - tiempoPrevio));
       tiempoPrevio = tiempoActual;
 
-      const factorFrame = dt / 16.67;
-      this.anguloGiroHerramienta = (this.anguloGiroHerramienta + this.velocidadGiroHerramienta * factorFrame) % 360;
+      this.anguloGiroHerramienta = (this.anguloGiroHerramienta + this.velocidadGiroHerramienta * dt / 16.67) % 360;
 
-      // Interpolación ultra-suave (LERP) de la posición física de la fresa a 60 FPS
-      // Elimina por completo los micro-tirones y saltos producidos por temporizadores asíncronos
+      // Interpolación exponencial independiente de la tasa de refresco.
       const dx = this.posicionObjetivo.x - this.posicionHerramienta.x;
       const dy = this.posicionObjetivo.y - this.posicionHerramienta.y;
       const dz = this.posicionObjetivo.z - this.posicionHerramienta.z;
       const distSq = dx * dx + dy * dy + dz * dz;
 
       if (distSq > 0.000001) {
-        const factorLerp = Math.min(1.0, Math.max(0.18, dt * 0.035));
+        const factorLerp = 1 - Math.exp(-dt / 50);
         this.posicionHerramienta.x += dx * factorLerp;
         this.posicionHerramienta.y += dy * factorLerp;
         this.posicionHerramienta.z += dz * factorLerp;
@@ -2635,6 +2654,13 @@ class VisualizadorCNC {
   limpiarTrayectoria() {
     this.trayectoria = [];
     this.envolventePieza = null;
+    this.limitesMaterial = null;
+    this.totalLineasGcode = 0;
+    this.tiempoEstimadoSegundos = 0;
+    this.lineaActualEjecucion = -1;
+    this.indiceSegmentoActivo = -1;
+    this.progresoSegmentoActivo = 0;
+    this.evaluarLimitesPieza();
     this.marcarEstaticoSucio();
     this.solicitarRenderizado();
   }
@@ -2695,6 +2721,9 @@ class VisualizadorCNC {
     }
     if (maxY > limY + 0.01) {
       ejesExcedidos.push(`Y mayor a ${limY} mm (${maxY.toFixed(2)} mm, exceso +${(maxY - limY).toFixed(2)} mm)`);
+    }
+    if (maxZ > limZ + 0.01) {
+      ejesExcedidos.push(`Z altura excede ${limZ} mm (${maxZ.toFixed(2)} mm)`);
     }
     if (minZ < -limZ - 0.01) {
       ejesExcedidos.push(`Z profundidad excede ${limZ} mm (${minZ.toFixed(2)} mm)`);

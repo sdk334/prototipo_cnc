@@ -1815,6 +1815,97 @@ body.resizing-col * {
   box-shadow: 0 0 10px var(--cyan-glow);
 }
 
+.jog-home-center {
+  background-color: rgba(0, 229, 255, 0.08);
+  border-color: rgba(0, 229, 255, 0.35);
+  color: var(--cyan-primary);
+}
+
+.jog-home-center:hover {
+  background-color: rgba(0, 229, 255, 0.2);
+  border-color: var(--cyan-primary);
+  color: #ffffff;
+}
+
+.jog-home-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-color);
+}
+
+.btn-jog-home-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background-color: rgba(0, 229, 255, 0.1);
+  border: 1px solid rgba(0, 229, 255, 0.4);
+  color: var(--cyan-primary);
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-jog-home-action:hover {
+  background-color: var(--cyan-primary);
+  color: #081217;
+  box-shadow: 0 0 10px var(--cyan-glow);
+}
+
+.btn-jog-home-action.is-homing,
+.jog-home-center.is-homing {
+  background-color: rgba(245, 158, 11, 0.2);
+  border-color: #f59e0b;
+  color: #fbbf24;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.35);
+}
+
+.jog-endstops-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.endstop-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+
+.endstop-pill.searching {
+  background-color: rgba(245, 158, 11, 0.15);
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.endstop-pill.confirmed {
+  background-color: rgba(16, 185, 129, 0.16);
+  border-color: #10b981;
+  color: #34d399;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.25);
+}
+
 /* Speed Slider */
 .jog-speed-control {
   margin-top: 8px;
@@ -3100,6 +3191,11 @@ body.resizing-col * {
   animation: spin-fan 0.8s infinite linear;
 }
 
+/* El diodo láser indica actividad sin girar como el ventilador del husillo. */
+.btn-spindle-toggle.modo-laser.active i.spindle-icon {
+  animation: none;
+}
+
 @keyframes spin-fan {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -3761,3 +3857,8 @@ body.is-fullscreen .btn-win-restore {
 }
 
 
+
+/* Indicador de límites: clicable y resaltado cuando los límites duros están activos */
+.pill-limits { cursor: pointer; transition: border-color .15s, background .15s; }
+.pill-limits.limits-on { border-color: #00e676; background: rgba(0, 230, 118, 0.10); }
+.pill-limits.limits-on .limits-label { color: #00e676; font-weight: 600; }

@@ -25,6 +25,7 @@ class PuenteCNC(QObject):
     """Puente de comunicación bidireccional entre la GUI Web y el núcleo Python."""
 
     # Señales emitidas hacia JavaScript
+    senial_calibracion = pyqtSignal(str, bool)
     senial_linea_confirmada = pyqtSignal(int, bool)
     senial_resultado_programa = pyqtSignal(str)
     senial_estado = pyqtSignal(str)              # JSON con estado de máquina y coordenadas DRO
@@ -45,6 +46,7 @@ class PuenteCNC(QObject):
         self._ruta_historial_antiguo = os.path.join(raiz, 'historial_trabajos.json') if ruta_historial is None else None
 
         # Vincular callbacks del controlador con señales Qt
+        self.controlador.cb_calibracion_confirmada = self.senial_calibracion.emit
         self.controlador.cb_linea_confirmada = self._al_confirmar_linea
         self.controlador.cb_resultado_programa = self.senial_resultado_programa.emit
         self.controlador.cb_estado_actualizado = self._al_actualizar_estado
@@ -83,6 +85,7 @@ class PuenteCNC(QObject):
         except Exception:
             pass
         if hasattr(self, 'controlador') and self.controlador:
+            self.controlador.cb_calibracion_confirmada = None
             self.controlador.cb_estado = None
             self.controlador.cb_linea_confirmada = None
             self.controlador.cb_resultado_programa = None
@@ -142,7 +145,9 @@ class PuenteCNC(QObject):
         puertos = self.controlador.escanear_puertos()
         nombres = [p["puerto"] for p in puertos if p["puerto"] != "SIMULADOR_VIRTUAL"]
 
-        if nombres != self._nombres_puertos_previos:
+        firma = sorted((p["puerto"], p["etiqueta"]) for p in puertos)
+        if firma != getattr(self, '_firma_puertos_previa', None):
+            self._firma_puertos_previa = firma
             nuevos = set(nombres) - set(self._nombres_puertos_previos)
             removidos = set(self._nombres_puertos_previos) - set(nombres)
             self._nombres_puertos_previos = list(nombres)
@@ -154,9 +159,7 @@ class PuenteCNC(QObject):
                 info = next((p for p in puertos if p["puerto"] == n), None)
                 if info:
                     self._emitir_seguro(self.senial_consola, "c-system", f"[HOT-PLUG] Dispositivo detectado: {info['etiqueta']}.")
-                    # Conectar automáticamente si es un dispositivo USB CNC y no estamos en hardware real
-                    if info.get("tipo") == "USB_CNC" and (not self.controlador.esta_conectado or self.controlador.modo_virtual):
-                        self.conectar(info["puerto"], 115200)
+                    # Sin conexión automática: el usuario debe elegir el puerto COM explícitamente en la interfaz.
 
             for r in removidos:
                 self._emitir_seguro(self.senial_consola, "c-alarm", f"[HOT-PLUG] Dispositivo en {r} desconectado físicamente del equipo.")
@@ -205,6 +208,10 @@ class PuenteCNC(QObject):
     def desconectar(self):
         """Desconecta el puerto serial activo."""
         self.controlador.desconectar()
+
+    @pyqtSlot(str, float, result=bool)
+    def aplicarCalibracion(self, eje: str, valor: float):
+        return self.controlador.aplicar_calibracion(eje, valor)
 
     @pyqtSlot(str)
     def enviarMDI(self, comando: str):

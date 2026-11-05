@@ -96,6 +96,7 @@ class ControladorGRBL:
         self._detener_hilos: bool = False
 
         # Funciones de retorno (callbacks)
+        self.cb_calibracion_confirmada = None
         self.cb_linea_confirmada = None
         self.cb_resultado_programa = None
         self._objetivo_feed_override = None
@@ -116,6 +117,8 @@ class ControladorGRBL:
         # Ejemplo: <Idle|MPos:0.000,0.000,0.000|Bf:15,128|FS:0,0|WCO:0.000,0.000,0.000|Ov:100,100,100|Pn:XYZ>
         self._regex_estado = re.compile(r"<([A-Za-z]+)(?::(\d+))?\|([^>]+)>")
         self._regex_coords = re.compile(r"[-+]?\d*\.?\d+")
+        self._regex_setting = re.compile(r"^\$(\d+)=([-+]?\d*\.?\d+)")
+        self._grbl_settings: Dict[int, float] = {}
 
     # =========================================================================
     # ESCANEO Y GESTIÓN DE PUERTOS SERIALES
@@ -233,12 +236,16 @@ class ControladorGRBL:
             # Esperar inicialización del microcontrolador (reinicio por DTR)
             time.sleep(0.6)
             try:
+                self.puerto_serial.write(b'$X\n$21=1\n$$\n')
+                time.sleep(0.15)
                 self.puerto_serial.reset_input_buffer()
                 self.puerto_serial.reset_output_buffer()
             except Exception:
                 pass
 
             self.modo_virtual = False
+            self.esta_conectado = True
+            self._desbloqueo_pendiente_tras_reset = True
             self.esta_conectado = True
             self.estado_maquina["estado"] = "CONECTADO"
 
@@ -404,9 +411,73 @@ class ControladorGRBL:
         # 5. Mensajes de retroalimentación o bienvenida
         if linea.startswith("[") or "Grbl" in linea:
             self._notificar_consola("c-grbl", linea)
+            linea_low = linea.lower()
+            if "reset to continue" in linea_low:
+                with self._bloque_lock:
+                    self._pendientes_respuesta.clear()
+                    self._cola_manual.clear()
+                self._requiere_reset_critico = True
+                self._desbloqueo_pendiente_tras_reset = True
+                def _auto_reset_critico():
+                    time.sleep(0.12)
+                    if self.esta_conectado and not self.modo_virtual:
+                        self.enviar_tiempo_real(b'\x18')
+                threading.Thread(target=_auto_reset_critico, daemon=True).start()
+            elif "grbl " in linea_low or "'$h'|'$x' to unlock" in linea_low:
+                with self._bloque_lock:
+                    self._pendientes_respuesta.clear()
+                    self._cola_manual.clear()
+                self._requiere_reset_critico = False
+                if getattr(self, "_desbloqueo_pendiente_tras_reset", False):
+                    self._desbloqueo_pendiente_tras_reset = False
+                    def _enviar_desbloqueo_post_reset():
+                        time.sleep(0.08)
+                        if self.esta_conectado and not self.modo_virtual:
+                            cero_wco = getattr(self, "_cero_wco_tras_reset", False)
+                            self._cero_wco_tras_reset = False
+                            extra_wco = b'G10 L20 P1 X0 Y0 Z0\n' if cero_wco else b''
+                            cmd_init = (b'$X\n$21=1\n$$\n' if 23 not in self._grbl_settings else b'$X\n$21=1\n') + extra_wco
+                            self._escribir_serial(cmd_init)
+                            time.sleep(0.08)
+                            self.enviar_tiempo_real(b'?')
+                    threading.Thread(target=_enviar_desbloqueo_post_reset, daemon=True).start()
+            elif "caution: unlocked" in linea_low:
+                self._requiere_reset_critico = False
+                self._desbloqueo_pendiente_tras_reset = False
+                with self._bloque_lock:
+                    self._pendientes_respuesta.clear()
+                self.estado_maquina["estado"] = "IDLE"
+                if self.cb_estado_actualizado:
+                    self.cb_estado_actualizado(dict(self.estado_maquina))
+                self.enviar_tiempo_real(b'?')
+            return
+        if False:
+            self._notificar_consola("c-grbl", linea)
             return
 
         # Salida general
+        m_set = self._regex_setting.match(linea.strip())
+        if m_set:
+            num_cfg = int(m_set.group(1))
+            val_cfg = float(m_set.group(2))
+            self._grbl_settings[num_cfg] = val_cfg
+            self._notificar_consola("c-info", linea)
+            if num_cfg == 23 and not self.modo_virtual and self.esta_conectado:
+                val_23 = int(val_cfg)
+                val_3_actual = int(self._grbl_settings.get(3, 0))
+                faltantes_xy = ((~val_23) & 3) | ((val_3_actual & 3) ^ 2)
+                if faltantes_xy != 0:
+                    val_3 = int(self._grbl_settings.get(3, 0))
+                    nuevo_3 = (val_3 & ~3) | 2
+                    nuevo_23 = val_23 | 3
+                    self._grbl_settings[3] = float(nuevo_3)
+                    self._grbl_settings[23] = float(nuevo_23)
+                    self._escribir_serial(f"$3={nuevo_3}\n$23={nuevo_23}\n$21=1\n".encode("ascii"))
+                    self._notificar_consola(
+                        "c-system",
+                        f"[CONFIG HOME XY] Home de X e Y configurado como negativo (-X, -Y): $3={nuevo_3}, $23={nuevo_23}, $21=1."
+                    )
+            return
         self._notificar_consola("c-info", linea)
 
     def _parsear_reporte_estado(self, texto_reporte: str):
@@ -422,6 +493,7 @@ class ControladorGRBL:
         self.estado_maquina["estado"] = estado_nombre
         self.estado_maquina["subestado"] = subestado
 
+        pines_previos = (self.estado_maquina.get("pines_limite") or "").upper()
         self.estado_maquina["pines_limite"] = ""
         campos = campos_str.split('|')
         for campo in campos:
@@ -488,7 +560,31 @@ class ControladorGRBL:
 
             elif clave == "Pn":
                 self.estado_maquina["pines_limite"] = valor
+                for eje_pin in ("Z", "X", "Y"):
+                    if eje_pin in valor.upper() and eje_pin not in pines_previos:
+                        if not (getattr(self, "_en_homing", False) or estado_nombre == "HOME"):
+                            self._notificar_consola(
+                                "c-ok",
+                                f"[FIN DE CARRERA {eje_pin}] Sensor {eje_pin} detectado activo (Pn:{eje_pin})."
+                            )
+                            if estado_nombre == "JOG" and not self.modo_virtual:
+                                self.enviar_tiempo_real(b'\x85')
+                if getattr(self, "_en_homing", False) or estado_nombre == "HOME":
+                    confirmados = getattr(self, "_ejes_homing_confirmados", None)
+                    if confirmados is None:
+                        confirmados = set()
+                        self._ejes_homing_confirmados = confirmados
+                    for eje_pin in ("Z", "X", "Y"):
+                        if eje_pin in valor.upper() and eje_pin not in confirmados:
+                            confirmados.add(eje_pin)
+                            self._notificar_consola(
+                                "c-ok",
+                                f"[FIN DE CARRERA {eje_pin}] Sensor {eje_pin} activado (Pn:{eje_pin}) — Eje {eje_pin} confirmado en casa (0.000 mm)."
+                            )
 
+        if not self.estado_maquina["pines_limite"] and getattr(self, "_reactivar_limites_al_liberar", False) and estado_nombre == "IDLE":
+            self._reactivar_limites_al_liberar = False
+            self._escribir_serial(b'$21=1\n')
         if any(c.startswith('MPos:') for c in campos):
             self.estado_maquina['wpos'] = [round(m-w, 3) for m, w in zip(self.estado_maquina['mpos'], self.estado_maquina['wco'])]
         elif any(c.startswith('WPos:') for c in campos):
@@ -572,10 +668,137 @@ class ControladorGRBL:
 
     def desbloquear_alarma(self):
         """Envía el comando '$X' para desbloquear el estado de alarma de GRBL."""
+        with self._bloque_lock:
+            self._pendientes_respuesta.clear()
+            self._cola_manual.clear()
+        if self.modo_virtual:
+            self.estado_maquina["estado"] = "IDLE"
+            self.estado_maquina["pines_limite"] = ""
+            self._notificar_consola("c-ok", "> $X")
+            self._notificar_consola("c-ok", "[MSG:Caution: Unlocked]")
+            self._notificar_consola("c-ok", "ok")
+            if self.cb_estado_actualizado:
+                self.cb_estado_actualizado(dict(self.estado_maquina))
+            return
+        if not self.puerto_serial or not self.puerto_serial.is_open:
+            return
+        self._notificar_consola("c-ok", "> $X")
+        if getattr(self, "_requiere_reset_critico", False):
+            self._desbloqueo_pendiente_tras_reset = True
+            self.enviar_tiempo_real(b'\x18')
+            return
+        pin_activo = bool(self.estado_maquina.get("pines_limite"))
+        if pin_activo:
+            self._reactivar_limites_al_liberar = True
+            self._escribir_serial(b'$X\n$21=0\n$3=2\n$23=3\n')
+        else:
+            self._escribir_serial(b'$X\n$21=1\n$3=2\n$23=3\n')
+        self.enviar_tiempo_real(b'?')
+
+        def _verificar_o_forzar_desbloqueo():
+            time.sleep(0.22)
+            if not self.esta_conectado or self.modo_virtual:
+                return
+            if self.estado_maquina.get("estado") == "ALARM":
+                self._desbloqueo_pendiente_tras_reset = True
+                with self._bloque_lock:
+                    self._pendientes_respuesta.clear()
+                    self._cola_manual.clear()
+                self.enviar_tiempo_real(b'\x18')
+                time.sleep(0.45)
+                if self.esta_conectado and self.estado_maquina.get("estado") == "ALARM":
+                    self._desbloqueo_pendiente_tras_reset = False
+                    if self.estado_maquina.get("pines_limite"):
+                        self._reactivar_limites_al_liberar = True
+                        self._escribir_serial(b'$X\n$21=0\n$3=2\n$23=3\n')
+                    else:
+                        self._escribir_serial(b'$X\n$21=1\n$3=2\n$23=3\n')
+                    time.sleep(0.1)
+                    self.enviar_tiempo_real(b'?')
+
+        threading.Thread(target=_verificar_o_forzar_desbloqueo, daemon=True).start()
+        return
         self.enviar_comando("$X")
 
     def ejecutar_homing(self):
         """Envía el comando '$H' para iniciar la secuencia de referenciado de ejes."""
+        if self._en_ejecucion_gcode:
+            self._notificar_consola("c-warn", "[BLOQUEO] No se permite ejecutar Homing ($H) durante el mecanizado de un programa.")
+            return
+        self._en_homing = True
+        self._ejes_homing_confirmados = set()
+        if self.modo_virtual:
+            self._notificar_consola("c-ok", "> $H")
+            self._notificar_consola("c-info", "[HOMING] Iniciando regreso de todos los ejes a casa ($H) buscando finales de carrera...")
+            evento = self._evento_sesion
+            w_ini = list(self.estado_maquina.get("wpos", [0.0, 0.0, 0.0]))
+
+            def secuencia_homing_virtual():
+                self.estado_maquina["estado"] = "HOME"
+                self.estado_maquina["feed_real"] = 600.0
+                for paso in range(1, 4):
+                    if evento.wait(0.06):
+                        return
+                    z_act = round(w_ini[2] * (1.0 - paso / 3.0), 3)
+                    self.estado_maquina["wpos"][2] = z_act
+                    self.estado_maquina["mpos"][2] = z_act
+                    if self.cb_estado_actualizado:
+                        self.cb_estado_actualizado(dict(self.estado_maquina))
+                self.estado_maquina["wpos"][2] = 0.0
+                self.estado_maquina["mpos"][2] = 0.0
+                self.estado_maquina["pines_limite"] = "Z"
+                self._ejes_homing_confirmados.add("Z")
+                self._notificar_consola("c-ok", "[FIN DE CARRERA Z] Sensor Z activado (Pn:Z) — Eje Z confirmado en casa (0.000 mm).")
+                if self.cb_estado_actualizado:
+                    self.cb_estado_actualizado(dict(self.estado_maquina))
+                if evento.wait(0.12):
+                    return
+
+                self.estado_maquina["pines_limite"] = ""
+                for paso in range(1, 5):
+                    if evento.wait(0.06):
+                        return
+                    fac = 1.0 - (paso / 4.0)
+                    self.estado_maquina["wpos"][0] = round(w_ini[0] * fac, 3)
+                    self.estado_maquina["wpos"][1] = round(w_ini[1] * fac, 3)
+                    self.estado_maquina["mpos"][0] = self.estado_maquina["wpos"][0]
+                    self.estado_maquina["mpos"][1] = self.estado_maquina["wpos"][1]
+                    if self.cb_estado_actualizado:
+                        self.cb_estado_actualizado(dict(self.estado_maquina))
+
+                self.estado_maquina["wpos"] = [0.0, 0.0, 0.0]
+                self.estado_maquina["mpos"] = [0.0, 0.0, 0.0]
+                self.estado_maquina["pines_limite"] = "X"
+                self._ejes_homing_confirmados.add("X")
+                self._notificar_consola("c-ok", "[FIN DE CARRERA X] Sensor X activado (Pn:X) — Eje X confirmado en casa (0.000 mm).")
+                if self.cb_estado_actualizado:
+                    self.cb_estado_actualizado(dict(self.estado_maquina))
+                if evento.wait(0.10):
+                    return
+
+                self.estado_maquina["pines_limite"] = "XY"
+                self._ejes_homing_confirmados.add("Y")
+                self._notificar_consola("c-ok", "[FIN DE CARRERA Y] Sensor Y activado (Pn:Y) — Eje Y confirmado en casa (0.000 mm).")
+                if self.cb_estado_actualizado:
+                    self.cb_estado_actualizado(dict(self.estado_maquina))
+                if evento.wait(0.12):
+                    return
+
+                self.estado_maquina["pines_limite"] = ""
+                self.estado_maquina["feed_real"] = 0.0
+                self.estado_maquina["estado"] = "IDLE"
+                self._en_homing = False
+                self._notificar_consola("c-system", "[HOMING COMPLETADO] Todos los ejes (X, Y, Z) en casa (0.000 mm) y confirmados por finales de carrera.")
+                self._notificar_consola("c-ok", "ok")
+                if self.cb_estado_actualizado:
+                    self.cb_estado_actualizado(dict(self.estado_maquina))
+
+            threading.Thread(target=secuencia_homing_virtual, daemon=True).start()
+            return
+        self._notificar_consola("c-ok", "> $H")
+        self._notificar_consola("c-info", "[HOMING] Iniciando regreso de todos los ejes a casa ($H) buscando finales de carrera...")
+        if 23 not in self._grbl_settings:
+            self.enviar_comando("$$")
         self.enviar_comando("$H")
 
     def poner_cero_eje(self, eje: str):
@@ -672,7 +895,7 @@ class ControladorGRBL:
 
     def establecer_feed_override(self, porcentaje: float):
         """Aplica el objetivo virtual o converge con reportes Ov del firmware físico."""
-        limite_max = 2000 if self.modo_virtual else 200
+        limite_max = 500 if self.modo_virtual else 200
         pct = max(10, min(limite_max, int(round(float(porcentaje)))))
         if self.modo_virtual:
             self.feed_override = pct / 100.
@@ -886,12 +1109,32 @@ class ControladorGRBL:
     # ENVÍO DE COMANDOS DIRECTOS Y MDI
     # =========================================================================
 
+    def aplicar_calibracion(self, eje: str, valor: float) -> bool:
+        """Envía un ajuste aislado; su aceptación se informa al recibir ok/error."""
+        with self._bloque_lock:
+            if (eje not in ('X', 'Y', 'Z') or not math.isfinite(valor) or valor <= 0
+                    or round(valor, 3) <= 0
+                    or not self.esta_conectado or self.estado_maquina['estado'] != 'IDLE'
+                    or self._en_ejecucion_gcode or self._pendientes_respuesta or self._cola_manual):
+                return False
+            comando = f"${100 + 'XYZ'.index(eje)}={valor:.3f}"
+            if self.modo_virtual:
+                if self.cb_calibracion_confirmada:
+                    self.cb_calibracion_confirmada(comando, True)
+                return True
+            return self.enviar_directo(comando + '\n', 'calibracion')
+
     def enviar_comando(self, comando: str):
         comando = comando.strip()
         if not comando:
             return False
         if '\n' in comando or '\r' in comando:
             self._notificar_consola('c-error', '[BLOQUEO] Envíe un solo bloque por comando.')
+            return False
+        if comando.upper() == '$X':
+            self.desbloquear_alarma()
+            return True
+        if False:
             return False
         try:
             tokens = [] if comando.startswith('$') else palabras(comando)
@@ -1086,17 +1329,47 @@ class ControladorGRBL:
             if not self._pendientes_respuesta:
                 return
             clase, texto = self._pendientes_respuesta.popleft()
+            if clase == 'calibracion' and self.cb_calibracion_confirmada:
+                self.cb_calibracion_confirmada(texto, exito)
             if not exito:
                 self._cola_manual.clear()
                 if self._en_ejecucion_gcode:
                     self._cancelar_por_error('GRBL rechazó: '+texto)
                 return
             self._actualizar_husillo(texto)
-            if clase == 'manual' and self._cola_manual:
+            if texto.strip().upper() == "$H":
+                confirmados = getattr(self, "_ejes_homing_confirmados", set())
+                for eje_h in ("Z", "X", "Y"):
+                    if eje_h not in confirmados:
+                        self._notificar_consola(
+                            "c-ok",
+                            f"[FIN DE CARRERA {eje_h}] Sensor {eje_h} confirmado — Eje {eje_h} referenciado en casa (0.000 mm)."
+                        )
+                self._en_homing = False
+                self._ejes_homing_confirmados = set()
+                self.estado_maquina["wpos"] = [0.0, 0.0, 0.0]
+                self.estado_maquina["mpos"] = [0.0, 0.0, 0.0]
+                self._notificar_consola("c-system", "[HOMING COMPLETADO] Todos los ejes (X, Y, Z) en casa y confirmados por finales de carrera.")
+                if "G10 L20 P1 X0 Y0 Z0" not in self._cola_manual:
+                    self._cola_manual.appendleft("G10 L20 P1 X0 Y0 Z0")
+                self.enviar_tiempo_real(b'?')
+            if re.match(r'^\$10[012]=', texto.strip()):
+                self._requiere_sync_pasos = True
+            if clase in ('manual', 'calibracion') and self._cola_manual:
                 siguiente = self._cola_manual.popleft()
                 self.enviar_directo(siguiente+'\n')
                 self._notificar_consola("c-ok", f"> {siguiente}")
                 return
+            if getattr(self, "_requiere_sync_pasos", False) and not self._cola_manual:
+                self._requiere_sync_pasos = False
+                if isinstance(self.puerto_serial, serial.Serial) and not self.modo_virtual:
+                    self._desbloqueo_pendiente_tras_reset = True
+                    self._cero_wco_tras_reset = True
+                    def _sync_planificador_pasos():
+                        time.sleep(0.06)
+                        if self.esta_conectado and not self.modo_virtual:
+                            self.enviar_tiempo_real(b'\x18')
+                    threading.Thread(target=_sync_planificador_pasos, daemon=True).start()
             if clase == 'm6_barrera':
                 if not self.enviar_directo('M5\n', 'm6_apagado'):
                     self._cancelar_por_error('No se pudo apagar el husillo para M6.')

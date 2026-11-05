@@ -149,3 +149,11 @@ python main.py
 ## 🎓 Créditos y Afiliación Académica
 
 Este desarrollo forma parte de la fase final del **Trabajo Terminal 2026-B072** en la **Escuela Superior de Cómputo (ESCOM)** del **Instituto Politécnico Nacional (IPN)**, Ciudad de México, México.
+
+## Aclaración de RF-07 y pruebas sin CNC
+
+El botón de parada/reinicio por software usa Ctrl+X (`0x18`, Soft Reset de GRBL): cancela el programa y limpia las colas del emisor. Pausa (`!`, Feed Hold) y reanudación (`~`, Cycle Start) son operaciones distintas. El programa cancelado por reinicio no se reanuda con Cycle Start. El envío del byte no acredita por sí mismo que el movimiento físico se detuvo ni sustituye el paro físico independiente.
+
+Esta interpretación se basa en la [documentación oficial de comandos GRBL](https://github.com/gnea/grbl/blob/master/doc/markdown/commands.md) y queda alineada con RF-07 y MSJ_22 del documento académico local. La actuación y el paro físico independiente se validan en la CNC.
+
+La matriz de pruebas y sus evidencias se encuentran en [VERIFICACION_SIN_CNC.md](VERIFICACION_SIN_CNC.md). Las pruebas de integración usan perfiles e historial temporales y permiten únicamente el simulador o puertos falsos.
