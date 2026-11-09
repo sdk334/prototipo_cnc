@@ -163,8 +163,8 @@ class PuenteCNC(QObject):
 
             for r in removidos:
                 self._emitir_seguro(self.senial_consola, "c-alarm", f"[HOT-PLUG] Dispositivo en {r} desconectado físicamente del equipo.")
-                if self.controlador.nombre_puerto == r:
-                    self.controlador.desconectar()
+                if self.controlador.nombre_puerto == r and (self.controlador.esta_conectado or self.controlador.estado_maquina.get('estado') != 'DESCONECTADO'):
+                    self.controlador._manejar_desconexion_abrupta(f"Dispositivo serial {r} desconectado físicamente del equipo")
 
     # =========================================================================
     # SLOTS INVOCABLES DIRECTAMENTE DESDE JAVASCRIPT

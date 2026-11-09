@@ -305,6 +305,43 @@ class ControladorGRBL:
         if self.cb_estado_actualizado:
             self.cb_estado_actualizado(dict(self.estado_maquina))
 
+    def _manejar_desconexion_abrupta(self, motivo: str = "Pérdida de comunicación serial"):
+        """Maneja la desconexión imprevista del hardware: detiene envíos, limpia colas y alerta al usuario."""
+        with self._bloque_lock:
+            if not self.esta_conectado and self.estado_maquina.get('estado') == 'DESCONECTADO':
+                return
+            self.esta_conectado = False
+            self._detener_hilos = True
+            self._evento_sesion.set()
+            self._en_ejecucion_gcode = False
+            self._en_pausa_gcode = False
+            self._pendientes_respuesta.clear()
+            self._cola_manual.clear()
+            self._cola_lineas.clear()
+            self._cola_bytes_en_transito.clear()
+            self._esperando_fin = False
+            self._cambio_m6 = self._cambio_listo = False
+            self._plan_programa = []
+            self.estado_maquina['estado'] = 'DESCONECTADO'
+
+        puerto = self.puerto_serial
+        if puerto and puerto.is_open:
+            try:
+                puerto.close()
+            except Exception:
+                pass
+        self.puerto_serial = None
+
+        self._notificar_consola('c-alarm', f'[DESCONEXIÓN CNC] {motivo}. Envío de comandos cancelado.')
+        if self.cb_estado_actualizado:
+            self.cb_estado_actualizado(dict(self.estado_maquina))
+        if self.cb_alerta_seguridad:
+            self.cb_alerta_seguridad(
+                "DESCONEXIÓN DE LA MÁQUINA CNC",
+                "Se ha perdido la conexión con la máquina CNC",
+                f"{motivo}. Se ha detenido de inmediato el envío de comandos y la ejecución para proteger el equipo y el material. Verifique la conexión USB y la alimentación eléctrica de la CNC."
+            )
+
     # =========================================================================
     # HILOS DE GESTIÓN SERIAL (HARDWARE REAL)
     # =========================================================================
@@ -347,11 +384,7 @@ class ControladorGRBL:
                 break
 
         if not evento.is_set():
-            self.esta_conectado = False
-            self._en_ejecucion_gcode = False
-            self.estado_maquina['estado'] = 'DESCONECTADO'
-            if self.cb_estado_actualizado:
-                self.cb_estado_actualizado(dict(self.estado_maquina))
+            self._manejar_desconexion_abrupta("Error en lectura serial o desconexión del puerto")
 
     def _bucle_sondeo_estado(self):
         """Hilo de sondeo que consulta el estado enviando '?' cada 200 ms (especificación TT)."""
@@ -359,9 +392,14 @@ class ControladorGRBL:
         while not evento.is_set() and self.esta_conectado:
             try:
                 if self.puerto_serial and self.puerto_serial.is_open:
-                    self._escribir_serial(b'?')
-            except Exception:
-                pass
+                    if not self._escribir_serial(b'?'):
+                        if not self._detener_hilos and self.esta_conectado:
+                            self._manejar_desconexion_abrupta("Falla en la transmisión del sondeo de estado")
+                            break
+            except Exception as e:
+                if not self._detener_hilos and self.esta_conectado:
+                    self._manejar_desconexion_abrupta(f"Error de sondeo serial: {e}")
+                    break
             evento.wait(0.2)
 
     # =========================================================================
@@ -722,6 +760,9 @@ class ControladorGRBL:
 
     def ejecutar_homing(self):
         """Envía el comando '$H' para iniciar la secuencia de referenciado de ejes."""
+        if not self.esta_conectado and not self.modo_virtual:
+            self._notificar_consola("c-alarm", "[BLOQUEO] Máquina desconectada. No se puede ejecutar Homing ($H).")
+            return
         if self._en_ejecucion_gcode:
             self._notificar_consola("c-warn", "[BLOQUEO] No se permite ejecutar Homing ($H) durante el mecanizado de un programa.")
             return
@@ -803,6 +844,9 @@ class ControladorGRBL:
 
     def poner_cero_eje(self, eje: str):
         """Fija el sistema de coordenadas de trabajo (cero pieza) en el eje indicado."""
+        if not self.esta_conectado and not self.modo_virtual:
+            self._notificar_consola("c-alarm", f"[BLOQUEO] No se puede fijar cero en {eje}: máquina desconectada.")
+            return
         eje = eje.upper()
         if eje not in ("X", "Y", "Z"):
             return
@@ -821,6 +865,9 @@ class ControladorGRBL:
 
     def poner_cero_plano_xy(self):
         """Fija los ejes cartesianos X e Y a cero en una sola instrucción atómica en G54."""
+        if not self.esta_conectado and not self.modo_virtual:
+            self._notificar_consola("c-alarm", "[BLOQUEO] No se puede fijar cero XY: máquina desconectada.")
+            return
         if self.estado_maquina.get("estado") == "ALARM":
             self._notificar_consola("c-alarm", "[BLOQUEO] No se puede fijar cero XY: la máquina está en ALARMA. Desbloquee con $X.")
             return
@@ -850,6 +897,9 @@ class ControladorGRBL:
 
     def mover_jog(self, eje: str, paso: float, velocidad: float):
         """Ejecuta un movimiento manual incremental según la directiva $J= de GRBL v1.1."""
+        if not self.esta_conectado and not self.modo_virtual:
+            self._notificar_consola('c-alarm', '[BLOQUEO] Máquina desconectada. No se puede mover con Jog.')
+            return
         estado_actual = self.estado_maquina.get('estado', 'IDLE')
         if self._en_ejecucion_gcode:
             self._notificar_consola('c-warn', '[BLOQUEO] No se permite Jog durante el mecanizado de un programa.')
@@ -1125,6 +1175,9 @@ class ControladorGRBL:
             return self.enviar_directo(comando + '\n', 'calibracion')
 
     def enviar_comando(self, comando: str):
+        if not self.esta_conectado and not self.modo_virtual:
+            self._notificar_consola('c-alarm', '[BLOQUEO] Máquina desconectada. No se pueden enviar comandos.')
+            return False
         comando = comando.strip()
         if not comando:
             return False
@@ -1170,7 +1223,7 @@ class ControladorGRBL:
 
     def _escribir_serial(self, datos: bytes) -> bool:
         """Transmite bytes por el puerto serial de forma atómica y protegida por cerrojo entre hilos."""
-        if not self.puerto_serial or not self.puerto_serial.is_open:
+        if not self.esta_conectado or not self.puerto_serial or not self.puerto_serial.is_open:
             return False
         with self._serial_write_lock:
             try:
@@ -1183,6 +1236,8 @@ class ControladorGRBL:
                 return False
 
     def enviar_directo(self, texto_con_salto: str, clase='manual') -> bool:
+        if not self.esta_conectado and not self.modo_virtual:
+            return False
         texto = texto_con_salto.strip()
         if not texto or '\n' in texto or '\r' in texto:
             return False
@@ -1210,6 +1265,8 @@ class ControladorGRBL:
 
     def enviar_tiempo_real(self, byte_cmd: Any) -> bool:
         """Transmite un comando de tiempo real (single-byte) sin salto de línea a GRBL."""
+        if not self.esta_conectado and not self.modo_virtual:
+            return False
         if isinstance(byte_cmd, int):
             datos = bytes([byte_cmd])
         elif isinstance(byte_cmd, bytes):

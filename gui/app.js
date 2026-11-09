@@ -337,12 +337,27 @@ document.addEventListener('DOMContentLoaded', () => {
           elementos.selectorPuertoCom.appendChild(opcion);
         });
 
-        // Si no se conservó el puerto previo, seleccionar el simulador virtual. Nunca se conecta
-        // automáticamente un puerto real: el usuario debe elegirlo explícitamente en el selector.
+        // Si no se conservó el puerto previo, comprobar si se trataba de una desconexión física de la CNC
         if (!puertoSeleccionado && listaPuertos.length > 0) {
-          const simulador = listaPuertos.find(p => p.tipo === 'SIMULADOR') || listaPuertos[listaPuertos.length - 1];
-          elementos.selectorPuertoCom.value = simulador.puerto;
-          conectarPuertoSeleccionado();
+          if (valorPrevio && valorPrevio !== 'SIMULADOR_VIRTUAL') {
+            imprimirEnConsola('c-alarm', `[DESCONEXIÓN] El puerto serial ${valorPrevio} se ha desconectado del equipo.`);
+            mostrarAlertaSeguridadHusillo(
+              'DESCONEXIÓN DE LA MÁQUINA CNC',
+              'Se ha desconectado la máquina CNC',
+              `El puerto serial ${valorPrevio} ha sido desconectado físicamente del equipo. Se ha interrumpido de inmediato el envío de comandos hacia la máquina.`
+            );
+            const opcionDesc = document.createElement('option');
+            opcionDesc.value = '';
+            opcionDesc.textContent = `[DESCONECTADO] ${valorPrevio}`;
+            opcionDesc.selected = true;
+            elementos.selectorPuertoCom.insertBefore(opcionDesc, elementos.selectorPuertoCom.firstChild);
+            elementos.selectorPuertoCom.value = '';
+            establecerEstadoOperativo('DESCONECTADO');
+          } else {
+            const simulador = listaPuertos.find(p => p.tipo === 'SIMULADOR') || listaPuertos[listaPuertos.length - 1];
+            elementos.selectorPuertoCom.value = simulador.puerto;
+            conectarPuertoSeleccionado();
+          }
         }
       } catch (e) {
         console.error('Error al parsear lista de puertos:', e);
@@ -828,6 +843,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       } else {
         elementos.puntoIndicadorEstado.classList.add('dot-off');
+        if (nuevoEstado === 'DESCONECTADO') {
+          if (elementos.puntoIndicadorPuerto) elementos.puntoIndicadorPuerto.className = 'indicator-dot dot-off';
+          if (estado.enEjecucion) {
+            detenerMecanizado('Desconectado', false);
+          }
+          if (elementos.botonIniciarMecanizado) elementos.botonIniciarMecanizado.classList.remove('hidden');
+          if (elementos.botonPausarMecanizado) elementos.botonPausarMecanizado.classList.add('hidden');
+          if (elementos.botonDetenerMecanizado) elementos.botonDetenerMecanizado.classList.add('hidden');
+        }
       }
     }
     actualizarEstadoGiroVisualizador();
@@ -859,6 +883,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // DESPLAZAMIENTO MANUAL DE EJES (JOGGING)
   // ==========================================
   function moverEjeManual(eje, sentido) {
+    if (estado.estadoOperativo === 'DESCONECTADO') {
+      imprimirEnConsola('c-alarm', '[DESCONECTADO] Máquina desconectada. No se puede mover el eje.');
+      return;
+    }
     if (estado.estadoOperativo === 'ALARM') {
       imprimirEnConsola('c-error', '[ALARMA] Movimiento bloqueado por paro de emergencia (E-STOP). Use $X para rearmar.');
       return;
@@ -924,6 +952,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function ejecutarHomingConFinesDeCarrera() {
+    if (estado.estadoOperativo === 'DESCONECTADO') {
+      imprimirEnConsola('c-alarm', '[DESCONECTADO] Máquina desconectada. No se puede ejecutar Homing ($H).');
+      return;
+    }
     if (estado.enEjecucion) {
       imprimirEnConsola('c-warn', '[BLOQUEO] No se permite ejecutar Homing ($H) durante el mecanizado de un programa.');
       return;
@@ -995,6 +1027,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Valida si la máquina está en condiciones de aceptar comandos de puesta a cero
   function validarMaquinaListaParaCero() {
+    if (estado.estadoOperativo === 'DESCONECTADO') {
+      imprimirEnConsola('c-alarm', '[BLOQUEO] No se puede fijar el cero: la máquina está DESCONECTADA.');
+      return false;
+    }
     if (estado.estadoOperativo === 'ALARM') {
       imprimirEnConsola('c-alarm', '[BLOQUEO] No se puede fijar el cero: la máquina está en estado de ALARMA (GRBL Error #9).');
       imprimirEnConsola('c-info', '[ACCIÓN] Presione el botón naranja "DESBLOQUEAR ($X)" en la barra superior o en el menú "Máquina > Desbloquear ($X)".');
@@ -2230,6 +2266,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const comando = comandoSinFormato.trim();
     if (!comando) return;
 
+    if (estado.estadoOperativo === 'DESCONECTADO' && window.puenteCNC) {
+      imprimirEnConsola('c-alarm', '[DESCONECTADO] Máquina desconectada. No se pueden enviar comandos.');
+      return;
+    }
+
     const estaMecanizando = estado.enEjecucion ||
       estado.estadoOperativo === 'RUN' ||
       (estado.estadoOperativo === 'HOLD' && estado.enEjecucion);
@@ -2399,6 +2440,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function iniciarMecanizado() {
+    if (estado.estadoOperativo === 'DESCONECTADO') {
+      alert('La máquina se encuentra DESCONECTADA. Conecte un puerto COM antes de iniciar.');
+      return;
+    }
     if (window.visualizadorCNC?.errorGcode) {
       imprimirEnConsola('c-error', window.visualizadorCNC.errorGcode);
       return;
@@ -2550,13 +2595,17 @@ document.addEventListener('DOMContentLoaded', () => {
     estado.enPausa = false;
     if (estado.temporizadorEjecucion) clearInterval(estado.temporizadorEjecucion);
 
-    if (window.puenteCNC && enviarParada && resultado !== 'Completado') window.puenteCNC.detener();
+    if (window.puenteCNC && enviarParada && resultado !== 'Completado' && resultado !== 'Desconectado' && resultado !== 'Desconexión de CNC') window.puenteCNC.detener();
 
     elementos.botonIniciarMecanizado.classList.remove('hidden');
     elementos.botonPausarMecanizado.classList.add('hidden');
     elementos.botonDetenerMecanizado.classList.add('hidden');
     elementos.botonPausarMecanizado.innerHTML = '<i class="fa-solid fa-pause"></i> PAUSA';
-    establecerEstadoOperativo('IDLE');
+    if (resultado === 'Desconectado' || resultado === 'Desconexión de CNC') {
+      establecerEstadoOperativo('DESCONECTADO');
+    } else {
+      establecerEstadoOperativo('IDLE');
+    }
     if (window.visualizadorCNC) {
       window.visualizadorCNC.reiniciarProgresoEjecucion();
     }
@@ -3438,6 +3487,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const esLaser = titulo && titulo.includes('LÁSER');
     const esM6 = (titulo && (titulo.includes('M6') || titulo.includes('HERRAMIENTA'))) ||
       (descripcion && (descripcion.includes('M6') || descripcion.includes('herramienta')));
+    const esDesconexion = (titulo && (titulo.includes('DESCONEXIÓN') || titulo.includes('DESCONECTAD'))) ||
+      (descripcion && (descripcion.includes('desconect') || descripcion.includes('desconexión')));
 
     if (esM6) {
       estado.enEjecucion = true;
@@ -3453,6 +3504,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (elementos.accionSeguridad) {
         elementos.accionSeguridad.innerHTML = accion || '<b>Acción requerida:</b> Monte la herramienta indicada en la pinza y presione el botón <b>CONTINUAR</b> en el panel de control para seguir con el mecanizado.';
+      }
+    } else if (esDesconexion) {
+      estado.enEjecucion = false;
+      estado.enPausa = false;
+      establecerEstadoOperativo('DESCONECTADO');
+      if (estado.temporizadorEjecucion) clearInterval(estado.temporizadorEjecucion);
+      if (elementos.botonIniciarMecanizado) elementos.botonIniciarMecanizado.classList.remove('hidden');
+      if (elementos.botonPausarMecanizado) elementos.botonPausarMecanizado.classList.add('hidden');
+      if (elementos.botonDetenerMecanizado) elementos.botonDetenerMecanizado.classList.add('hidden');
+      if (elementos.puntoIndicadorPuerto) elementos.puntoIndicadorPuerto.className = 'indicator-dot dot-off';
+
+      if (elementos.accionSeguridad) {
+        elementos.accionSeguridad.innerHTML = accion || '<b>Acción requerida:</b> Se detuvo el envío de comandos. Verifique la conexión del cable USB y la alimentación eléctrica de la CNC, luego seleccione nuevamente el puerto COM para continuar.';
       }
     } else {
       if (elementos.accionSeguridad) {
