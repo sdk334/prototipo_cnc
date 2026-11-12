@@ -22,4 +22,6 @@ output/
 tmp/
 REVISION_CODIGO.md
 *.pdf
+!manual-usuario-cnc-basic-actualizado.pdf
+!output/pdf/manual-usuario-cnc-basic-actualizado.pdf
 tests/

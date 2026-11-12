@@ -94,6 +94,7 @@ proyecto tt2/
 ├── main.py                               # Punto de entrada principal ejecutable en Windows
 ├── requirements.txt                      # Dependencias de Python (PyQt6, PyQt6-WebEngine, pyserial)
 ├── README.md                             # Manual técnico y guía de usuario
+├── manual-usuario-cnc-basic-actualizado.pdf # Manual de usuario completo y actualizado (PDF)
 └── .gitignore                            # Exclusiones de Git y temporales
 ```
 
